@@ -4,6 +4,7 @@
  * 布局固定成「`content` 就是那份内容**本身**」：
  *   - 目录包 → `content/SKILL.md`、`content/references/x.md`
  *   - 扁平文件 → `content/<name>.md`
+ *   - 软链接 → `content/<name>`（**一份链接，不是链接目标的内容**；目标记在 `meta.json` 的 `link`）
  *
  * 于是恢复只有一条路径：把 `content` 原子放回 `meta.json` 里记的 `target`，
  * 不需要为两种形态写两套还原逻辑。
@@ -17,7 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 import { gitBlobSha1 } from './gitsha.js'
@@ -70,13 +71,14 @@ export function createBackupStore(options) {
 	const log = typeof options.log === 'function' ? options.log : () => {}
 
 	/**
-	 * 备份一个已存在的目标（目录包整份复制；扁平文件复制成单文件）。
+	 * 备份一个已存在的目标（目录包整份复制；扁平文件复制成单文件；软链只存链接本身）。
 	 * @param name - 技能名。
 	 * @param target - 目标路径。
-	 * @param kind - `'directory' | 'flat'`。
+	 * @param kind - `'directory' | 'flat' | 'symlink'`。
 	 * @returns 备份目录绝对路径。
 	 */
 	function create(name, target, kind) {
+		const kindOf = kind === 'flat' ? 'flat' : kind === 'symlink' ? 'symlink' : 'directory'
 		let at = now()
 		let dir = join(backupDir, name, String(at))
 		while (existsSync(dir)) {
@@ -85,17 +87,22 @@ export function createBackupStore(options) {
 		}
 		mkdirSync(dir, { recursive: true })
 		const content = join(dir, 'content')
-		if (kind === 'flat' || statSync(target).isFile()) {
+		const meta = { name, at, kind: kindOf, target }
+		if (kindOf === 'symlink') {
+			// 软链只备份**链接本身**：meta 里记链接目标，content 放一份同名链接副本。
+			// 绝不能 cpSync——它默认会 dereference，把链接目标整个复制进来。
+			const linkTarget = readlinkSync(target)
+			mkdirSync(content, { recursive: true })
+			symlinkSync(linkTarget, join(content, basename(target)))
+			meta.link = linkTarget
+		} else if (kindOf === 'flat' || statSync(target).isFile()) {
 			mkdirSync(content, { recursive: true })
 			cpSync(target, join(content, basename(target)))
 		} else {
 			// 刻意不预建 content：让 cpSync 把它创建成 target 的副本（而不是套一层）。
 			cpSync(target, content, { recursive: true })
 		}
-		writeFileSync(
-			join(dir, 'meta.json'),
-			JSON.stringify({ name, at, kind: kind === 'flat' ? 'flat' : 'directory', target }, null, 2),
-		)
+		writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2))
 		return dir
 	}
 
@@ -131,11 +138,14 @@ export function createBackupStore(options) {
 					else files.push(basename(content))
 				}
 				out.push({
+					// 先摊开 meta：软链备份的 `link` 必须能从这里读出来（put 重建链接要用）。
+					...meta,
 					name: skill,
 					id: entry.name,
 					path: dir,
 					at: Number(entry.name) || meta.at || statSync(dir).mtimeMs,
-					files: files.length,
+					// 软链备份里存的是一个链接条目，`collectFiles` 不把它算成文件，这里补成 1。
+					files: meta.kind === 'symlink' ? 1 : files.length,
 					kind: meta.kind ?? 'directory',
 					target: meta.target ?? null,
 				})
@@ -175,6 +185,13 @@ export function createBackupStore(options) {
 		mkdirSync(stagingDir, { recursive: true })
 		const staging = join(stagingDir, `restore-${randomUUID()}`)
 		rmSync(staging, { recursive: true, force: true })
+		if (entry.kind === 'symlink') {
+			// 恢复的是**链接**，不是把链接目标复制回来。
+			rmSync(target, { recursive: true, force: true })
+			mkdirSync(dirname(target), { recursive: true })
+			symlinkSync(entry.link, target)
+			return
+		}
 		if (entry.kind === 'flat') {
 			mkdirSync(staging, { recursive: true })
 			const file = readdirSync(content).find((item) => !item.startsWith('.'))

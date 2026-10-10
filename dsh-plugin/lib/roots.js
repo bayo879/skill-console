@@ -29,13 +29,16 @@
  * 文件系统这一侧。
  */
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
 import { DIAGNOSTIC, READ_ERROR } from './diagnostics.js'
 import { describeFrontmatter, isValidSkillName, splitFrontmatter } from './frontmatter.js'
 import { httpError } from './http.js'
+// 目标路径只认 rows.js 的那一份实现，避免这里再写第二套「目录包 vs 扁平」的解析。
+import { targetPathFor } from './rows.js'
 
 /** 发现文件的两种形态。 */
 export const DISCOVERY_FILE = 'SKILL.md'
@@ -380,6 +383,128 @@ export function toggleSkill(roots, filePath, enabled) {
 	renameSync(target, next)
 	// 目录包停用后目录还在（内容一个字没动），这里只回发现文件的路径。
 	return { path: next, enabled, before: target, changed: true }
+}
+
+/**
+ * 把一个技能从别的根复制进目标根——**只往目标写，绝不碰来源**。
+ *
+ * 这是继 `toggleSkill` 之后本插件第二个写盘入口，围栏比它更严：
+ *   - 源必须是**可启停**的技能（软链接一律拒绝，否则会顺着链接写进别人的仓库）
+ *   - 目标已存在同名 → 409，**绝不覆盖**（不能靠 `cpSync` 的 `errorOnExist`：
+ *     实测它对「目标已存在且是目录」不生效，会静默合并）
+ *   - 落地一律走「目标根内写 `.tmp-<uuid>` → rename 到位」，`.` 开头扫描器会跳过，
+ *     中途失败也不会在目标根里留下半份技能
+ *   - 源是 `.disabled` 时，复制出来的是**启用态**（去掉后缀）
+ *
+ * @param targetRoot - `resolveRoots()` 里的一个根（只往它写）。
+ * @param sourceSkill - 扫描结果里的一条技能记录。
+ * @returns `{name, path, sourcePath, kind, enabled, copied}`。
+ */
+export function copySkillIntoRoot(targetRoot, sourceSkill) {
+	const source = resolve(String(sourceSkill?.path ?? ''))
+	if (sourceSkill?.toggleable !== true) {
+		throw httpError(400, 'error.transfer.symlink', `软链接技能不允许复制（会指向别的仓库）：${source}`)
+	}
+	if (!existsSync(source)) throw httpError(404, 'error.skill.notFound', `找不到技能文件：${source}`)
+	const name = String(sourceSkill?.name ?? '')
+	if (name === '') throw httpError(400, 'error.skill.notFound', `技能没有名字：${source}`)
+	const kind = sourceSkill.kind === 'flat' ? 'flat' : 'directory'
+	const target = targetPathFor(targetRoot.path, name, kind)
+	// 「绝不覆盖」只能靠这次显式预检，`errorOnExist` 靠不住（见上）。
+	if (existsSync(target)) throw httpError(409, 'error.copy.exists', `目标已存在同名技能，拒绝覆盖：${target}`)
+	ensureDir(targetRoot.path)
+	const token = `.tmp-${randomUUID()}`
+	const temp = join(targetRoot.path, kind === 'flat' ? `${token}.md` : token)
+	try {
+		if (kind === 'flat') {
+			cpSync(source, temp)
+		} else {
+			const sourceDir = resolve(String(sourceSkill.directory ?? dirname(source)))
+			// `dereference: false` 显式写出：嵌套软链接原样复制成链接，不 dereference。
+			cpSync(sourceDir, temp, { recursive: true, dereference: false, force: false, errorOnExist: true })
+			// 源是 `.disabled` → 复制出来的是启用态。
+			if (basename(source) !== DISCOVERY_FILE) {
+				renameSync(join(temp, basename(source)), join(temp, DISCOVERY_FILE))
+			}
+		}
+		renameSync(temp, target)
+	} catch (error) {
+		// 失败清理：尽力删掉临时产物；残留也不会被扫描器认成技能。
+		rmSync(temp, { recursive: true, force: true })
+		throw error
+	}
+	return { name, path: target, sourcePath: source, kind, enabled: true, copied: true }
+}
+
+/**
+ * 纯函数：算清「删掉这个技能」到底要动哪些路径，**不碰盘**。
+ *
+ * 三种形态分开处置：
+ *   - `flat`      只删那一个扁平文件；
+ *   - `directory` 删**整个包目录**（脚本、资源都在里面）；
+ *   - `symlink`   只摘链接本身（目录包是软链就摘目录链接，发现文件是软链就摘文件链接），
+ *                 绝不顺着链接递归进去删别人的内容。
+ *
+ * 技能根**永远不删**；根之外的路径在 `classifyDiscoveryPath` 就被挡下。
+ *
+ * @param roots - `resolveRoots()` 的结果（围栏用）。
+ * @param filePath - 发现文件绝对路径（可能是 `.disabled`）。
+ * @returns `{name, path, kind, root, directory, discoveryPath, form, targets, symlinkTarget, backupTarget, backupKind}`。
+ */
+export function planRemoval(roots, filePath) {
+	const target = resolve(filePath)
+	const classified = classifyDiscoveryPath(roots, target)
+	if (classified === null) throw httpError(400, 'error.path.outsideRoots', `路径不在已知技能根内：${target}`)
+	if (!existsSync(target)) throw httpError(404, 'error.skill.notFound', `找不到技能文件：${target}`)
+	const skill = readSkill(target, { roots })
+	const directoryLinked = lstatSync(skill.directory).isSymbolicLink()
+	const fileLinked = lstatSync(target).isSymbolicLink()
+	const linkPath = directoryLinked ? skill.directory : fileLinked ? target : null
+	if (linkPath !== null) {
+		return {
+			name: skill.name,
+			path: target,
+			kind: skill.kind,
+			root: skill.root,
+			directory: skill.directory,
+			discoveryPath: target,
+			form: 'symlink',
+			targets: [linkPath],
+			// 记下链接指向哪里：备份只存链接本身，恢复时按这个目标重建。
+			symlinkTarget: readlinkSync(linkPath),
+			backupTarget: linkPath,
+			backupKind: 'symlink',
+		}
+	}
+	const form = skill.kind === 'directory' ? 'directory' : 'flat'
+	return {
+		name: skill.name,
+		path: target,
+		kind: skill.kind,
+		root: skill.root,
+		directory: skill.directory,
+		discoveryPath: target,
+		form,
+		targets: form === 'directory' ? [skill.directory] : [target],
+		symlinkTarget: null,
+		backupTarget: form === 'directory' ? skill.directory : target,
+		backupKind: form,
+	}
+}
+
+/**
+ * 按 `planRemoval` 的结果动盘。**唯一**的删除入口（路由层不许自己调 `rmSync`）。
+ * @param removal - `planRemoval()` 的返回值。
+ * @returns `{removed, changed}`。
+ */
+export function removeSkill(removal) {
+	for (const item of removal.targets) {
+		if (removal.form === 'symlink') unlinkSync(item)
+		else if (removal.form === 'directory') rmSync(item, { recursive: true, force: false })
+		else unlinkSync(item)
+	}
+	// 备份由调用方（路由层）在此之前完成——这里只负责删。
+	return { removed: removal.targets, changed: true }
 }
 
 /** 确保目录存在（安装/备份用）。 */

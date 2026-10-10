@@ -18,7 +18,7 @@
  * 用法：node test/contract.mjs
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -100,6 +100,7 @@ check('客户端 bundle 已生成', clientSource !== '')
 
 const roots = await import(join(LIB, 'roots.js'))
 const reposModule = await import(join(LIB, 'repos.js'))
+const backupsModule = await import(join(LIB, 'backups.js'))
 
 section('技能根解析')
 const home = tempDir('sc-home')
@@ -464,6 +465,150 @@ check('changed 只数真正改动的', isolated.changed === 1, String(isolated.c
 // 传写死的 `SKILL.md` 只会撞 404，那测的是「文件不存在」，不是「同态」。
 const linked = rolesModule.applyRole(applyProjectRoot, { steps: [{ name: 'alpha', path: join(applyProject, '.dsh', 'skills', 'alpha', 'SKILL.md.disabled'), action: 'disable', current: false, target: false }] })
 check('已同态时 toggleSkill 回 changed=false，不报错', linked.results[0]?.ok === true && linked.results[0]?.changed === false, JSON.stringify(linked.results[0]))
+
+// ── 技能搬运与删除（0.4.0） ─────────────────────────────────────────────
+
+section('技能搬运：复制进技能根（目录包 / 扁平 / 禁用源 / 软链拒绝 / 同名拒绝）')
+{
+	const source = tempDir('copy-source')
+	const target = tempDir('copy-target')
+	const targetRootOf = (path, key) => ({
+		key,
+		scope: key === 'user-dsh' ? 'global' : 'project',
+		label: key === 'user-dsh' ? '全局 DSH' : '项目 DSH',
+		rank: 100,
+		path,
+		exists: existsSync(path),
+		writable: true,
+	})
+
+	// 目录包：整份内容（含内部脚本与 references）都要跟着走
+	mkdirSync(join(source, 'pack', 'references'), { recursive: true })
+	mkdirSync(join(source, 'pack', 'scripts'), { recursive: true })
+	writeFileSync(join(source, 'pack', 'SKILL.md'), '---\nname: pack\ndescription: 复制用\n---\n\n# pack\n')
+	writeFileSync(join(source, 'pack', 'references', 'a.md'), 'ref-a\n')
+	writeFileSync(join(source, 'pack', 'scripts', 'run.sh'), '#!/bin/sh\necho hi\n')
+	const sourceRoot = targetRootOf(source, 'user-dsh')
+	const packRecord = roots.scanRoot(sourceRoot).skills.find((entry) => entry.name === 'pack')
+	check('扫描器认得出这个目录包', packRecord !== undefined && packRecord.kind === 'directory', JSON.stringify(packRecord))
+
+	const copyTarget = targetRootOf(target, 'project-dsh')
+	const copied = roots.copySkillIntoRoot(copyTarget, packRecord)
+	check('复制目录包返回目标路径与形态', copied.path === join(target, 'pack') && copied.kind === 'directory', JSON.stringify(copied))
+	check('复制出来的目录包是启用态', existsSync(join(target, 'pack', 'SKILL.md')) && !existsSync(join(target, 'pack', 'SKILL.md.disabled')))
+	check('内部脚本与 references 一起复制', readFileSync(join(target, 'pack', 'scripts', 'run.sh'), 'utf8').includes('echo hi') && readFileSync(join(target, 'pack', 'references', 'a.md'), 'utf8') === 'ref-a\n')
+	check('目标技能根里没有 .tmp- 残留', readdirSync(target).every((name) => !name.startsWith('.tmp-')), readdirSync(target).join(','))
+
+	// 同名拒绝：目标已有就 409，绝不覆盖
+	let copyConflict = null
+	try {
+		roots.copySkillIntoRoot(copyTarget, packRecord)
+	} catch (error) {
+		copyConflict = error
+	}
+	check('目标已有同名 → 409 error.copy.exists', copyConflict?.statusCode === 409 && copyConflict.code === 'error.copy.exists', `${copyConflict?.statusCode} ${copyConflict?.code}`)
+	check('被拒绝时原有内容一字未动', readFileSync(join(target, 'pack', 'references', 'a.md'), 'utf8') === 'ref-a\n')
+
+	// 扁平：源是 .disabled，复制出来必须是启用态
+	writeFileSync(join(source, 'flat.md.disabled'), '---\nname: flat\ndescription: 扁平复制\n---\n\n# flat\n')
+	const flatRecord = roots.scanRoot(sourceRoot).skills.find((entry) => entry.name === 'flat')
+	check('扫描器认得出停用的扁平技能', flatRecord !== undefined && flatRecord.kind === 'flat' && flatRecord.enabled === false, JSON.stringify(flatRecord))
+	const copiedFlat = roots.copySkillIntoRoot(copyTarget, flatRecord)
+	check('扁平技能复制成启用态', copiedFlat.path === join(target, 'flat.md') && existsSync(join(target, 'flat.md')))
+	check('复制出来的扁平技能能被扫描器当启用技能认到', roots.scanRoot(copyTarget).skills.some((entry) => entry.name === 'flat' && entry.enabled === true))
+
+	// 软链接来源：一律拒绝（复制它会动到链接目标）
+	const justOutside = tempDir('copy-outside')
+	mkdirSync(join(justOutside, 'nofm'), { recursive: true })
+	writeFileSync(join(justOutside, 'nofm', 'SKILL.md'), '# 没有 frontmatter 的技能\n')
+	symlinkSync(join(justOutside, 'nofm'), join(source, 'linked'))
+	const linkedRecord = roots.scanRoot(sourceRoot).skills.find((entry) => entry.path.includes('linked'))
+	check('扫描器把软链接判成不可启停', linkedRecord !== undefined && linkedRecord.toggleable === false && linkedRecord.readOnlyReason === 'symlink', JSON.stringify(linkedRecord))
+	let copySymlink = null
+	try {
+		roots.copySkillIntoRoot(copyTarget, linkedRecord)
+	} catch (error) {
+		copySymlink = error
+	}
+	check('软链接来源 → 400 error.transfer.symlink', copySymlink?.statusCode === 400 && copySymlink.code === 'error.transfer.symlink', `${copySymlink?.statusCode} ${copySymlink?.code}`)
+	check('软链接指向的技能没有被复制进目标', !existsSync(join(target, 'linked')))
+}
+
+section('技能删除：路径语义（扁平 / 目录包 / 软链接）与围栏')
+{
+	const root = tempDir('remove-root')
+	const outside = tempDir('remove-outside')
+	const rootsList = [{ key: 'project-dsh', scope: 'project', label: '项目 DSH', rank: 100, path: root, exists: true, writable: true }]
+
+	// 目录包：删整包，连内部文件一起
+	mkdirSync(join(root, 'pack'), { recursive: true })
+	writeFileSync(join(root, 'pack', 'SKILL.md'), '---\nname: pack\ndescription: 删除用\n---\n\n# pack\n')
+	writeFileSync(join(root, 'pack', 'extra.txt'), 'extra\n')
+	const packPlan = roots.planRemoval(rootsList, join(root, 'pack', 'SKILL.md'))
+	check('目录包：form=directory，删的是整包目录', packPlan.form === 'directory' && packPlan.targets.length === 1 && packPlan.targets[0] === join(root, 'pack'), JSON.stringify(packPlan))
+	check('目录包：备份目标就是整包目录，kind=directory', packPlan.backupTarget === join(root, 'pack') && packPlan.backupKind === 'directory')
+	roots.removeSkill(packPlan)
+	check('目录包整包被删（含内部文件）', !existsSync(join(root, 'pack')))
+	check('技能根本身还在', existsSync(root))
+
+	// 扁平：只删那一个文件
+	writeFileSync(join(root, 'flat.md'), '---\nname: flat\ndescription: 删除用\n---\n\n# flat\n')
+	const flatPlan = roots.planRemoval(rootsList, join(root, 'flat.md'))
+	check('扁平：form=flat，只删那一个文件', flatPlan.form === 'flat' && flatPlan.targets[0] === join(root, 'flat.md'))
+	roots.removeSkill(flatPlan)
+	check('扁平文件被删，根还在', !existsSync(join(root, 'flat.md')) && existsSync(root))
+
+	// 围栏（先测，别把夹具删了再测）
+	let fenceCode = null
+	try {
+		roots.planRemoval(rootsList, join(outside, 'anything', 'SKILL.md'))
+	} catch (error) {
+		fenceCode = error?.code ?? null
+	}
+	check('根外路径 → 400 error.path.outsideRoots', fenceCode === 'error.path.outsideRoots', String(fenceCode))
+	let missingCode = null
+	try {
+		roots.planRemoval(rootsList, join(root, 'nope', 'SKILL.md'))
+	} catch (error) {
+		missingCode = error?.code ?? null
+	}
+	check('不存在 → 404 error.skill.notFound', missingCode === 'error.skill.notFound', String(missingCode))
+
+	// 软链接：只 unlink 链接本身，链接目标一字未动
+	mkdirSync(join(outside, 'real'), { recursive: true })
+	writeFileSync(join(outside, 'real', 'SKILL.md'), '---\nname: real\ndescription: 链接目标\n---\n\n# real\n')
+	writeFileSync(join(outside, 'real', 'payload.txt'), 'keep me\n')
+	symlinkSync(join(outside, 'real'), join(root, 'linked-dir'))
+	const linkedPlan = roots.planRemoval(rootsList, join(root, 'linked-dir', 'SKILL.md'))
+	check('目录包是软链接：form=symlink，只删链接本身', linkedPlan.form === 'symlink' && linkedPlan.targets[0] === join(root, 'linked-dir'), JSON.stringify(linkedPlan))
+	check('软链接：备份口径是 symlink 且记下链接目标', linkedPlan.backupKind === 'symlink' && linkedPlan.symlinkTarget === join(outside, 'real'))
+	roots.removeSkill(linkedPlan)
+	check('只删了链接，链接目标内容一字未动', !existsSync(join(root, 'linked-dir')) && readFileSync(join(outside, 'real', 'payload.txt'), 'utf8') === 'keep me\n')
+	check('链接目标目录本身还在', existsSync(join(outside, 'real', 'SKILL.md')))
+}
+
+section('备份：软链接只存链接本身（不 dereference），恢复时重建链接')
+{
+	const stateDir = tempDir('backup-state')
+	const skillRoot = tempDir('backup-skills')
+	const outside = tempDir('backup-outside')
+	const store = backupsModule.createBackupStore({ backupDir: join(stateDir, 'backups'), stagingDir: join(stateDir, 'staging'), log: () => {} })
+	mkdirSync(join(outside, 'real'), { recursive: true })
+	writeFileSync(join(outside, 'real', 'SKILL.md'), '---\nname: real\ndescription: 链接目标\n---\n\n# real\n')
+	symlinkSync(join(outside, 'real'), join(skillRoot, 'linked'))
+
+	const backupPath = store.create('linked', join(skillRoot, 'linked'), 'symlink')
+	const copyPath = join(backupPath, 'content', 'linked')
+	check('备份出来的是一份链接，不是一个目录', lstatSync(copyPath).isSymbolicLink())
+	check('备份副本指向同一个链接目标', readlinkSync(copyPath) === join(outside, 'real'), readlinkSync(copyPath))
+	const meta = JSON.parse(readFileSync(join(backupPath, 'meta.json'), 'utf8'))
+	check('meta.json 记了 kind=symlink 与链接目标', meta.kind === 'symlink' && meta.link === join(outside, 'real'), JSON.stringify(meta))
+	const entry = store.find('linked')
+	check('find 能读出链接目标', entry.link === join(outside, 'real'), JSON.stringify(entry))
+	rmSync(join(skillRoot, 'linked'))
+	store.put(entry, join(skillRoot, 'linked'))
+	check('恢复重建的是链接而不是复制出来的目录', lstatSync(join(skillRoot, 'linked')).isSymbolicLink() && readlinkSync(join(skillRoot, 'linked')) === join(outside, 'real'))
+}
 
 // ── 3. 仓库订阅（桩 GitHub） ──────────────────────────────────────────────
 
