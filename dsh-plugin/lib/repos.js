@@ -10,8 +10,9 @@
  *
  * 三条刻意的设计边界：
  *
- *   1. **安装只写全局 DSH 技能目录**（`<DSH_HOME>/skills`）。项目技能根只支持启停，
- *      不支持安装——否则「卸载订阅」就有了删掉项目文件的能力，那是不可接受的破坏面。
+ *   1. **安装可以指定目标**：缺省写全局 DSH 技能根（`<DSH_HOME>/skills`），
+ *      显式传 `targetSkillsDir` 时写那个目录（当前项目技能根走这条路）。
+ *      没有 `targetSkillsDir` 时行为与 0.3.0 完全一致。
  *   2. **拉取（fetch）不等于安装**。拉取只更新清单缓存，绝不碰技能目录；
  *      安装是另一个显式动作，且覆盖前一定先备份。
  *   3. **不覆盖别人的东西**：目标位置已有同名技能但不属于本订阅（冲突），
@@ -347,10 +348,12 @@ export function createRepositoryManager(options) {
 		fetch: fetchRepository,
 
 		/** 手动安装/更新选中的技能。 */
-		async install({ id, skills, confirm }) {
+		async install({ id, skills, confirm, targetSkillsDir }) {
 			const record = store.require(id)
 			const manifest = store.readManifest(id) ?? (await fetchRepository(id)).manifest
 			const wanted = Array.isArray(skills) ? skills : []
+			// 目标目录：缺省 = 这个 manager 的全局 skillsDir（向后兼容）
+			const dir = typeof targetSkillsDir === 'string' && targetSkillsDir !== '' ? targetSkillsDir : skillsDir
 			const installed = []
 			const skipped = []
 			for (const name of wanted) {
@@ -364,10 +367,11 @@ export function createRepositoryManager(options) {
 						skipped.push({ name, reason: 'skill frontmatter is invalid; fix it upstream' })
 						continue
 					}
-					const target = targetPathFor(skillsDir, name, entry.kind)
+					const target = targetPathFor(dir, name, entry.kind)
 					const snapshot = record.skills?.[name]
-					const conflict = snapshot === undefined && existsSync(target)
-					const modified = snapshot !== undefined && isLocallyModified(target, snapshot)
+					// 装到别的根时，订阅快照（只描述全局那份）不能拿来证明目标没被改过 → 一律当冲突处理。
+					const conflict = existsSync(target) && (snapshot === undefined || dir !== skillsDir)
+					const modified = dir === skillsDir && snapshot !== undefined && isLocallyModified(target, snapshot)
 					if ((conflict || modified) && confirm !== true) {
 						skipped.push({
 							name,
@@ -380,15 +384,18 @@ export function createRepositoryManager(options) {
 					const files = await downloadSkillFiles(record, manifest.commit, entry)
 					const backup = existsSync(target) ? backups.create(name, target, entry.kind) : null
 					writeSkill(target, entry.kind, files)
-					record.skills = record.skills ?? {}
-					record.skills[name] = {
-						sourcePath: entry.sourcePath,
-						kind: entry.kind,
-						commit: manifest.commit,
-						installedAt: now(),
-						files: Object.fromEntries(files.map((file) => [file.rel, file.blobSha])),
+					// 只在写全局时才更新订阅快照：项目安装不写台账，免得顶掉全局那份的记录。
+					if (dir === skillsDir) {
+						record.skills = record.skills ?? {}
+						record.skills[name] = {
+							sourcePath: entry.sourcePath,
+							kind: entry.kind,
+							commit: manifest.commit,
+							installedAt: now(),
+							files: Object.fromEntries(files.map((file) => [file.rel, file.blobSha])),
+						}
+						store.save()
 					}
-					store.save()
 					installed.push({ name, path: target, updated: snapshot !== undefined || conflict, backup })
 				} catch (error) {
 					skipped.push({ name, reason: errorText(error) })
@@ -401,6 +408,11 @@ export function createRepositoryManager(options) {
 		/** 备份列表（`name` 省略 = 全部技能）。 */
 		backups(name) {
 			return backups.list(name)
+		},
+
+		/** 删除/移动前调用的一次性整份备份（透传 `backups.create`，路径知识只留在这一层）。 */
+		backupSkill({ name, target, kind }) {
+			return backups.create(name, target, kind)
 		},
 
 		/** 恢复某次备份（省略 id = 最近一次）。恢复前会把当前版本再备份一次。 */

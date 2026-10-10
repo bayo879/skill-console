@@ -9,11 +9,14 @@
  *
  * 错误壳里的 `code` 是**机器读的**（界面按码翻译），`error` 是给人看的中文兜底。
  * handler 抛的 `httpError(statusCode, code)` 直接决定状态码；其他异常一律 500。
+ *
+ * 破坏性动作（删除技能 / 移动到项目）由本层编排：**先备份 → 备份成功才动盘**，
+ * 备份失败一律 500 `error.delete.backup`，一个字节都不改；路径语义与围栏仍在 `roots.js`。
  */
 
 import { basename } from 'node:path'
 
-import { scanRoot, toggleSkill, readSkill, findCollisions } from './roots.js'
+import { copySkillIntoRoot, findCollisions, planRemoval, readSkill, removeSkill, scanRoot, toggleSkill } from './roots.js'
 import { applyRole, planRole } from './roles.js'
 import { CLIENT_HEADER, errorText, httpError, readJsonBody, trustedHostsOf, validateMutation, validateRequestOrigin, writeJson } from './http.js'
 import { listProjects, resolveProject, rootsFor } from './projects.js'
@@ -235,7 +238,15 @@ export function createRouteHandlers(deps) {
 				throw httpError(400, 'error.proto.missingSkills', 'skills 必须是非空数组')
 			}
 			if (body.skills.length > MAX_BATCH) throw httpError(400, 'error.proto.tooMany', `一次最多处理 ${MAX_BATCH} 个技能`)
-			return repositories.install({ id, skills: body.skills.map(String), confirm: body.confirm === true })
+			// target 只认 'project'，其余（含缺省）一律 global —— 向后兼容，也避免新增错误码。
+			const target = body.target === 'project' ? 'project' : 'global'
+			let targetSkillsDir
+			if (target === 'project') {
+				const { project, projectRoot } = roleContextOf(req.headers['x-skill-console-session'])
+				if (project === null || projectRoot === null) throw httpError(400, 'error.role.noProject', '解析不出项目技能根，无法装到项目')
+				targetSkillsDir = projectRoot.path
+			}
+			return repositories.install({ id, skills: body.skills.map(String), confirm: body.confirm === true, targetSkillsDir })
 		},
 
 		async roles(req, url) {
@@ -345,6 +356,85 @@ export function createRouteHandlers(deps) {
 			if (skillName === '') throw httpError(400, 'error.proto.missingName', '缺少 name')
 			return repositories.restore({ name: skillName, backup: body.backup === undefined ? undefined : String(body.backup) })
 		},
+
+		/** 删除一个技能：先整份备份，备份成功才动盘（失败 500 `error.delete.backup`）。 */
+		async skillsDelete(req) {
+			const body = await readJsonBody(req)
+			const filePath = String(body.path ?? '')
+			if (filePath === '') throw httpError(400, 'error.proto.missingPath', '缺少 path')
+			const { roots: visibleRoots } = contextOf(req.headers['x-skill-console-session'])
+			const removal = planRemoval(visibleRoots, filePath)
+			// 先备份；备份失败一个字节都不删。
+			let backup
+			try {
+				backup = repositories.backupSkill({ name: removal.name, target: removal.backupTarget, kind: removal.backupKind })
+			} catch (error) {
+				throw httpError(500, 'error.delete.backup', `备份失败，技能一个字节都没删：${errorText(error)}`)
+			}
+			const { removed, changed } = removeSkill(removal)
+			if (changed) {
+				refreshSkills()
+				notifyFileChanged(removal.path)
+			}
+			return {
+				name: removal.name,
+				path: removal.path,
+				kind: removal.kind,
+				form: removal.form,
+				root: removal.root,
+				directory: removal.directory,
+				backup,
+				removed,
+				deleted: changed,
+			}
+		},
+
+		/** 把全局技能根里的一个技能搬到当前项目技能根：先复制，复制成功后再删全局。 */
+		async skillsMoveToProject(req) {
+			const body = await readJsonBody(req)
+			const filePath = String(body.path ?? '')
+			if (filePath === '') throw httpError(400, 'error.proto.missingPath', '缺少 path')
+			const { project, projectRoot, globalRoot, roots: visibleRoots } = roleContextOf(req.headers['x-skill-console-session'])
+			if (project === null || projectRoot === null) throw httpError(400, 'error.role.noProject', '解析不出项目技能根，无法移动')
+			const removal = planRemoval(visibleRoots, filePath)
+			// `planRemoval` 的 `root` 是根的 **key 字符串**（见 roots.js 的 readSkill），不是根对象。
+			if (removal.root !== 'user-dsh') throw httpError(400, 'error.transfer.notGlobal', `只能把全局技能移到项目：${removal.path}`)
+			if (removal.form === 'symlink') throw httpError(400, 'error.transfer.symlink', `软链接技能不允许移动（会动到链接目标）：${removal.path}`)
+			const source = readSkill(removal.path, { roots: visibleRoots })
+			// 「同名」一律按**技能名**判，不按目标路径判：项目里那份可能是扁平 `X.md`，
+			// 而源是目录包 `X/`，只比 `targetPathFor()` 会漏判，结果同一个名字两个副本。
+			if (scanRoot(projectRoot).skills.some((entry) => entry.name === source.name)) {
+				throw httpError(409, 'error.transfer.exists', `项目里已有同名技能，拒绝覆盖：${source.name}`)
+			}
+			let backup
+			try {
+				backup = repositories.backupSkill({ name: removal.name, target: removal.backupTarget, kind: removal.backupKind })
+			} catch (error) {
+				throw httpError(500, 'error.delete.backup', `备份失败，什么都没移动：${errorText(error)}`)
+			}
+			const copied = copySkillIntoRoot(projectRoot, source)
+			let globalRemoved = true
+			let warning
+			try {
+				removeSkill(removal)
+			} catch (error) {
+				// 不回滚：项目里那份已经就位，如实报告全局没删掉，让用户再点一次「删除」。
+				globalRemoved = false
+				warning = `项目里已经就位，但全局那份没删掉：${errorText(error)}`
+			}
+			refreshSkills()
+			notifyFileChanged(copied.path)
+			if (globalRemoved) notifyFileChanged(removal.path)
+			return {
+				name: copied.name,
+				from: globalRoot === null ? null : globalRoot.path,
+				to: projectRoot.path,
+				kind: source.kind,
+				backup,
+				globalRemoved,
+				...(warning === undefined ? {} : { warning }),
+			}
+		},
 	}
 }
 
@@ -381,6 +471,8 @@ const WRITE_ROUTES = {
 	'/repositories/fetch': 'repositoryFetch',
 	'/repositories/install': 'repositoryInstall',
 	'/restore': 'restore',
+	'/skills/delete': 'skillsDelete',
+	'/skills/move-to-project': 'skillsMoveToProject',
 	'/roles/save': 'rolesSave',
 	'/roles/remove': 'rolesRemove',
 	'/roles/activate': 'rolesActivate',

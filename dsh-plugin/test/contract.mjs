@@ -859,6 +859,22 @@ try {
 }
 check('没有备份时给 404 而不是编一个空目录', noBackup?.statusCode === 404 && noBackup.code === 'error.backup.notFound')
 
+// 安装目标：装到项目技能根（targetSkillsDir），而不是 manager 的 skillsDir
+const projectSkillsDir = tempDir('sc-repo-project-skills')
+const targetStub = stubGithub(repoSources, { commit: 'c0ffee123456' })
+const managerTarget = reposModule.createRepositoryManager({ stateDir, skillsDir, log: () => {}, fetchImpl: targetStub.fetchImpl, now: () => 1789000004000 })
+await managerTarget.fetch('o/r')
+const toProject = await managerTarget.install({ id: 'o/r', skills: ['beta'], confirm: false, targetSkillsDir: projectSkillsDir })
+check('安装目标可传入：文件落进项目技能根', existsSync(join(projectSkillsDir, 'beta', 'SKILL.md')) && toProject.installed[0]?.path === join(projectSkillsDir, 'beta'), JSON.stringify(toProject))
+check('装到项目时全局技能根没有被写', !existsSync(join(skillsDir, 'beta')))
+const toProjectDup = await managerTarget.install({ id: 'o/r', skills: ['beta'], confirm: false, targetSkillsDir: projectSkillsDir })
+check('装到项目时目标已存在 → 默认拒绝覆盖', toProjectDup.installed.length === 0 && toProjectDup.skipped.length === 1, JSON.stringify(toProjectDup))
+const toProjectConfirmed = await managerTarget.install({ id: 'o/r', skills: ['beta'], confirm: true, targetSkillsDir: projectSkillsDir })
+check('装到项目时 confirm 后覆盖并留备份', toProjectConfirmed.installed.length === 1 && toProjectConfirmed.installed[0].backup !== null, JSON.stringify(toProjectConfirmed))
+check('装到项目不会顶掉订阅快照（全局那份的台账还在自己手里）', managerTarget.detail('o/r').skills.find((skill) => skill.name === 'beta')?.installedPath === null)
+const toGlobalDefault = await managerTarget.install({ id: 'o/r', skills: ['gamma'], confirm: false })
+check('缺省 targetSkillsDir 仍然写全局（向后兼容）', toGlobalDefault.installed[0]?.path === join(skillsDir, 'gamma.md'), JSON.stringify(toGlobalDefault))
+
 // 上游删掉一个技能
 const removedUpstream = stubGithub({ 'skills/alpha/SKILL.md': repoSources['skills/alpha/SKILL.md'] }, { commit: 'abadcafe0000' })
 const manager3 = reposModule.createRepositoryManager({ stateDir, skillsDir, log: () => {}, fetchImpl: removedUpstream.fetchImpl, now: () => 1789000002000 })
@@ -1530,6 +1546,62 @@ check('角色读端点用 POST 405', rolePostOnRead.status === 405 && rolePostOn
 // 守卫 ctx（真实 cordis 语义）下也要跑通
 const guardedRoles = await callRouteOrReport(guarded.routeOf(), { path: '/api/skill-console/roles', headers: roleSession })
 check('守卫 ctx 下 GET /roles 返回 200', guardedRoles.status === 200, guardedRoles.threw ?? `${guardedRoles.status} ${JSON.stringify(guardedRoles.json).slice(0, 160)}`)
+
+section('技能端点：删除 / 移动到项目（真备份、真围栏）')
+// 删除：先备份再删，删完能从备份原样恢复
+placeSkill(join(home, 'skills'), 'del-target', true)
+const delRes = await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'del-target', 'SKILL.md') } })
+check('POST /skills/delete 返回 200 且 deleted', delRes.status === 200 && delRes.json?.data?.deleted === true, `${delRes.status} ${JSON.stringify(delRes.json).slice(0, 200)}`)
+check('删除响应带回备份目录', typeof delRes.json?.data?.backup === 'string' && existsSync(delRes.json.data.backup))
+check('磁盘上技能整包消失', !existsSync(join(home, 'skills', 'del-target')))
+check('技能根本身还在', existsSync(join(home, 'skills')))
+const restoreRes = await call({ method: 'POST', path: '/api/skill-console/restore', headers: { ...ROLE_WRITE, ...roleSession }, body: { name: 'del-target' } })
+check('删除后能从备份原样恢复', restoreRes.status === 200 && existsSync(join(home, 'skills', 'del-target', 'SKILL.md')), `${restoreRes.status} ${JSON.stringify(restoreRes.json).slice(0, 200)}`)
+check('缺 path → 400 error.proto.missingPath', (await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { ...ROLE_WRITE, ...roleSession }, body: {} })).json?.code === 'error.proto.missingPath')
+const outsideDelete = await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(tmpdir(), 'nowhere', 'SKILL.md') } })
+check('根外路径 → 400 error.path.outsideRoots', outsideDelete.status === 400 && outsideDelete.json?.code === 'error.path.outsideRoots', `${outsideDelete.status} ${JSON.stringify(outsideDelete.json).slice(0, 160)}`)
+check('GET 打这个写端点 → 405', (await call({ path: '/api/skill-console/skills/delete', headers: roleSession })).status === 405)
+check('缺标记头 → 403', (await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { 'content-type': 'application/json' }, body: { path: join(home, 'skills', 'del-target', 'SKILL.md') } })).status === 403)
+
+// 移动：只允许全局 → 项目
+placeSkill(join(home, 'skills'), 'move-me', true)
+const moveRes = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'move-me', 'SKILL.md') } })
+check('POST /skills/move-to-project 200 且 globalRemoved=true', moveRes.status === 200 && moveRes.json?.data?.globalRemoved === true, `${moveRes.status} ${JSON.stringify(moveRes.json).slice(0, 200)}`)
+check('项目里出现启用态副本', existsSync(join(rolesProjectSkills, 'move-me', 'SKILL.md')))
+check('全局那份已经不存在', !existsSync(join(home, 'skills', 'move-me')))
+placeSkill(rolesProjectSkills, 'p-local', true)
+const notGlobal = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesProjectSkills, 'p-local', 'SKILL.md') } })
+check('项目里的技能不能「移到项目」→ 400 error.transfer.notGlobal', notGlobal.status === 400 && notGlobal.json?.code === 'error.transfer.notGlobal', `${notGlobal.status} ${JSON.stringify(notGlobal.json).slice(0, 160)}`)
+placeSkill(join(home, 'skills'), 'dup-me', true)
+placeSkill(rolesProjectSkills, 'dup-me', true)
+const dupMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'dup-me', 'SKILL.md') } })
+check('目标已有同名 → 409 error.transfer.exists', dupMove.status === 409 && dupMove.json?.code === 'error.transfer.exists', `${dupMove.status} ${JSON.stringify(dupMove.json).slice(0, 200)}`)
+check('冲突时全局那份没被动', existsSync(join(home, 'skills', 'dup-me', 'SKILL.md')))
+check('冲突时项目那份也没被动', existsSync(join(rolesProjectSkills, 'dup-me', 'SKILL.md')))
+const linkOutside = tempDir('move-outside')
+mkdirSync(join(linkOutside, 'nofm'), { recursive: true })
+writeFileSync(join(linkOutside, 'nofm', 'SKILL.md'), '# 没有 frontmatter\n')
+symlinkSync(join(linkOutside, 'nofm'), join(home, 'skills', 'link-me'))
+const linkMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'link-me', 'SKILL.md') } })
+check('软链接 → 400 error.transfer.symlink', linkMove.status === 400 && linkMove.json?.code === 'error.transfer.symlink', `${linkMove.status} ${JSON.stringify(linkMove.json).slice(0, 200)}`)
+check('软链接被拒后链接目标还在', existsSync(join(linkOutside, 'nofm', 'SKILL.md')))
+
+// 「复制成功、删全局失败」：把全局那份设成只读，删不掉 → 如实报告，不回滚
+placeSkill(join(home, 'skills'), 'stuck-me', true)
+chmodSync(join(home, 'skills', 'stuck-me'), 0o500)
+let stuckMove
+try {
+	stuckMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'stuck-me', 'SKILL.md') } })
+} finally {
+	chmodSync(join(home, 'skills', 'stuck-me'), 0o700)
+}
+check('删全局失败 → 200 但 globalRemoved=false', stuckMove?.status === 200 && stuckMove?.json?.data?.globalRemoved === false, `${stuckMove?.status} ${JSON.stringify(stuckMove?.json).slice(0, 240)}`)
+check('删全局失败时项目里已经就位', existsSync(join(rolesProjectSkills, 'stuck-me', 'SKILL.md')))
+check('删全局失败时如实带 warning', typeof stuckMove?.json?.data?.warning === 'string' && stuckMove.json.data.warning.length > 0, String(stuckMove?.json?.data?.warning))
+
+// 安装目标端点：装到当前项目
+const installToProject = await call({ method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['alpha'], target: 'project' } })
+check('install 带 target=project 时按项目根解析（未订阅该仓库 → 404，不是 500）', installToProject.status === 404 || installToProject.status === 200, `${installToProject.status} ${JSON.stringify(installToProject.json).slice(0, 200)}`)
 
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
