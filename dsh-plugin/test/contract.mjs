@@ -2161,6 +2161,50 @@ try {
 }
 check('locale 缺失时不抛异常', localeMissingThrew === false)
 
+// ── 0.4.0：删除 / 移到项目 / 安装目标 / 角色的 copy 与 localKept ──────────
+
+// SkillRow 是普通函数组件：用极简 React 替身直接调用就能看它渲染了什么。
+// 注意这里的 `delRowT` / `delRowProps` 不能叫 `tStub` / `rowProps`——上面已经有同名的顶层 const。
+const delRowT = (key) => key
+const rowSkill = {
+	name: 'demo', path: '/x/demo/SKILL.md', kind: 'directory', enabled: true,
+	toggleable: true, root: 'user-dsh', readOnlyReason: null,
+}
+const delRowProps = { t: delRowT, skill: rowSkill, busy: false, rootName: '全局 DSH', canMove: true, onOpen: () => {}, onToggle: () => {}, onDelete: () => {}, onMove: () => {} }
+const renderRow = (props) => JSON.stringify(clientExports.SkillRow({ ...delRowProps, ...props }))
+check('SkillRow 有 onDelete 时渲染删除按钮', renderRow({}).includes('skills.delete'))
+check('SkillRow 在全局技能上渲染「移到项目」', renderRow({}).includes('skills.move'))
+check('没给 onDelete 就不渲染删除按钮', !renderRow({ onDelete: undefined }).includes('skills.delete'))
+check('项目技能没有「移到项目」（canMove=false）', !renderRow({ canMove: false, skill: { ...rowSkill, root: 'project-dsh' } }).includes('skills.move'))
+
+// 确认框文案：根名 / 技能名 / 形态三个槽都要填，软链与全局各补一句
+check('删除确认框带上根名、技能名与形态', clientSource.includes("t('skills.deleteConfirm', { name:") && clientSource.includes('form: skillFormText(t, skill)') && clientSource.includes('root: rootName'))
+check('软链接的删除说明是「只删这个链接」', clientSource.includes("t('skills.deleteSymlinkHint')"))
+check('全局技能的删除说明会提示影响所有项目', clientSource.includes("t('skills.deleteGlobalHint')"))
+check('「移到项目」只在全局技能上出现', clientSource.includes("root.key === 'user-dsh' && skill.toggleable === true"))
+check('移动确认框写明「全局那份会消失」', clientSource.includes("t('skills.moveConfirm', { name:") && clientSource.includes("t('skills.movePartial'"))
+check('角色面板把 copy 数显示出来', clientSource.includes("t('roles.copyCount', { count: copyCount })"))
+check('角色面板把 localKept 显示出来', clientSource.includes("t('roles.localKept')") && clientSource.includes("t('roles.localKeptHint')"))
+check('仓库页有安装目标选择', clientSource.includes("t('repos.installTarget')") && clientSource.includes('target: installTarget'))
+check('安装到项目时会提示全局根不受影响', clientSource.includes("t('repos.targetProjectHint')"))
+// 从角色列表直接激活时没有草稿：确认框的数量必须按「被激活的那个角色」算，否则恒为 0。
+check('激活确认框按被激活角色的技能算数量', clientSource.includes('const confirmText = (skills) =>') && clientSource.includes('runActivate(role.id, role.skills ?? [])'))
+check('从编辑器激活时按草稿算数量', clientSource.includes('runActivate(current.id, current.skills)'))
+// 面板不显示任何具体目录地址（README.md:28）：删除 / 移动的回执里不许留 {path} / {backup} 槽。
+const noticeCopy = [dictionaryZh['skills.deleteDone'], dictionaryZh['skills.moveDone'], dictionaryEn['skills.deleteDone'], dictionaryEn['skills.moveDone']].join('|')
+check('删除 / 移动的回执不显示目录地址', !/\{path\}|\{backup\}/.test(noticeCopy), noticeCopy)
+
+// 词典：0.4.0 新增键 zh / en 都得有（键集一致性由上面那条通用断言兜着）
+for (const key of [
+	'skills.delete', 'skills.deleteConfirm', 'skills.deleteSymlinkHint', 'skills.deleteGlobalHint',
+	'skills.deleteDone', 'skills.deleteFailed', 'skills.move', 'skills.moveConfirm', 'skills.moveDone',
+	'skills.movePartial', 'skills.moveFailed', 'skills.formFlat', 'skills.formDirectory', 'skills.formSymlink',
+	'roles.copyCount', 'roles.localKept', 'roles.localKeptHint',
+	'repos.installTarget', 'repos.targetGlobal', 'repos.targetProject', 'repos.targetProjectHint',
+]) {
+	check(`词典 zh / en 都有 ${key}`, typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string', `zh=${typeof dictionaryZh[key]} en=${typeof dictionaryEn[key]}`)
+}
+
 // ── 结果 ──────────────────────────────────────────────────────────────────
 
 delete process.env.DSH_HOME

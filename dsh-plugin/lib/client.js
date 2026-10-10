@@ -96,7 +96,7 @@ window.__ModuleLoader__.load({
 				'roles.remove': '删除',
 				'roles.removeConfirm': '删除角色「{name}」？磁盘上的技能文件一个都不会动。',
 				'roles.activate': '切换到此角色',
-				'roles.activateConfirm': '切换会把当前项目的技能对齐到这个角色：启用 {enable} 个、停用 {disable} 个。全局技能不受影响。确定吗？',
+				'roles.activateConfirm': '切换会把当前项目的技能对齐到这个角色：复制 {copy} 个、启用 {enable} 个、停用 {disable} 个。全局技能不受影响（复制只从全局读一份到项目，全局那份不会被改）。确定吗？',
 				'roles.deactivate': '取消角色',
 				'roles.deactivateConfirm': '取消角色的激活记录？磁盘上的技能保持现状，不会还原。',
 				'roles.save': '保存',
@@ -116,7 +116,10 @@ window.__ModuleLoader__.load({
 				'roles.missingHint': '这些名字在别的项目里可能有；在本项目里切换时会被跳过。',
 				'roles.noProjectRoot': '这个项目还没有技能根（<项目根>/.dsh/skills 不存在）。',
 				'roles.noCandidates': '项目技能根里还没有技能。',
-				'roles.activateSummary': '启用 {enable} 个 / 停用 {disable} 个 / 跳过 {skipped} 个',
+				'roles.activateSummary': '复制 {copy} 个 / 启用 {enable} 个 / 停用 {disable} 个 / 跳过 {skipped} 个',
+				'roles.copyCount': '复制 {count} 个',
+				'roles.localKept': '项目里已有同名，保留本地副本',
+				'roles.localKeptHint': '这些技能在这个项目里已经有一份，角色不会用全局那份覆盖它们。',
 				'roles.takeover': '「{name}」停用后有同名技能接管生效',
 				'roles.resultOk': '完成',
 				'roles.resultSkipped': '跳过',
@@ -169,6 +172,22 @@ window.__ModuleLoader__.load({
 				'skills.batchDisable': '全部停用',
 				'skills.batchResult': '已更新 {changed} 项。',
 				'skills.batchFailed': '{failed} 项失败',
+				'skills.delete': '删除',
+				'skills.deleteConfirm': '删除{form}技能「{name}」（{root}）？会先整份备份，之后可以从备份恢复。',
+				'skills.deleteSymlinkHint': '这是一个软链接：只删这个链接，不动它指向的技能。',
+				'skills.deleteGlobalHint': '删的是全局技能，删掉后所有项目都不再加载它。',
+				'skills.deleteDone': '已删除「{name}」，已先整份备份，可以从备份恢复',
+				'skills.deleteFailed': '删除失败',
+				'skills.move': '移到项目',
+				'skills.moveConfirm': '把全局技能「{name}」移到当前项目（{project}）？全局那份会消失；项目里已有同名技能时会拒绝，不覆盖。',
+				'skills.moveDone': '已把「{name}」移到当前项目技能根',
+				// 宿主 `skillsMoveToProject` 已经把整句话写好了（含失败原因），这里只做透传，
+				// 否则会渲染成「项目里已经就位，但全局那份没删掉：项目里已经就位，但全局那份没删掉：…」。
+				'skills.movePartial': '{warning}',
+				'skills.moveFailed': '移动失败',
+				'skills.formFlat': '扁平文件',
+				'skills.formDirectory': '目录包',
+				'skills.formSymlink': '软链接',
 				'skills.groupMissing': '目录不存在',
 				'skills.groupCount': '{count} 个技能',
 				'skills.detailTitle': '技能详情',
@@ -278,6 +297,10 @@ window.__ModuleLoader__.load({
 				'repos.selectAll': '全选可更新',
 				'repos.selectNone': '全不选',
 				'repos.selected': '已选 {count} 个',
+				'repos.installTarget': '安装到',
+				'repos.targetGlobal': '全局技能根',
+				'repos.targetProject': '当前项目技能根',
+				'repos.targetProjectHint': '装到当前项目时，全局技能根不会被动；项目里已有同名技能需要确认才覆盖。',
 			},
 			en: {
 				'section.label': 'Skill console',
@@ -297,7 +320,7 @@ window.__ModuleLoader__.load({
 				'roles.remove': 'Delete',
 				'roles.removeConfirm': 'Delete the role "{name}"? No skill file on disk will be touched.',
 				'roles.activate': 'Switch to this role',
-				'roles.activateConfirm': 'Switching aligns this project\'s skills to the role: {enable} enabled, {disable} disabled. Global skills are unaffected. Continue?',
+				'roles.activateConfirm': 'Switching aligns this project\'s skills to the role: copy {copy}, enable {enable}, disable {disable}. Global skills are unaffected (copying only reads one from the global root into the project; the global copy is never changed). Continue?',
 				'roles.deactivate': 'Clear role',
 				'roles.deactivateConfirm': 'Clear this project\'s active-role record? Skills on disk stay as they are — nothing is restored.',
 				'roles.save': 'Save',
@@ -317,7 +340,10 @@ window.__ModuleLoader__.load({
 				'roles.missingHint': 'These names may exist in other projects; switching here skips them.',
 				'roles.noProjectRoot': 'This project has no skill root yet (<projectRoot>/.dsh/skills does not exist).',
 				'roles.noCandidates': 'The project skill root has no skills yet.',
-				'roles.activateSummary': '{enable} enabled / {disable} disabled / {skipped} skipped',
+				'roles.activateSummary': 'copy {copy} / enable {enable} / disable {disable} / skipped {skipped}',
+				'roles.copyCount': 'copy {count}',
+				'roles.localKept': 'A local copy already exists — keeping it',
+				'roles.localKeptHint': 'These skills already exist in this project; the role will not overwrite them with the global copies.',
 				'roles.takeover': 'After disabling "{name}", a same-named skill takes over',
 				'roles.resultOk': 'done',
 				'roles.resultSkipped': 'skipped',
@@ -370,6 +396,21 @@ window.__ModuleLoader__.load({
 				'skills.batchDisable': 'Disable all',
 				'skills.batchResult': '{changed} updated.',
 				'skills.batchFailed': '{failed} failed',
+				'skills.delete': 'Delete',
+				'skills.deleteConfirm': 'Delete the {form} skill "{name}" ({root})? It is backed up in full first and can be restored from the backup.',
+				'skills.deleteSymlinkHint': 'This is a symlink: only the link is deleted, the skill it points to is untouched.',
+				'skills.deleteGlobalHint': 'This is a global skill; removing it stops every project from loading it.',
+				'skills.deleteDone': 'Deleted "{name}"; a full backup was taken and can be restored',
+				'skills.deleteFailed': 'Delete failed',
+				'skills.move': 'Move to project',
+				'skills.moveConfirm': 'Move the global skill "{name}" into the current project ({project})? The global copy will disappear; an existing same-named project skill makes this refuse rather than overwrite.',
+				'skills.moveDone': 'Moved "{name}" into the current project skill root',
+				// 宿主 `skillsMoveToProject` 已经把整句话写好了（含失败原因），这里只做透传。
+				'skills.movePartial': '{warning}',
+				'skills.moveFailed': 'Move failed',
+				'skills.formFlat': 'flat file',
+				'skills.formDirectory': 'directory package',
+				'skills.formSymlink': 'symlink',
 				'skills.groupMissing': 'Directory does not exist',
 				'skills.groupCount': '{count} skills',
 				'skills.detailTitle': 'Skill details',
@@ -479,6 +520,10 @@ window.__ModuleLoader__.load({
 				'repos.selectAll': 'Select installable',
 				'repos.selectNone': 'Select none',
 				'repos.selected': '{count} selected',
+				'repos.installTarget': 'Install to',
+				'repos.targetGlobal': 'Global skill root',
+				'repos.targetProject': 'Current project skill root',
+				'repos.targetProjectHint': 'Installing into the current project never writes the global skill root; an existing same-named project skill needs confirmation to overwrite.',
 			},
 		}
 
@@ -898,6 +943,31 @@ window.__ModuleLoader__.load({
 			return t('skills.readOnlyOther', { reason: String(skill.readOnlyReason) })
 		}
 
+		/** 技能形态：软链接 > 扁平 > 目录包（与宿主 `planRemoval` 的 form 同一口径）。 */
+		function skillFormOf(skill) {
+			if (!skill || skill.toggleable !== true) return 'symlink'
+			return skill.kind === 'flat' ? 'flat' : 'directory'
+		}
+
+		function skillFormText(t, skill) {
+			const form = skillFormOf(skill)
+			if (form === 'symlink') return t('skills.formSymlink')
+			return form === 'flat' ? t('skills.formFlat') : t('skills.formDirectory')
+		}
+
+		/** 删除确认框：根名 + 技能名 + 形态；软链接与全局各补一句后果。 */
+		function deleteConfirmText(t, skill, rootName) {
+			const lines = [t('skills.deleteConfirm', { name: (skill && skill.name) || '', form: skillFormText(t, skill), root: rootName || '' })]
+			if (skillFormOf(skill) === 'symlink') lines.push(t('skills.deleteSymlinkHint'))
+			if (skill && skill.root === 'user-dsh') lines.push(t('skills.deleteGlobalHint'))
+			return lines.join('\n')
+		}
+
+		/** 移动确认框：只有全局技能才该被问到。 */
+		function moveConfirmText(t, skill, projectName) {
+			return t('skills.moveConfirm', { name: (skill && skill.name) || '', project: projectName || '' })
+		}
+
 		/** 服务器给的根 key → 显示名：优先用宿主 label，没有就用本地化根名。 */
 		function rootLabel(t, key, fallbackLabel) {
 			if (typeof fallbackLabel === 'string' && fallbackLabel !== '') return fallbackLabel
@@ -1123,6 +1193,22 @@ window.__ModuleLoader__.load({
 				h(
 					'div',
 					{ className: 'sc-row-actions', onClick: stop() },
+					props.onDelete
+						? h(UiButton, {
+								variant: 'ghost',
+								size: 'sm',
+								onClick: () => props.onDelete(skill, props.rootName),
+								children: t('skills.delete'),
+							})
+						: null,
+					props.canMove === true && props.onMove
+						? h(UiButton, {
+								variant: 'ghost',
+								size: 'sm',
+								onClick: () => props.onMove(skill, props.rootName),
+								children: t('skills.move'),
+							})
+						: null,
 					h(UiButton, {
 						variant: 'ghost',
 						size: 'sm',
@@ -1186,6 +1272,11 @@ window.__ModuleLoader__.load({
 								t,
 								skill,
 								busy: props.busyPath === skill.path,
+								// 只有全局根里的普通技能能被搬到项目（软链接不碰）
+								canMove: root.key === 'user-dsh' && skill.toggleable === true,
+								rootName: rootLabel(t, root.key, root.label),
+								onDelete: props.onDelete,
+								onMove: props.onMove,
 								onOpen: props.onOpen,
 								onToggle: props.onToggle,
 							}),
@@ -1376,6 +1467,49 @@ window.__ModuleLoader__.load({
 					.finally(() => setBatchBusy(false))
 			}
 
+			// 删除 / 移到项目之后，详情与目录都可能过期，一起重来。
+			const reloadAfterAction = () => {
+				setDetail(null)
+				loadCatalog()
+			}
+
+			const projectLabelOf = () => {
+				const entry = projects.find((item) => item && item.sessionId === activeProject) ?? projects[0]
+				return entry === undefined ? '' : projectNameOf(entry)
+			}
+
+			const removeSkillFile = (skill, rootName) => {
+				if (busyPath !== null) return
+				if (!askConfirm(deleteConfirmText(t, skill, rootName))) return
+				setBusyPath(skill.path)
+				setNotice(null)
+				setActionFail(null)
+				apiPost('/skills/delete', { path: skill.path }, sessionId)
+					.then((data) => {
+						// 备份落在 DSH_HOME 下，是绝对路径：面板不显示具体目录地址，所以只报「已备份」。
+						setNotice(t('skills.deleteDone', { name: data.name || skill.name || '' }))
+						reloadAfterAction()
+					})
+					.catch((error) => setActionFail(actionError(t, error)))
+					.then(() => setBusyPath(null))
+			}
+
+			const moveSkillToProject = (skill) => {
+				if (busyPath !== null) return
+				if (!askConfirm(moveConfirmText(t, skill, projectLabelOf()))) return
+				setBusyPath(skill.path)
+				setNotice(null)
+				setActionFail(null)
+				apiPost('/skills/move-to-project', { path: skill.path }, sessionId)
+					.then((data) => {
+						if (data.globalRemoved === false) setNotice(t('skills.movePartial', { warning: data.warning ?? '' }))
+						else setNotice(t('skills.moveDone', { name: data.name || skill.name || '' }))
+						reloadAfterAction()
+					})
+					.catch((error) => setActionFail(actionError(t, error)))
+					.then(() => setBusyPath(null))
+			}
+
 			const project = catalog.data && catalog.data.project ? catalog.data.project : null
 			const collisions = catalog.data && Array.isArray(catalog.data.collisions) ? catalog.data.collisions : []
 			const warnings = catalog.data && Array.isArray(catalog.data.warnings) ? catalog.data.warnings : []
@@ -1471,6 +1605,8 @@ window.__ModuleLoader__.load({
 						onOpen: loadDetail,
 						onToggle: toggle,
 						onBatch: batch,
+						onDelete: removeSkillFile,
+						onMove: moveSkillToProject,
 					}),
 				),
 				roots.length > 0 && batchBusy ? h('div', { className: 'sc-hint' }, t('common.loading')) : null,
@@ -1662,6 +1798,8 @@ window.__ModuleLoader__.load({
 							picked: props.picked,
 							installResult: props.installResult,
 							emptyDetailKey: props.emptyDetailKey,
+							installTarget: props.installTarget,
+							onInstallTarget: props.onInstallTarget,
 							onTogglePick: props.onTogglePick,
 							onSelectAll: props.onSelectAll,
 							onClearPicked: props.onClearPicked,
@@ -1699,6 +1837,15 @@ window.__ModuleLoader__.load({
 					h(UiButton, { variant: 'ghost', size: 'sm', disabled: props.busy || skills.length === 0, onClick: props.onSelectAll, children: t('repos.selectAll') }),
 					h(UiButton, { variant: 'ghost', size: 'sm', disabled: props.busy || pickedNames.length === 0, onClick: props.onClearPicked, children: t('repos.selectNone') }),
 					h(UiButton, { variant: 'primary', disabled: props.busy || pickedNames.length === 0, icon: UiIcon('IconDownloadOutline16', 14), onClick: props.onInstall, children: t('repos.install') }),
+				),
+				// 安装目标：全局技能根（缺省）或当前项目技能根。缺省 global 时这一行照样显示，只是高亮在全局。
+				h(
+					'div',
+					{ className: 'sc-bar' },
+					h('span', { className: 'sc-hint' }, t('repos.installTarget')),
+					h(UiPill, { active: props.installTarget !== 'project', onClick: () => props.onInstallTarget('global'), children: t('repos.targetGlobal') }),
+					h(UiPill, { active: props.installTarget === 'project', onClick: () => props.onInstallTarget('project'), children: t('repos.targetProject') }),
+					props.installTarget === 'project' ? h('span', { className: 'sc-hint' }, t('repos.targetProjectHint')) : null,
 				),
 				detail.error ? h('div', { className: 'sc-err', role: 'alert' }, detail.error) : null,
 				detail.loading ? h('div', { className: 'sc-hint' }, t('repos.detailLoading')) : null,
@@ -1921,6 +2068,8 @@ window.__ModuleLoader__.load({
 			const [actionFail, setActionFail] = react.useState(null)
 			// 安装结果 `id -> { installed, skipped }`，跟着它所属的那个仓库显示。
 			const [installResult, setInstallResult] = react.useState({})
+			// 安装目标：全局技能根（缺省）还是当前项目技能根。
+			const [installTarget, setInstallTarget] = react.useState('global')
 			const [form, setForm] = react.useState({ url: '', ref: '', subdirectory: '' })
 			// 正在编辑的订阅：`id === ''` 表示没有行处于编辑态。
 			const [edit, setEdit] = react.useState({ id: '', form: { ref: '', subdirectory: '' } })
@@ -2167,7 +2316,7 @@ window.__ModuleLoader__.load({
 					confirm = true
 				}
 				return run(() =>
-					apiPost('/repositories/install', { id, skills: names, confirm }, sessionId).then((data) => {
+					apiPost('/repositories/install', { id, skills: names, confirm, target: installTarget }, sessionId).then((data) => {
 						setInstallResult((previous) => ({
 							...previous,
 							[id]: {
@@ -2254,6 +2403,8 @@ window.__ModuleLoader__.load({
 									picked: picked[repo.id],
 									installResult: installResult[repo.id],
 									emptyDetailKey: emptyDetailKeyFor(repo),
+									installTarget,
+									onInstallTarget: setInstallTarget,
 									onToggle: toggleRepo,
 									onFetch: fetchLatest,
 									onRemove: removeRepo,
@@ -2500,6 +2651,9 @@ window.__ModuleLoader__.load({
 			const status = roleStatusOf(data)
 			const roles = Array.isArray(data.roles) ? data.roles : []
 			const projectName = data.project?.name ?? t('roles.noProject')
+			// 0.4.0：角色里「将从全局复制进项目」的数量，以及「项目里已有同名、保留本地」的名单。
+			const copyCount = Number(data.stats?.copy ?? 0)
+			const localKeptList = Array.isArray(data.localKept) ? data.localKept : []
 
 			/** 把一份角色转成草稿。 */
 			const draftOf = (role) => ({ id: role.id, name: role.name, skills: [...(role.skills ?? [])] })
@@ -2507,22 +2661,37 @@ window.__ModuleLoader__.load({
 			const current = draft ?? { id: null, name: '', skills: [] }
 			const missingInDraft = current.skills.filter((name) => !(data.candidates?.project ?? []).some((skill) => skill.name === name))
 
-			/** 准备一份「将启用 M / 停用 N」的确认文案（按草稿本地算，不为了弹窗再打一次接口）。 */
-			const confirmText = () => {
-				const picked = new Set(current.skills)
-				const enable = (data.candidates?.project ?? []).filter((skill) => picked.has(skill.name) && skill.enabled !== true).length
-				const disable = (data.candidates?.project ?? []).filter((skill) => !picked.has(skill.name) && skill.enabled === true).length
-				return t('roles.activateConfirm', { enable, disable })
+			/**
+			 * 准备一份「将复制 A / 启用 M / 停用 N」的确认文案（本地算，不为了弹窗再打一次接口）。
+			 * 技能名由调用方显式传入：从角色列表直接激活时并没有草稿，
+			 * 若读 `current.skills`（草稿为空时是空数组）会把数量恒算成 0。
+			 */
+			const confirmText = (skills) => {
+				const wanted = skills ?? []
+				const picked = new Set(wanted)
+				const projectSkills = data.candidates?.project ?? []
+				const globalNames = new Set((data.candidates?.global ?? []).map((skill) => skill.name))
+				const known = new Set(projectSkills.map((skill) => skill.name))
+				// copy：角色里有、项目里没有、全局根里有 → 对齐时会从全局复制一份进项目
+				const copy = wanted.filter((name) => !known.has(name) && globalNames.has(name)).length
+				const enable = projectSkills.filter((skill) => picked.has(skill.name) && skill.enabled !== true).length
+				const disable = projectSkills.filter((skill) => !picked.has(skill.name) && skill.enabled === true).length
+				return t('roles.activateConfirm', { copy, enable, disable })
 			}
 
-			const runActivate = (roleId) => {
-				if (!askConfirm(confirmText())) return
+			const runActivate = (roleId, skills) => {
+				if (!askConfirm(confirmText(skills))) return
 				setBusy(true)
 				apiPost('/roles/activate', { id: roleId }, props.sessionId)
 					.then((result) => {
 						const failed = (result.results ?? []).filter((entry) => entry.ok !== true)
 						const takeover = result.takeover ?? []
-						const lines = [t('roles.activateSummary', { enable: result.changed, disable: 0, skipped: failed.length })]
+						// `activate` 的 data 里没有 stats，只有 results：按实际动作现算回执。
+						const done = (result.results ?? []).filter((entry) => entry.ok === true)
+						const copies = done.filter((entry) => entry.action === 'copy').length
+						const enables = done.filter((entry) => entry.action === 'enable').length
+						const disables = done.filter((entry) => entry.action === 'disable').length
+						const lines = [t('roles.activateSummary', { copy: copies, enable: enables, disable: disables, skipped: failed.length })]
 						for (const entry of takeover) lines.push(t('roles.takeover', { name: entry.name }))
 						setNotice(lines.join('；'))
 						setDraft(null)
@@ -2585,6 +2754,7 @@ window.__ModuleLoader__.load({
 					h(UiTag, { tone: roleToneOf(status) }, t(roleStatusKey(status))),
 					data.active === null || data.active === undefined ? null : h(UiTag, { tone: 'quiet' }, data.active.name),
 					data.project?.fallback === true ? h(UiTag, { tone: 'warning' }, t('roles.fallback')) : null,
+					copyCount > 0 ? h(UiTag, { tone: 'quiet' }, t('roles.copyCount', { count: copyCount })) : null,
 					h('span', { className: 'sc-spacer' }),
 					h(UiButton, { disabled: busy, onClick: () => setDraft({ id: null, name: '', skills: [] }) }, t('roles.new')),
 					status === 'unassigned' ? null : h(UiButton, { disabled: busy, onClick: runDeactivate }, t('roles.deactivate')),
@@ -2592,6 +2762,15 @@ window.__ModuleLoader__.load({
 				status === 'drifted' ? h('span', { className: 'sc-sub' }, t('roles.statusDriftedHint')) : null,
 				error === null ? null : h('span', { className: 'sc-role-error' }, error),
 				notice === null ? null : h('span', { className: 'sc-role-notice' }, notice),
+				localKeptList.length > 0
+					? h(
+							'div',
+							{ className: 'sc-note' },
+							h('div', { className: 'sc-group-title' }, t('roles.localKept')),
+							localKeptList.map((entry) => h('div', { key: 'local-kept-' + entry.name, className: 'sc-hint' }, entry.name)),
+							h('div', { className: 'sc-hint' }, t('roles.localKeptHint')),
+						)
+					: null,
 				draft !== null
 					? h(RoleEditor, {
 						t,
@@ -2603,7 +2782,7 @@ window.__ModuleLoader__.load({
 						onToggle: toggleSkill,
 						onSave: runSave,
 						onCancel: () => setDraft(null),
-						onActivate: current.id === null ? null : () => runActivate(current.id),
+						onActivate: current.id === null ? null : () => runActivate(current.id, current.skills),
 					})
 					: h(
 						'div',
@@ -2618,7 +2797,7 @@ window.__ModuleLoader__.load({
 									role,
 									status,
 									busy,
-									onActivate: () => runActivate(role.id),
+									onActivate: () => runActivate(role.id, role.skills ?? []),
 									onEdit: () => setDraft(draftOf(role)),
 									onRemove: () => runRemove(role),
 								}),
