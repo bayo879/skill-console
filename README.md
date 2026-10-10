@@ -185,7 +185,7 @@ DSH_HOME="$HOME/Library/Application Support/dsh-desktop/harness" \
 
 宿主 API 面：`docs/HTTP-API.md`（20 个端点，冻结契约）。
 
-角色（技能组合）的设计与规格：`docs/readme/roles.md` —— 「角色」标签页已实现（`dsh-skill-console@0.3.0`）；实施计划与逐条约束：`docs/readme/roles-plan.md`。
+角色（技能组合）的设计与规格：`docs/readme/roles.md` —— 「角色」标签页已实现（`dsh-skill-console@0.3.0`）。
 
 ---
 
