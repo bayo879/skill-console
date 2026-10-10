@@ -1,0 +1,17 @@
+# dsh-skill-console bundle patch：把插件行插进 web profile 的花名册。
+#
+# 以 profile bundle 层生效（package.json 的 dsh.bundle.patch 字段）。
+# 安装：dsh plugin --profile web add link:<…>/skill-console/dsh-plugin
+# 之后必须重启 DSH Desktop——bundle 列表是**启动时**读的。
+#
+# 这一行只是宿主插件（node 半边）；浏览器半边由 package.json 的 dsh.client 声明，
+# 由 web GUI 从 /plugins/dsh-skill-console/client.js 加载，不需要在这里再写一行。
+#
+# 三处身份标识必须一致（对不上会静默不加载，DSH 不报错）：
+#   package.json 的 name  = dsh-skill-console
+#   本文件的 insert id    = skill-console
+#   lib/index.js 的 name  = skill-console
+#   lib/client.js 的 bundle id = dsh-skill-console（模块表 key，等于包名）
+- insert:
+    - id: skill-console
+      name: 'dsh-skill-console'

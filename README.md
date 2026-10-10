@@ -1,2 +1,231 @@
-# skill-console
-dsh skill manager
+# dsh-skill-console
+
+DSH 的**技能控制台**：一个设置分区，管两件事——两个技能根里的技能**开/关**，以及 GitHub **技能仓库订阅**（添加/编辑/更新/删除订阅，手动拉取、挑选安装、备份回滚）。面板头部显示插件当前版本号。
+
+面板位置：**设置 → 技能控制台**（`settings.section`，`order: 14`）。
+
+---
+
+## 为什么需要它
+
+DSH 自己不带技能管理界面，于是有几件事只能手工做：
+
+| 需求 | 没有面板时 | 本插件 |
+| --- | --- | --- |
+| 临时关掉一个技能 | 手动把 `SKILL.md` 改名或搬走（还得记住改回来） | 一个开关，只重命名发现文件 |
+| 看某个技能到底从哪加载的 | 在 4 个目录里判断同名文件谁生效 | 直接标出生效者与被覆盖者 |
+| 装第三方技能仓库 | `git clone` 后手工挑目录复制 | 订阅仓库 → 拉取 → 勾选安装 → 可回滚 |
+| 更新已装技能 | 自己 diff、自己备份 | 变更预览 + 覆盖前自动整份备份 |
+
+关键前提：DSH 的 filesystem provider 只认**精确文件名**（`SKILL.md` / `<name>.md`），并且只在技能根下**扫一层**。所以「关技能」最干净的做法就是给发现文件加一个 `.disabled` 后缀——内容零改动，DSH 当它不存在。
+
+---
+
+## 功能
+
+### 技能 tab
+
+- **两个技能根全都可见可写**：全局 `<DSH_HOME>/skills`、项目 `<projectRoot>/.dsh/skills`（受 `DSH_HOME` 影响）。`.agents` 目录不在本插件的管理面内：不扫描、不加载。面板上不显示任何具体目录地址，只显示根名与项目名。
+- **按项目切换**：项目维度来自活着会话的 `cwd`（向上找 `.git` 得到项目根）。**按项目根去重**——同一个工作区开过几次会话只列一条（下拉里是项目名，不是绝对路径）；去重后仍保证当前会话是它所属项目的那条代表。没带当前会话时会回落到最近一个会话，并在界面上**显式提示**——不会让你以为在管 A 项目其实在管 B。
+- **同名覆盖关系讲清楚**：多个根里同名且都启用的技能，面板标出谁能生效、谁被压住；关掉生效的那份，会告诉你接下来由谁接管。
+- **诊断**：缺 `description`、`name` 不合法、frontmatter 围栏缺失/未闭合、读文件失败，逐条按码展示（见 `docs/HTTP-API.md` 的诊断码表）。
+- **明细行显示所属仓库**：订阅装来的显示 `owner/name`，本地技能显示「本地（非订阅）」；技能简介不再内联占位，改到**悬停气泡**里（气泡里同时带安装 commit 与仓库内路径）。
+- **软链接技能只读**：重命名会落到链接目标里去，所以面板显示它、但不给开关（`toggleable: false`）。
+- **批量启停**：整组一键开关，逐项报告结果。
+
+### 仓库 tab
+
+- **订阅**：`owner/name`、`https://github.com/owner/name`、`git@github.com:owner/name.git`、带 `/tree/<ref>/<subdir>` 的网页地址都能解析；可另填 `ref`（分支/标签/commit）与 `subdirectory`。
+- **拉取 ≠ 安装**：`拉取最新` 只刷新远端清单（写入 `repository-cache/`），技能目录一个字节都不动。
+- **变更预览**：可更新的技能会列出 `added / modified / removed` 的文件。
+- **挑选安装**：勾选要装的技能再装；目标位置已有**不属于本订阅**的同名技能、或本地内容与安装快照**不一致**时，默认拒绝覆盖，需要显式确认（`confirm: true`），且覆盖前一定整份备份。
+- **备份与回滚**：每次覆盖都留一份备份，可查看并恢复到任意一版（恢复前会把当前版本再备份一次）。
+- **一行一个订阅、可折叠**：每个订阅是一张卡片，卡片头就是那一行仓库信息（地址、分支、子目录、上次拉取、状态汇总）。技能明细长在**它所属的那个订阅下面**，点卡片头（或左边的展开/收起按钮）就能收起；头部有「全部收起」。收起只是藏起来，明细与勾选都留着，再展开立刻就有内容。
+- **管理订阅**：卡片头三个动作——`编辑`（改分支/子目录，改完自动重拉清单）、`拉取最新`（更新远端清单）、`移除订阅`（删除）。收起状态也能用：收起不等于不能操作。
+- **编辑 ≠ 换仓库**：`owner/name` 是订阅的身份，编辑只改分支与子目录；换仓库请移除后重新添加。
+- **卸载订阅 ≠ 删技能**：移除订阅只删订阅记录，已安装的技能原样留在磁盘上。
+- **勾选是每个订阅各持一份**：同时展开两个订阅、或刷新列表，都不会把别的订阅上的勾选弄丢。
+
+### 角色 tab（把一组技能存成名字，一键对齐）
+
+- **角色是「技能名的命名组合」，全局共享**：一份 `<DSH_HOME>/skill-console/roles.json` 存所有角色，跨项目复用；角色只记技能名，不记路径。
+- **切换（`切换` 按钮）严格对齐项目技能根**：角色里的启用、项目里其余的全部停用。同一个角色在不同项目切换，各项目得到的是「本项目里该开的开、该关的关」。
+- **全局技能不受角色控制**（硬边界）：全局根在角色链路上**结构上不可达**（`applyRole` 只接收单个项目根），面板上全局候选一律标「只读 · 全局不可控」。
+- **编辑是草稿，只有「切换」才落盘**：新建/改角色只写 `roles.json`，一个技能文件都不碰；预览（`GET /roles/preview`）也只读不写。
+- **偏离角色不自动纠正**：手工改过开关、或上游动了技能目录，面板就显示「已偏离」，等你自己再切一次——不会偷偷帮你改回来。
+
+---
+
+## 四条设计边界
+
+1. **关技能只重命名发现文件**（`SKILL.md` ↔ `SKILL.md.disabled`、`<name>.md` ↔ `<name>.md.disabled`）。内容不改、文件不删，手工改回去就恢复——不依赖本插件还装着。
+2. **拉取不等于安装**。拉取只写清单缓存；安装是另一个显式动作，且覆盖前必先备份。
+3. **安装只写全局 DSH 技能根**（`<DSH_HOME>/skills`）。项目技能根只做启停、不接收仓库安装——于是「卸载订阅」在任何情况下都不会碰到项目里的文件。
+4. **角色切换只写项目技能根，全局根在结构上不可达**。`applyRole(projectRoot, plan)` 的入参就只有项目根，没有「顺便改一下全局」的分支；想改全局技能，只能自己去技能 tab 逐个点。
+
+---
+
+## 安装
+
+插件是**本仓库里的源码**，用 `link:` 装进 profile（改代码不用重装，重启即生效）：
+
+```bash
+DSH_HOME="$HOME/Library/Application Support/dsh-desktop/harness" \
+  "$DSH_HOME/.desktop-bin/node" \
+  "/Applications/DSH Desktop.app/Contents/Resources/app/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+  plugin --profile web add \
+  "link:/Users/zhanbaiyang/Documents/code/ai/agents/dsh/skill-console/dsh-plugin"
+```
+
+`dsh plugin add` 会：跑一次 pnpm、把依赖写进 `dsh.profile.bundles`（只要包声明了 `dsh.bundle.patch`）。装完**需要重启 DSH Desktop**——bundle 列表只在启动时读一次。
+
+传统 CLI（`~/.dsh` 作为 DSH_HOME）同理，把 `--profile` 换成你要的 profile 即可。
+
+---
+
+## 验证
+
+### 离线契约测试（不联网、不需要 DSH）
+
+```bash
+node skill-console/dsh-plugin/test/contract.mjs
+```
+
+覆盖 432 项，守的是「重启之前就能确定」的事：
+
+- **四份身份标识一致**：`package.json` 包名 / `cordis.patch.yml` insert id / 宿主 `name` / 客户端 bundle id。对不上时插件会**静默不加载**（DSH 不报错），所以必须机器守。
+- **扫描与启停**：发现规则（只扫一层、大小写敏感、跳过 `.`）、`.disabled` 语义、同名覆盖、软链接只读、越界拒绝、409 冲突、批量逐项结果。
+- **仓库订阅**：用桩 fetch 假造 GitHub（tree + raw），跑通 添加 → 拉取 → 安装 → 本地改动被保护 → 确认更新 + 备份 → 恢复 → 上游删除 → 内容被篡改时拒绝落盘 → 网络失败/限流 → 卸载保留技能 → 状态文件损坏拒绝覆盖。
+- **宿主路由**：回环围栏（非法 Host / 跨站 / 跨源 403）、写操作标记与 content-type、body 上限、各错误码。
+- **角色**：`roles.json` 的原子写 / 损坏拒写 / 上限 / 重名（id 归一化后再比）、`planRole` 的 enable/disable/noop/skipped/missing 分类、`applyRole` 逐项隔离且**全局根结构上不可达**，以及 6 个角色端点的状态码、围栏与 405。
+- **浏览器半边**：模块表注册、`inject` 面、`settings.section` 契约、降级边界、缺 primitives / 缺 slots / 缺 locale 都不崩。
+
+### 三层验证（越往下越接近真实）
+
+| 命令 | 测什么 | 需要什么 |
+| --- | --- | --- |
+| `npm test`（`test/contract.mjs`） | 逻辑、契约、身份标识、cordis 语义守卫（代理 ctx） | 只要 node |
+| `npm run test:cordis`（`test/integration-cordis.mjs`） | 挂到**本机真实的 cordis** 上跑：真 `provide`/真 fiber 树/真 inject 解析 | 装了 DSH Desktop |
+| `npm run smoke`（`test/smoke.mjs`） | 打真实运行中的 HTTP 面（含一次真启停往返） | 装了**并重启过**的 DSH |
+| `npm run layout`（`test/layout-probe.mjs`） | 把 CSS 用真 Chrome 渲染出来量一遍：`flex` 收缩会不会又把订阅卡片压成 0 高度 | 本机有 Chrome |
+
+`test:cordis` 存在的理由：`contract.mjs` 里的守卫 ctx 是我对 cordis 语义的模型，模型会错。
+第一次现场验证就是「离线全绿、线上裸 400」，所以这里直接 import 应用里那份 cordis——
+它复现了同一个堆栈（`routes.js:245` → `cannot get property "webRuntime" without inject`），
+修好后才转绿。
+
+`layout-probe.mjs` 存在的理由：`contract.mjs` 对样式只能做**源码断言**（正则匹配 CSS 文本里有没有
+`.sc-body > * { flex: 0 0 auto }`），那证明不了布局真的对。它从 `lib/client.js` 抽出真实 CSS，
+复刻成「改动前 / 改动后」两份 HTML，用 headless Chrome 量 `.sc-group` 的实际高度：
+改动前只剩 2px（两条边框，里面的仓库行还是 79.88px，内容在、盒子被压扁），
+改动后恢复 81.88px，溢出交给 `.sc-body` 自己滚。没装 Chrome 就跳过并以 0 退出，不进 `npm test`。
+
+### 现场冒烟测试（需要装好并重启过的 DSH）
+
+```bash
+node skill-console/dsh-plugin/test/smoke.mjs          # 或 npm run smoke
+```
+
+打**真实运行中**的 HTTP 面（默认 `http://127.0.0.1:43129`，可用 `$DSH_WEB_URL` 覆盖），验证宿主半边真的在工作：
+`/state` 的两个根与真实 `DSH_HOME`、`/catalog` 的技能行字段、`/skill` 的正文与 frontmatter、
+写操作围栏（403/415/非回环 Host）、以及**一次真实的启停往返**——它会自己建一个临时技能
+`<DSH_HOME>/skills/zz-skill-console-smoke/`，关掉、读回、再打开，最后无论成败都整份删除；
+同名目录已存在时直接退出，绝不碰你的真技能。顺带确认已装的 `@michengai/dsh-skills-manager`
+仍然可用（两个分区并存）。角色那节走的是**零动作往返**：用当前已启用的项目技能拼一个
+夹具角色（`zz-skill-console-smoke-role`，同名已存在就退出）、预览、切换、再拆掉——
+切换确实走了写路径，但角色恰好等于现状，所以磁盘上一个字节都不动。为什么不在冒烟里测
+真切换：`activate` 会把项目技能根里角色外的技能全部停用，而冒烟打的是你**真实的工作区**，
+为了测一个接口把你的技能关掉一批，代价不成比例；对齐语义由 `test/contract.mjs`
+在临时目录里覆盖。
+
+### 手工验收（面板）
+
+1. 重启 DSH Desktop，打开 **设置 → 技能控制台**；面板头部应显示版本号，并列出两个技能根。
+2. 范围切到「项目」：下拉里**每个项目只有一条**，显示的是项目名而不是绝对路径；当前会话所在项目默认选中。同一工作区开过几次会话都只算一个项目。
+3. 关掉一个技能 → 该目录下出现 `SKILL.md.disabled`，原文件消失、内容不变；开关状态随之翻转。
+4. 在任意会话里让 Agent 用一次技能 → 关闭的技能不再出现在技能目录里（注册表已失效，下一个 `agent/pre-step` 生效）。
+5. 仓库 tab 添加 `obra/superpowers`（`subdirectory` 填放技能的那一层，例如 `skills`）→ 拉取 → 列表出现技能与状态 → 勾选安装 → 文件落进 `<DSH_HOME>/skills/`。
+6. 装完改一下本地文件 → 再拉取 → 该技能显示「本地已改动」，不带确认不会覆盖；确认覆盖后可在备份里回滚。
+
+### 非重启验证：profile 里确实挂上了
+
+```bash
+DSH_HOME="$HOME/Library/Application Support/dsh-desktop/harness" \
+  "$DSH_HOME/.desktop-bin/node" \
+  "/Applications/DSH Desktop.app/Contents/Resources/app/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+  --profile web --dump-config | grep -A3 skill-console
+```
+
+`--dump-config` 只合成配置树、不启动应用，所以能证明 patch 行已并入 bundle 层。
+
+---
+
+## 模块图
+
+宿主半边（`lib/`，全部 `node:fs`，无第三方依赖）：
+
+| 文件 | 职责 |
+| --- | --- |
+| `index.js` | 只做装配：注册路由、注册刷新用 provider、`fs/observed` 通知 |
+| `roots.js` | 两个技能根的解析、扫描、启停（唯一的破坏性写操作） |
+| `frontmatter.js` | SKILL.md 的小子集 frontmatter 解析 + 诊断（绝不抛、绝不猜） |
+| `diagnostics.js` | 诊断码表（宿主只回机器码，界面自己翻译） |
+| `repos.js` | 仓库订阅编排：添加/拉取/安装/恢复 |
+| `repo-manifest.js` | 纯函数：从 GitHub tree 挑技能、算文件、组装清单条目 |
+| `github.js` | GitHub API / raw 下载 / 提交与 tree 解析 |
+| `store.js` | 订阅状态文件与清单缓存的持久化（原子替换、损坏拒写） |
+| `backups.js` | 备份存储、快照、原子恢复 |
+| `rows.js` | 技能行状态机 + 汇总（列表页与详情页共用一份口径） |
+| `projects.js` | 项目维度：会话 → cwd → 项目根 → 可见技能根（按项目根去重，一个项目一条） |
+| `roles.js` | 角色（技能组合）：`roles.json` 持久化、切换计划（纯函数 `planRole`）、切换执行（`applyRole` 只收单个项目根，全局根结构上不可达；扫描与改名一律委托 `roots.js`） |
+| `routes.js` | HTTP 路由、围栏、错误壳 |
+| `http.js` | 通用 HTTP 件：围栏、请求体、JSON 响应 |
+| `gitsha.js` | git blob SHA-1（校验下载内容 / 算本地快照，两侧必须同一算法） |
+| `client.js` | 浏览器半边（单文件：`dsh.client` 只服务一个文件，没法拆） |
+
+宿主 API 面：`docs/HTTP-API.md`（20 个端点，冻结契约）。
+
+角色（技能组合）的设计与规格：`docs/readme/roles.md` —— 「角色」标签页已实现（`dsh-skill-console@0.3.0`）；实施计划与逐条约束：`docs/readme/roles-plan.md`。
+
+---
+
+## 平台坑（改这个插件前必读，每条都是现场踩出来的）
+
+1. **未 inject 的服务，读属性就抛，`?.` 救不了。**
+   cordis 对未声明 `inject` 的服务，在**取属性那一刻**抛
+   `cannot get property "webRuntime" without inject`——不是返回 `undefined`，
+   所以 `ctx.webRuntime?.trustedHosts` 照样炸。可选服务只有一种正确读法：
+   `ctx.get('webRuntime', false)`（核心能力、不需要 inject，缺失时回 `undefined`）。
+   去重读法见 `http.js` 的 `trustedHostsOf()`；`test/contract.mjs` 用代理 ctx
+   忠实复刻了这个守卫，任何「未 inject 的属性读」都会让离线测试失败。
+2. **handler 里逃出去的异常，宿主 webserver 会回一个没有正文的 400。**
+   面板那边只能显示「接口没挂上」，排查成本极高（第一次现场验证就是这么挂的）。
+   所以宿主入口最外层兜底把任何异常转成 `500 {ok:false, code:'error.internal'}`，
+   保证**每个响应都是带 code 的 JSON 壳**。
+3. **`/api/skill-console` 会盖住 `/api` 那道 cookie 鉴权门。**
+   `webServer` 是最长前缀优先，插件路由比 RPC 通道的 `/api` 更具体，于是请求
+   直接进本插件（线上实测：无 cookie `curl` 其他已装插件的 `/api/*` 也拿 200）。
+   结论：本插件的门只有自己的回环围栏，见下面「围栏不是认证」。
+4. **客户端 bundle 的注册 id 必须等于包名**（`/plugins/<包名>/client.js`，
+   行 id 反而是 `skill-console`）。四个身份标识互相对不上时，插件会**静默不加载**
+   且 DSH 不报错，只能靠测试守——见 `test/contract.mjs` 的「身份标识一致性」一节。
+5. **`webRuntime` 只提供 `{lanAddresses, trustedHosts}`**，由 `dsh-web-app` 用
+   `webServer.host` + 它自己的 `trustedHosts` 配置算出来；本插件只读不算，
+   免得两份受信名单漂移出安全口径差。
+
+---
+
+## 已知边界（刻意不做的事）
+
+- **没有自动更新、没有轮询**。DSH 里没有可靠的定时器宿主面，而且「技能被静默换掉」比「手动点一下」危险得多。
+- **备份不会自动清理**。目前靠用户手动删目录；加自动清理＝需要一个明确的保留策略，等有真实诉求再说。
+- **上游删掉的技能不会自动删本地**。只标 `upstream-deleted`，删不删由人决定。
+- **不解析完整 YAML**。只认顶层 `key: scalar`、成对引号、`|`/`>` 块标量；嵌套结构只跳过。真正的加载行为以 DSH 的 provider 为准，本插件只负责「展示 + 诊断」。所以可能出现「面板说合法、DSH 仍加载失败」的边缘 case——那时以 Agent 侧报错为准。
+- **仓库根不是技能根**。`subdirectory` 必须指到放技能的那一层（含 `<name>/SKILL.md` 或 `<name>.md`）；指向单个技能目录会得到空清单（DSH 也不把根级 `SKILL.md` 当技能）。
+- **根级 `.md` 文档不算技能**。扁平候选（基目录下深度 1 的 `<name>.md`）只有 frontmatter 合法才收进清单：一个 `.md` 说明不了它是技能，订阅 monorepo 根时 `README.md` / `CONTRIBUTING.md` / `CLAUDE.md` 之类会全被卷进来，装不了也删不掉（现场事故：`juliusbrussee/caveman` 的 11 个根级文档刷出一屏「frontmatter 不合法」）。目录候选不受影响——真有 `SKILL.md` 就是真技能，它坏了要留在清单里让人看见，那是上游的问题。拉取成功却 0 技能时，详情区会直接提示「技能可能在子目录里」。
+- **围栏不是认证，而且它是这条路由上唯一的门**。DSH 的 `/api` RPC 通道本身有「绑定 authority 的签名 cookie」鉴权，但 `webServer` 是**最长前缀优先**，所以 `/api/skill-console` 会盖过 `/api` 的那道 cookie 门（已装的其他插件同样如此，已实测：无 cookie 直接 `curl /api/<plugin>/...` 会拿到 200）。也就是说本插件的写接口靠的是自己的回环 + `Host`/`Origin`/`sec-fetch-site` 校验加写操作标记头，防的是 DNS-rebinding 与跨站请求，**不是**身份认证。把 DSH 用 `--host 0.0.0.0` 暴露到局域网时，任何能连上的人都能调这些接口——那时不要依赖这道围栏。
+- **项目下拉里只显示项目名，不显示地址**（README 第 28 行那条「面板不显示任何目录地址」的延伸，也是从现场问题来的：一排一模一样的绝对路径根本没法选）。代价是**不同父目录下的同名项目在下拉里长得一模一样**，头部「当前项目」也只有一个名字，界面上没有别的地方能把它们区分开。要区分就得把绝对路径放回来——两者只能选一个。
+- **另一个技能管理器用的是「策略停用」，本插件用的是「改名」**。本机活动 profile 里，`dsh-skill-filesystem` 被 `dsh-web-app` 的补丁 `disabled: true` 关掉了，实际在提供技能的是 `@michengai/dsh-skills-manager` 自己的 provider（`dsh-skills-manager-external`）。它停用技能是往自己的状态文件里写策略（日志原话「本地策略，源文件不变」），本插件则是把 `SKILL.md` 改名成 `SKILL.md.disabled`。两种机制**可以叠加**：改名之后它的 provider 根本扫不到 `SKILL.md`，所以技能确实不会被 DSH 加载（它的发现规则也是「目录里得有 `SKILL.md`」，已核对实现）。但两边的**显示**会不一致——它按策略停用的技能，在本插件看来仍是「已启用」（因为文件没动）。这是两个独立管理器共存时无法消除的差异，刻意不读它的私有状态文件去对齐。
+- **GitHub token 只用于提高限流额度**：`DSH_SKILL_CONSOLE_GITHUB_TOKEN` 或 `GITHUB_TOKEN`。面板只回报「有没有配」，不回显值。
+- **角色排除不掉全局技能**。角色只能管项目技能根，所以一个全局技能永远进不了「角色内/角色外」这套判定。真正的坑在同名：停用项目的同名副本后，**全局那份会接管生效**——角色想让某个技能彻底不生效却做不到（除非去技能 tab 手工关全局那份）。`/roles/activate` 会把这种情况逐条报在 `takeover` 里，但不代为处理。
+- **`dsh-plugin/lib/client.js` 单文件 2000+ 行是 DSH 加载机制的结构性代价，不是没重构**。`dsh.client` 的面只服务**一个文件**（`/plugins/<包名>/client.js`），没有构建步骤、没有 bundle 入口，拆成多文件就得自己造一层运行时模块加载——比一个长文件危险得多。既然拆不动，就只能靠**内部分区**（常量、模型、视图、样式各成段，靠分段注释和契约测试守边界）。这条与「单文件超 2000 行就该拆」的常规原则冲突，冲突的根因在 DSH 那边的加载模型。

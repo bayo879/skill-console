@@ -1,0 +1,43 @@
+{
+	"name": "dsh-skill-console",
+	"version": "0.3.0",
+	"description": "DSH 插件：全局/项目技能开启与关闭 + GitHub 技能仓库订阅与手动更新（设置 →「技能控制台」）",
+	"type": "module",
+	"engines": {
+		"node": ">=22.15"
+	},
+	"main": "lib/index.js",
+	"exports": {
+		".": "./lib/index.js",
+		"./client": "./lib/client.js",
+		"./package.json": "./package.json"
+	},
+	"dsh": {
+		"bundle": {
+			"patch": "./cordis.patch.yml"
+		},
+		"client": {
+			"inject": [
+				"@deepseek-ai/dsh-client-ui-settings",
+				"@deepseek-ai/dsh-client-locale",
+				"@deepseek-ai/dsh-client-ui-slots"
+			],
+			"platform": "web"
+		}
+	},
+	"scripts": {
+		"test": "node test/contract.mjs",
+		"test:cordis": "node test/integration-cordis.mjs",
+		"layout": "node test/layout-probe.mjs",
+		"smoke": "node test/smoke.mjs"
+	},
+	"keywords": [
+		"dsh",
+		"dsh-plugin",
+		"deepseek-harness",
+		"skill",
+		"skills",
+		"skill-manager"
+	],
+	"license": "MIT"
+}
