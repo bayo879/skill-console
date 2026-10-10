@@ -243,19 +243,22 @@ export function createRouteHandlers(deps) {
 			const { project, projectRoot, globalRoot } = roleContextOf(sessionId)
 			const activeRole = activeRoleOf(project)
 			const projectSkills = projectSkillsOf(projectRoot)
-			const plan = activeRole === null ? null : planRole({ role: activeRole, skills: projectSkills })
+			// 全局扫描结果一身二用：既是复制来源（sources），又是只读候选；别扫两遍。
+			const globalSkills = globalRoot === null ? [] : scanRoot(globalRoot).skills
+			const plan = activeRole === null ? null : planRole({ role: activeRole, skills: projectSkills, sources: globalSkills })
 			const stats = plan === null
-				? { inRole: 0, total: projectSkills.length, enable: 0, disable: 0, noop: 0, skipped: 0, missing: 0 }
-				: { inRole: activeRole.skills.length, ...plan.stats }
+				? { inRole: 0, total: projectSkills.length, copy: 0, enable: 0, disable: 0, noop: 0, skipped: 0, missing: 0, localKept: 0 }
+				: { inRole: activeRole.skills.length, ...plan.stats, localKept: plan.localKept.length }
 			return {
 				roles: roleStore.list().map((role) => publicRole(role, activeRole?.id ?? null)),
 				active: activeRole === null ? null : { id: activeRole.id, name: activeRole.name },
 				project: project === null ? null : { name: basename(project.root), fallback: project.fallback === true },
 				status: statusOf(activeRole, plan),
 				stats,
+				localKept: plan === null ? [] : plan.localKept,
 				candidates: {
 					project: projectSkills.map((skill) => candidateOf(skill, false)),
-					global: (globalRoot === null ? [] : scanRoot(globalRoot).skills).map((skill) => candidateOf(skill, true)),
+					global: globalSkills.map((skill) => candidateOf(skill, true)),
 				},
 			}
 		},
@@ -266,8 +269,9 @@ export function createRouteHandlers(deps) {
 			const role = roleStore.get(roleId)
 			if (role === null) throw httpError(404, 'error.role.unknown', `没有这个角色：${roleId}`)
 			const sessionId = url.searchParams.get('project') ?? req.headers['x-skill-console-session']
-			const { projectRoot } = roleContextOf(sessionId)
-			const plan = planRole({ role, skills: projectSkillsOf(projectRoot) })
+			const { projectRoot, globalRoot } = roleContextOf(sessionId)
+			// 预览必须和切换看到同一份事实，所以同样传 sources。
+			const plan = planRole({ role, skills: projectSkillsOf(projectRoot), sources: globalRoot === null ? [] : scanRoot(globalRoot).skills })
 			return { role: { id: role.id, name: role.name }, status: plan.steps.length > 0 ? 'drifted' : 'matched', ...plan }
 		},
 
@@ -294,9 +298,10 @@ export function createRouteHandlers(deps) {
 			if (id === '') throw httpError(400, 'error.proto.missingId', '缺少 id')
 			const role = roleStore.get(id)
 			if (role === null) throw httpError(404, 'error.role.unknown', `没有这个角色：${id}`)
-			const { project, projectRoot, roots } = roleContextOf(req.headers['x-skill-console-session'])
+			const { project, projectRoot, globalRoot, roots } = roleContextOf(req.headers['x-skill-console-session'])
 			if (project === null || projectRoot === null) throw httpError(400, 'error.role.noProject', '解析不出项目根，无法切换角色')
-			const plan = planRole({ role, skills: projectSkillsOf(projectRoot) })
+			// 全局扫描结果只当复制来源；它不会进 applyRole（那边只收 projectRoot）。
+			const plan = planRole({ role, skills: projectSkillsOf(projectRoot), sources: globalRoot === null ? [] : scanRoot(globalRoot).skills })
 			const { results, changed } = applyRole(projectRoot, plan)
 			if (changed > 0) {
 				refreshSkills()
@@ -319,6 +324,7 @@ export function createRouteHandlers(deps) {
 				results,
 				changed,
 				takeover,
+				localKept: plan.localKept,
 			}
 		},
 

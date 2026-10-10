@@ -466,6 +466,75 @@ check('changed 只数真正改动的', isolated.changed === 1, String(isolated.c
 const linked = rolesModule.applyRole(applyProjectRoot, { steps: [{ name: 'alpha', path: join(applyProject, '.dsh', 'skills', 'alpha', 'SKILL.md.disabled'), action: 'disable', current: false, target: false }] })
 check('已同态时 toggleSkill 回 changed=false，不报错', linked.results[0]?.ok === true && linked.results[0]?.changed === false, JSON.stringify(linked.results[0]))
 
+// ── 2f. 角色计划与执行：从全局复制（0.4.0） ────────────────────────────────
+
+section('角色计划 0.4.0：copy / localKept / skipped / stats.total')
+{
+	const projectRecord = { key: 'project-dsh', scope: 'project', label: '项目 DSH', rank: 100, path: tempDir('plan-project'), exists: true, writable: true }
+	const globalRecord = { key: 'user-dsh', scope: 'global', label: '全局 DSH', rank: 400, path: tempDir('plan-global'), exists: true, writable: true }
+	const placeOne = (rootPath, name, enabled) => {
+		mkdirSync(join(rootPath, name), { recursive: true })
+		writeFileSync(join(rootPath, name, enabled ? 'SKILL.md' : 'SKILL.md.disabled'), `---\nname: ${name}\ndescription: 计划用\n---\n\n# ${name}\n`)
+	}
+	placeOne(projectRecord.path, 'local-copy', true) // 项目里有、启用、角色内 → noop + localKept
+	placeOne(projectRecord.path, 'local-off', false) // 项目里有、停用、角色内 → enable
+	placeOne(globalRecord.path, 'from-global', true) // 只有全局有、角色内 → copy
+	placeOne(globalRecord.path, 'local-copy', true) // 两边同名 → localKept
+	placeOne(globalRecord.path, 'still-missing', false) // 全局是停用态，仍然可复制
+	const justOutside = tempDir('plan-outside')
+	mkdirSync(join(justOutside, 'nofm'), { recursive: true })
+	writeFileSync(join(justOutside, 'nofm', 'SKILL.md'), '# 没有 frontmatter\n')
+	symlinkSync(join(justOutside, 'nofm'), join(globalRecord.path, 'global-link'))
+
+	const skills = roots.scanRoot(projectRecord).skills
+	const sources = roots.scanRoot(globalRecord).skills
+	check('全局软链接会被扫描到并标记不可启停', sources.some((entry) => entry.path.includes('global-link') && entry.toggleable === false), JSON.stringify(sources.map((entry) => entry.name)))
+	const plan = rolesModule.planRole({
+		role: { id: 'r1', name: '计划角色', skills: ['local-copy', 'local-off', 'from-global', 'still-missing', 'global-link', 'nowhere'] },
+		skills,
+		sources,
+	})
+	check('只有全局有的技能 → action=copy，带 sourcePath', plan.steps.some((step) => step.action === 'copy' && step.name === 'from-global' && step.sourcePath === join(globalRecord.path, 'from-global', 'SKILL.md')), JSON.stringify(plan.steps))
+	check('全局那份是停用态也照样 copy，且带 sourceKind', plan.steps.some((step) => step.action === 'copy' && step.name === 'still-missing' && step.sourceKind === 'directory'))
+	check('copy 步骤的目标路径留给 applyRole 算（planRole 里是 null）', plan.steps.filter((step) => step.action === 'copy').every((step) => step.path === null))
+	check('项目里停用、角色内 → enable', plan.steps.some((step) => step.action === 'enable' && step.name === 'local-off'))
+	check('项目里启用、角色内 → noop', plan.noop.some((entry) => entry.name === 'local-copy'))
+	check('两边同名 → localKept，指向项目那份与全局那份', plan.localKept.some((entry) => entry.name === 'local-copy' && entry.projectPath === join(projectRecord.path, 'local-copy', 'SKILL.md') && entry.globalPath === join(globalRecord.path, 'local-copy', 'SKILL.md')), JSON.stringify(plan.localKept))
+	check('全局软链接 → skipped reason=symlink', plan.skipped.some((entry) => entry.name === 'global-link' && entry.reason === 'symlink'), JSON.stringify(plan.skipped))
+	check('两处都没有 → missing', plan.missing.includes('nowhere'), JSON.stringify(plan.missing))
+	check('stats.copy 数得对（2 个）', plan.stats.copy === 2, String(plan.stats.copy))
+	check('stats.total = copy+enable+disable+noop+skipped', plan.stats.total === plan.stats.copy + plan.stats.enable + plan.stats.disable + plan.stats.noop + plan.stats.skipped, JSON.stringify(plan.stats))
+	check('localKept 不计入 stats.total', plan.stats.total === 5, JSON.stringify(plan.stats))
+	check('localKept 的长度单独可见', plan.localKept.length === 1, String(plan.localKept.length))
+}
+
+section('角色执行 0.4.0：复制只落项目根，全局根整轮没被碰')
+{
+	const projectRecord = { key: 'project-dsh', scope: 'project', label: '项目 DSH', rank: 100, path: tempDir('exec-project'), exists: true, writable: true }
+	const globalRecord = { key: 'user-dsh', scope: 'global', label: '全局 DSH', rank: 400, path: tempDir('exec-global'), exists: true, writable: true }
+	const placeOne = (rootPath, name, enabled) => {
+		mkdirSync(join(rootPath, name), { recursive: true })
+		writeFileSync(join(rootPath, name, enabled ? 'SKILL.md' : 'SKILL.md.disabled'), `---\nname: ${name}\ndescription: 执行用\n---\n\n# ${name}\n`)
+	}
+	placeOne(globalRecord.path, 'g-pack', true)
+	placeOne(projectRecord.path, 'p-off', false)
+	placeOne(globalRecord.path, 'p-off', true) // 两边同名：绝不覆盖项目那份
+	const globalMtimeBefore = statSync(globalRecord.path).mtimeMs
+	const plan = rolesModule.planRole({
+		role: { id: 'r1', name: '执行角色', skills: ['g-pack', 'p-off'] },
+		skills: roots.scanRoot(projectRecord).skills,
+		sources: roots.scanRoot(globalRecord).skills,
+	})
+	const { results, changed } = rolesModule.applyRole(projectRecord, plan)
+	check('复制动作在结果里带 action=copy', results.some((result) => result.action === 'copy' && result.name === 'g-pack' && result.ok === true), JSON.stringify(results))
+	check('复制成功也算 changed', changed >= 2, String(changed))
+	check('项目里出现了启用态的 g-pack', existsSync(join(projectRecord.path, 'g-pack', 'SKILL.md')))
+	check('p-off 被启用（改名成 SKILL.md）', existsSync(join(projectRecord.path, 'p-off', 'SKILL.md')) && !existsSync(join(projectRecord.path, 'p-off', 'SKILL.md.disabled')))
+	check('项目里那份没有被全局同名版覆盖', readFileSync(join(projectRecord.path, 'p-off', 'SKILL.md'), 'utf8').includes('description: 执行用'))
+	check('整轮操作全局根内容一字未动', readFileSync(join(globalRecord.path, 'g-pack', 'SKILL.md'), 'utf8').includes('name: g-pack') && existsSync(join(globalRecord.path, 'p-off', 'SKILL.md')))
+	check('整轮操作全局根 mtime 未变', statSync(globalRecord.path).mtimeMs === globalMtimeBefore, `${globalMtimeBefore} → ${statSync(globalRecord.path).mtimeMs}`)
+}
+
 // ── 技能搬运与删除（0.4.0） ─────────────────────────────────────────────
 
 section('技能搬运：复制进技能根（目录包 / 扁平 / 禁用源 / 软链拒绝 / 同名拒绝）')

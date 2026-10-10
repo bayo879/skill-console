@@ -11,6 +11,8 @@
  *   2. 写盘**原子替换**：写 `.tmp-<uuid>` 再 rename。
  *   3. `applyRole` 只接收**单个根**（项目根）。全局根根本不进入这条链路——
  *      「不修改全局」是结构保证，不是一句 if。
+ *   4. 复制（`action:'copy'`）只从全局根**读**，写的位置永远是项目根——`copySkillIntoRoot`
+ *      的目标是 `projectRoot`，源路径只在读的一侧出现。
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -18,7 +20,8 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 import { httpError } from './http.js'
-import { toggleSkill } from './roots.js'
+import { copySkillIntoRoot, readSkill, toggleSkill } from './roots.js'
+import { targetPathFor } from './rows.js'
 
 /** 角色数上限。 */
 export const MAX_ROLES = 50
@@ -224,51 +227,77 @@ export function createRoleStore(options) {
 /**
  * 算一次切换要做哪些动作。**纯函数，不碰盘。**
  *
- * 严格对齐的语义：角色内的启用、角色外的停用。已经在目标态的不产生动作（幂等）。
+ * 0.4.0 起，角色里「项目没有、全局有」的技能会先**复制**进来（`action:'copy'`）。
+ * 复制步骤的 `path` 固定为 `null`：纯函数这一层拿不到项目根路径，目标路径由
+ * `applyRole` 用 `targetPathFor(projectRoot.path, step.name, step.sourceKind)` 算。
  *
- * 同名双副本（一个根里同时有 `foo/SKILL.md` 与 `foo.md`）会一起处置——角色按
- * **技能名**存，所以两条记录按同一规则走。这是刻意的语义，README 里写着。
+ * 同名不覆盖：项目里已有同名、全局也有同名时，进 `localKept`（只报告），该条目
+ * 自身该 enable / disable / noop 照旧——**不会**用全局那份覆盖项目那份。
  *
- * @param input - `{role, skills}`：`role` 是角色对象（或 null），`skills` 是项目根扫描结果。
- * @returns `{steps, noop, skipped, missing, stats}`。
+ * @param input - `{role, skills, sources}`：`role` 是角色对象（或 null），`skills` 是项目根扫描结果，`sources` 是全局根扫描结果（只读来源，不落盘）。
+ * @returns `{steps, noop, skipped, localKept, missing, stats}`。
  */
 export function planRole(input) {
 	const role = input?.role ?? null
 	const skills = Array.isArray(input?.skills) ? input.skills : []
+	const sources = Array.isArray(input?.sources) ? input.sources : []
 	const wanted = new Set(Array.isArray(role?.skills) ? role.skills : [])
+
+	const sourceByName = new Map()
+	for (const source of sources) {
+		const name = typeof source?.name === 'string' ? source.name : ''
+		if (name !== '' && !sourceByName.has(name)) sourceByName.set(name, source)
+	}
+
 	const steps = []
 	const noop = []
 	const skipped = []
+	const localKept = []
 	const seen = new Set()
 
 	for (const skill of skills) {
 		const name = typeof skill?.name === 'string' ? skill.name : ''
 		if (name === '') continue
 		seen.add(name)
-		const path = skill.path
-		// 不可启停（软链接等）：报告，但不碰。
+		// 项目里已有同名、全局也有同名：保留本地副本，绝不覆盖。
+		const source = sourceByName.get(name)
+		if (source !== undefined) localKept.push({ name, projectPath: skill.path, globalPath: source.path })
 		if (skill.toggleable !== true) {
-			skipped.push({ name, path, reason: skill.readOnlyReason ?? 'readonly' })
+			skipped.push({ name, path: skill.path, reason: skill.readOnlyReason ?? 'readonly' })
 			continue
 		}
 		const target = wanted.has(name)
 		if (skill.enabled === target) {
-			noop.push({ name, path, enabled: skill.enabled === true })
+			noop.push({ name, path: skill.path, enabled: skill.enabled === true })
 			continue
 		}
-		steps.push({ name, path, action: target ? 'enable' : 'disable', current: skill.enabled === true, target })
+		steps.push({ name, path: skill.path, action: target ? 'enable' : 'disable', current: skill.enabled === true, target })
+	}
+
+	// 项目里根本没有、角色要、全局有 → 复制进来（复制出来一律是启用态）。
+	for (const name of wanted) {
+		if (seen.has(name)) continue
+		const source = sourceByName.get(name)
+		if (source === undefined) continue
+		seen.add(name)
+		if (source.toggleable !== true) {
+			skipped.push({ name, path: source.path, reason: source.readOnlyReason ?? 'symlink' })
+			continue
+		}
+		steps.push({ name, path: null, action: 'copy', current: false, target: true, sourcePath: source.path, sourceKind: source.kind })
 	}
 
 	const missing = [...wanted].filter((name) => !seen.has(name))
 	const stats = {
-		total: skills.length,
+		total: steps.length + noop.length + skipped.length,
+		copy: steps.filter((step) => step.action === 'copy').length,
 		enable: steps.filter((step) => step.action === 'enable').length,
 		disable: steps.filter((step) => step.action === 'disable').length,
 		noop: noop.length,
 		skipped: skipped.length,
 		missing: missing.length,
 	}
-	return { steps, noop, skipped, missing, stats }
+	return { steps, noop, skipped, localKept, missing, stats }
 }
 
 /**
@@ -278,6 +307,10 @@ export function planRole(input) {
  *   1. 调用方只能传一个根，全局根拿不到；
  *   2. 就算有 bug 把全局路径塞进 plan，`toggleSkill([projectRoot], …)` 里的
  *      `classifyDiscoveryPath` 也只会认落在项目根里的路径，否则 400。
+ *
+ * `copy` 步骤只从 `step.sourcePath` **读**，目标根固定是传入的 `projectRoot`。
+ * 复制用的源记录形状按 `step.sourceKind` 校正（`readSkill` 不带 roots 时把目录包
+ * 一律算成 `flat`，直接拿它会把目录包摊平成一个 `.md`）。
  *
  * 逐项隔离：一项失败不影响其余项（与 /toggle-batch 同一口径）。
  *
@@ -290,12 +323,17 @@ export function applyRole(projectRoot, plan) {
 	const results = []
 	let changed = 0
 	for (const step of steps) {
+		const action = step.action === 'copy' ? 'copy' : step.target ? 'enable' : 'disable'
+		// copy 的目标路径在这里算（planRole 是纯函数，拿不到根路径）。
+		const targetPath = action === 'copy' ? targetPathFor(projectRoot.path, step.name, step.sourceKind) : step.path
 		try {
-			const outcome = toggleSkill([projectRoot], step.path, step.target)
-			if (outcome.changed) changed += 1
-			results.push({ name: step.name, path: outcome.path, ok: true, enabled: outcome.enabled, changed: outcome.changed })
+			const outcome = action === 'copy'
+				? copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourceKind })
+				: toggleSkill([projectRoot], step.path, step.target)
+			if (outcome.changed !== false) changed += 1
+			results.push({ name: step.name, path: outcome.path, action, ok: true, enabled: outcome.enabled, changed: outcome.changed !== false })
 		} catch (error) {
-			results.push({ name: step.name, path: step.path, ok: false, code: error?.code ?? 'error.unknown', error: errorTextOf(error) })
+			results.push({ name: step.name, path: targetPath, action, ok: false, code: error?.code ?? 'error.unknown', error: errorTextOf(error) })
 		}
 	}
 	return { results, changed }
