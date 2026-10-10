@@ -164,5 +164,20 @@ const rolesUnderCordis = await runUnderCordis({
 check('真 cordis 下 GET /roles 返回 200 JSON 壳', rolesUnderCordis?.status === 200 && rolesUnderCordis?.body?.ok === true, `${rolesUnderCordis?.status} ${String(rolesUnderCordis?.body).slice(0, 200)}`)
 check('GET /roles 带回三个契约字段', typeof rolesUnderCordis?.body?.data?.status === 'string' && Array.isArray(rolesUnderCordis?.body?.data?.roles) && typeof rolesUnderCordis?.body?.data?.candidates === 'object', `${rolesUnderCordis?.status} ${String(rolesUnderCordis?.body).slice(0, 200)}`)
 
+// 6) 新增写路由必须在真 cordis 下也**按写路由**注册：缺标记头要 403，而不是 404/405。
+//    这两条都完全不碰盘（连 body 都不读：标记围栏在 handler 之前）。
+//    无需改假请求：`fakeReq` 本已支持 `method`/`headers`，`runUnderCordis` 也把整个 `request` 透传。
+const skillDeleteUnderCordis = await runUnderCordis({
+	provideServices: {},
+	request: { method: 'POST', path: '/api/skill-console/skills/delete', headers: {} },
+})
+check('真 cordis 下 POST /skills/delete 缺标记头 → 403 JSON 壳', skillDeleteUnderCordis?.status === 403 && skillDeleteUnderCordis?.body?.ok === false, `${skillDeleteUnderCordis?.status} ${JSON.stringify(skillDeleteUnderCordis?.body).slice(0, 200)}`)
+
+const moveUnderCordis = await runUnderCordis({
+	provideServices: {},
+	request: { method: 'GET', path: '/api/skill-console/skills/move-to-project' },
+})
+check('GET 打 /skills/move-to-project → 405（说明它登记在写路由表里）', moveUnderCordis?.status === 405, `${moveUnderCordis?.status} ${JSON.stringify(moveUnderCordis?.body).slice(0, 200)}`)
+
 console.log(`\n结果：${passed}/${passed + failed} 项通过（真 cordis 集成）`)
 if (failed > 0) process.exit(1)

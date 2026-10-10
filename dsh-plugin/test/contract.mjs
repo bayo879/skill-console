@@ -1158,7 +1158,22 @@ const pluginCtx = {
 		},
 	},
 }
+// 路由层的 manager 在 apply 那一刻按值抓住 fetch（`repos.js` 建 client 时传
+// `options.fetchImpl`，`github.js` 里 `options.fetchImpl ?? globalThis.fetch`），而
+// `lib/index.js` 建 manager 时**没有**注入假 fetch 的口子。于是只在 apply 这一瞬把
+// `globalThis.fetch` 换成桩 GitHub：不改宿主实现、不另造并行 manager；随后立刻还原——
+// manager 已持有桩的函数值，还原不影响它。这样下面经路由调 `repositories/install` 时
+// 才能离线拿到真实清单，端到端证明 `target:'project'` 的落点。
+// 技能名刻意用 `proj-only`：两个技能根现场都已经有 alpha / beta，装同名会被「本地已存在」挡掉，
+// 测不到落点。
+const routeStub = stubGithub({
+	'skills/proj-only/SKILL.md': '---\nname: proj-only\ndescription: 路由层 target:project 落点验证用\n---\n\n# proj-only\n',
+	'skills/proj-only/reference.md': 'proj-only reference\n',
+}, { commit: 'c0ffee123456' })
+const realGlobalFetch = globalThis.fetch
+globalThis.fetch = routeStub.fetchImpl
 host.apply(pluginCtx)
+globalThis.fetch = realGlobalFetch
 check('注册了 prefix 路由', registeredRoute?.kind === 'prefix' && registeredRoute?.path === '/api/skill-console')
 
 /** 假的 node 请求。 */
@@ -1599,9 +1614,33 @@ check('删全局失败 → 200 但 globalRemoved=false', stuckMove?.status === 2
 check('删全局失败时项目里已经就位', existsSync(join(rolesProjectSkills, 'stuck-me', 'SKILL.md')))
 check('删全局失败时如实带 warning', typeof stuckMove?.json?.data?.warning === 'string' && stuckMove.json.data.warning.length > 0, String(stuckMove?.json?.data?.warning))
 
-// 安装目标端点：装到当前项目
-const installToProject = await call({ method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['alpha'], target: 'project' } })
-check('install 带 target=project 时按项目根解析（未订阅该仓库 → 404，不是 500）', installToProject.status === 404 || installToProject.status === 200, `${installToProject.status} ${JSON.stringify(installToProject.json).slice(0, 200)}`)
+// 安装目标端点：`target:'project'` 必须在**路由层**就端到端证明落点。
+// 先用桩 GitHub（见 apply 处的 `routeStub`）经路由订阅 'o/r'，再分别装到项目 / 缺省全局。
+const addRoute = await call({ method: 'POST', path: '/api/skill-console/repositories/add', headers: { ...ROLE_WRITE, ...roleSession }, body: { url: 'https://github.com/o/r', subdirectory: 'skills' } })
+check('路由层能订阅桩仓库（初始发现不报错）', addRoute.status === 200 && addRoute.json?.data?.fetchError === null && addRoute.json?.data?.skills?.some((skill) => skill.name === 'proj-only'), `${addRoute.status} ${JSON.stringify(addRoute.json).slice(0, 240)}`)
+const fetchRoute = await call({ method: 'POST', path: '/api/skill-console/repositories/fetch', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r' } })
+check('路由层能拉取清单并看见 proj-only', fetchRoute.status === 200 && fetchRoute.json?.data?.skills?.some((skill) => skill.name === 'proj-only'), `${fetchRoute.status} ${JSON.stringify(fetchRoute.json).slice(0, 240)}`)
+
+const installToProject = await call({ method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['proj-only'], target: 'project' } })
+check('install 带 target=project：技能真的落进项目技能根', installToProject.status === 200 && installToProject.json?.data?.installed?.[0]?.path === join(rolesProjectSkills, 'proj-only') && existsSync(join(rolesProjectSkills, 'proj-only', 'SKILL.md')), `${installToProject.status} ${JSON.stringify(installToProject.json).slice(0, 240)}`)
+check('install 带 target=project：全局技能根没有被写', !existsSync(join(globalRoot, 'proj-only')), join(globalRoot, 'proj-only'))
+
+const installDefault = await call({ method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['proj-only'] } })
+check('同一仓库缺省 target 再装一次：落点是全局技能根（向后兼容没坏）', installDefault.status === 200 && installDefault.json?.data?.installed?.[0]?.path === join(globalRoot, 'proj-only') && existsSync(join(globalRoot, 'proj-only', 'SKILL.md')), `${installDefault.status} ${JSON.stringify(installDefault.json).slice(0, 240)}`)
+
+// 解析不出项目根时，`target:'project'` 必须 400，不能悄悄退回全局。
+// 现场唯一能让项目解析失败的办法是拿掉 `sessions`——再 apply 一个只用于这条的路由。
+let noProjectRoute = null
+host.apply({
+	...pluginCtx,
+	sessions: undefined,
+	webServer: { register: (route) => {
+		noProjectRoute = route
+		return () => {}
+	} },
+})
+const installNoProject = await callRoute(noProjectRoute, { method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['proj-only'], target: 'project' } })
+check('解析不出项目根 + target=project → 400 error.role.noProject（不退化成全局）', installNoProject.status === 400 && installNoProject.json?.code === 'error.role.noProject', `${installNoProject.status} ${JSON.stringify(installNoProject.json).slice(0, 200)}`)
 
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 

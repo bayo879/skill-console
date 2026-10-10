@@ -151,6 +151,27 @@ try {
 	const badAdd = await call('/api/skill-console/repositories/add', { method: 'POST', headers: WRITE_HEADERS, body: JSON.stringify({ url: 'not a repo' }) })
 	check('POST /repositories/add 非法地址 400（且不联网）', badAdd.status === 400 && badAdd.body.code === 'error.repo.url', `${badAdd.status} ${badAdd.body?.code}`)
 
+	// 新增的破坏性端点**绝不在**真实工作区里试：冒烟打的是用户真正的 DSH 与工作区。
+	// 只验「这些路径确实挂在写路由上、围栏在前」——一个字节都不落盘。
+	const deleteWithoutMarker = await call('/api/skill-console/skills/delete', {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ path: '/definitely/not/a/skill/SKILL.md' }),
+	})
+	check('POST /skills/delete 缺标记头 → 403（围栏在前，没走到删除）', deleteWithoutMarker.status === 403, `http=${deleteWithoutMarker.status}`)
+	const deleteWithoutPath = await call('/api/skill-console/skills/delete', {
+		method: 'POST',
+		headers: { ...WRITE_HEADERS, ...sessionHeader(sessionId) },
+		body: JSON.stringify({}),
+	})
+	check('POST /skills/delete 缺 path → 400 error.proto.missingPath（没删任何东西）', deleteWithoutPath.status === 400 && deleteWithoutPath.body?.code === 'error.proto.missingPath', `http=${deleteWithoutPath.status} ${JSON.stringify(deleteWithoutPath.body).slice(0, 120)}`)
+	const moveNotGlobal = await call('/api/skill-console/skills/move-to-project', {
+		method: 'POST',
+		headers: { ...WRITE_HEADERS, ...sessionHeader(sessionId) },
+		body: JSON.stringify({}),
+	})
+	check('POST /skills/move-to-project 缺 path → 400（没移动任何东西）', moveNotGlobal.status === 400 && moveNotGlobal.body?.code === 'error.proto.missingPath', `http=${moveNotGlobal.status} ${JSON.stringify(moveNotGlobal.body).slice(0, 120)}`)
+
 	section('2. 写操作围栏')
 	const noMarker = await call('/api/skill-console/toggle', { method: 'POST', body: JSON.stringify({ path: '/tmp/x', enabled: false }) })
 	check('写操作缺客户端标记被拒（403 error.proto.forbidden）', noMarker.status === 403 && noMarker.body.code === 'error.proto.forbidden', `${noMarker.status} ${noMarker.body?.code}`)
