@@ -1671,11 +1671,10 @@ window.__ModuleLoader__.load({
 			return h('div', { className: 'sc-card' }, head, body)
 		}
 
-		/** 技能标签页：范围切换 + 项目选择 + 目录 + 详情。 */
+		/** 技能标签页：一次拿两个源（全局 + 当前工作区）+ 目录 + 详情。 */
 		function SkillsPanel(props) {
 			const t = props.t
 			const sessionId = props.sessionId
-			const [scope, setScope] = react.useState('global')
 			const [catalog, setCatalog] = react.useState({ loading: true, data: null, error: null })
 			// 「当前项目」由 section 统一持有（useProjectContext），这里只读不写。
 			const project = props.project
@@ -1688,17 +1687,14 @@ window.__ModuleLoader__.load({
 			const [collapsedRepos, setCollapsedRepos] = react.useState({})
 			const toggleRepo = (key) => setCollapsedRepos((previous) => ({ ...previous, [key]: previous[key] !== true }))
 			const revision = useStore(catalogRevisionStore)
-			// 快速切换范围时旧响应可能后到：用递增令牌丢弃过期结果，避免目录闪回上一个 scope。
+			// 切换工作区时旧响应可能后到：用递增令牌丢弃过期结果，避免目录闪回上一个工作区。
 			const catalogToken = react.useRef(0)
-
-			// 工作区列表与「当前工作区」都来自 section 的那一份 /state（见 useProjectContext）。
-			const projects = project.options
-			const activeProject = project.active
 
 			const loadCatalog = () => {
 				const run = ++catalogToken.current
 				setCatalog((previous) => ({ loading: true, data: previous.data, error: null }))
-				return apiGet('/catalog', { scope, project: scope === 'project' ? activeProject : undefined }, sessionId)
+				// 一次拿两个源：宿主缺省 scope='all'，roots 的顺序（全局 rank 400 / 项目 rank 100）就是版面顺序。
+				return apiGet('/catalog', withProject(project, {}), sessionId)
 					.then((data) => {
 						if (catalogToken.current !== run) return
 						setCatalog({ loading: false, data, error: null })
@@ -1711,15 +1707,15 @@ window.__ModuleLoader__.load({
 
 			react.useEffect(() => {
 				loadCatalog()
-				// eslint-disable-next-line react-hooks/exhaustive-deps -- 见上面的注释：只依赖会变的值。
-			}, [scope, activeProject, sessionId, revision])
+				// eslint-disable-next-line react-hooks/exhaustive-deps -- 只依赖会变的值（工作区换了、目录被 bump 了才重拉）。
+			}, [project.active, sessionId, revision])
 
-			// 切范围/切项目时把上一轮的结果提示收起来（但**不能**在重拉目录时清，
+			// 换工作区时把上一轮的结果提示收起来（重拉目录时**不能**清，
 			// 否则启停成功后刚显示的 takeover 提示会被紧随其后的刷新抹掉）。
 			react.useEffect(() => {
 				setNotice(null)
 				setActionFail(null)
-			}, [scope, activeProject])
+			}, [project.active])
 
 			const loadDetail = (skill) => {
 				setDetail({ loading: true, data: null, error: null, name: skill.name })
@@ -1796,8 +1792,8 @@ window.__ModuleLoader__.load({
 					.then(() => setBusyPath(null))
 			}
 
-			// 宿主为这次 /catalog 实际解析出来的项目。与共享上下文里的「当前项目」是两个东西：
-			// 这一份带 `fallback`，用来暴露「宿主悄悄回落到了别的项目」；名字必须区分开。
+			// 宿主为这次 /catalog 实际解析出来的项目。只剩一个用途：给「移到项目」的确认文案兜底项目名。
+			// 「宿主悄悄回落到别的项目」的提示归节顶的工作区条（WorkspaceBar），不在这里重复播报。
 			const catalogProject = catalog.data && catalog.data.project ? catalog.data.project : null
 
 			const moveSkillToProject = (skill) => {
@@ -1825,27 +1821,11 @@ window.__ModuleLoader__.load({
 			return h(
 				'div',
 				{ className: 'sc-body' },
-				// 范围（工作区下拉与刷新都在节顶的工作区条上）
-				h(
-					'div',
-					{ className: 'sc-bar' },
-					h('span', { className: 'sc-hint' }, t('skills.scope')),
-					h(UiPill, { active: scope === 'global', onClick: () => setScope('global'), children: t('skills.scope.global') }),
-					h(UiPill, { active: scope === 'project', onClick: () => setScope('project'), children: t('skills.scope.project') }),
-				),
-				// 项目解析说明——回落到别的项目时绝不能装作没事。面板只显示项目名，
-				// 不显示任何具体目录地址（用户要知道「是不是这个项目」，不需要知道绝对路径）。
-				catalogProject
-					? h(
-							'div',
-							{ className: 'sc-hint' },
-							t('skills.projectName', { name: projectNameOf(catalogProject) }),
-							catalogProject.fallback === true
-								? h('div', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, catalogProject.cwd ? t('skills.projectFallback', { name: projectNameOf(catalogProject) }) : t('skills.projectFallbackUnknown')))
-								: null,
-						)
+				// 目录里没有项目根 = 还没选工作区（或那条工作区解析不到项目根）：给一句引导。
+				// 判断按**根**做，不再是「范围切到项目」——范围开关已删，一次请求就是两个源。
+				!catalog.loading && catalog.data !== null && !roots.some((root) => root.key === 'project-dsh')
+					? h('div', { className: 'sc-note' }, t('skills.noSessions'))
 					: null,
-				scope === 'project' && !project.loading && projects.length === 0 ? h('div', { className: 'sc-note' }, t('skills.noSessions')) : null,
 				project.error ? h('div', { className: 'sc-err' }, actionError(t, project.error)) : null,
 				notice ? h('div', { className: 'sc-ok', role: 'status' }, notice) : null,
 				actionFail ? h('div', { className: 'sc-err', role: 'alert' }, actionFail) : null,

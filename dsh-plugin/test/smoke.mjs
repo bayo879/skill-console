@@ -130,7 +130,7 @@ try {
 	section('1. 只读接口')
 	const globalCatalog = await call('/api/skill-console/catalog?scope=global')
 	check('GET /catalog?scope=global 返回 200', globalCatalog.status === 200)
-	check('只回全局根', globalCatalog.body.data.roots.every((root) => root.scope === 'global'), globalCatalog.body.data.roots.map((r) => r.key).join(','))
+	check('只回全局根', globalCatalog.body.data.roots.length === 1 && globalCatalog.body.data.roots[0].key === 'user-dsh' && globalCatalog.body.data.roots.every((root) => root.scope === 'global'), globalCatalog.body.data.roots.map((r) => r.key).join(','))
 	const allGlobalSkills = globalCatalog.body.data.roots.flatMap((root) => root.skills)
 	check('技能行带齐契约字段', allGlobalSkills.every((skill) => ['name', 'path', 'enabled', 'kind', 'toggleable', 'root', 'scope', 'installed'].every((key) => key in skill)))
 	check('kind 只有 directory / flat', allGlobalSkills.every((skill) => skill.kind === 'directory' || skill.kind === 'flat'), [...new Set(allGlobalSkills.map((s) => s.kind))].join(','))

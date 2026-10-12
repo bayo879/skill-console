@@ -2897,6 +2897,21 @@ check('当前目录不在列表里时也直说', collectTexts(looseBarTree).some
 const emptyBarTree = barOf(ctxFor({ loading: true, data: null, error: null }, null, ''))
 check('没有工作区、也没会话时下拉不渲染（但条还在）', emptyBarTree !== null && emptyBarTree.type === 'div' && barSelectOf(emptyBarTree) === null)
 
+section('技能页签：一屏就是工作区的全貌（两个源块，没有范围开关）')
+
+check('技能页签的「范围」开关已删干净', !clientSource.includes("t('skills.scope") && !/setScope/.test(clientSource))
+check('技能页签一次只拉一份目录（不再按范围重拉）', (clientSource.match(/apiGet\('\/catalog'/g) ?? []).length === 1)
+const catalogCallAt = clientSource.indexOf("apiGet('/catalog'")
+check('拉目录时显式带上当前工作区', catalogCallAt >= 0 && clientSource.slice(catalogCallAt, catalogCallAt + 160).includes('withProject(project'), clientSource.slice(catalogCallAt, catalogCallAt + 160))
+check('目录请求不再带 scope 参数', catalogCallAt >= 0 && !clientSource.slice(catalogCallAt, catalogCallAt + 160).includes('scope'))
+check('按 roots 顺序渲染源块（宿主给两条就是两块）', clientSource.includes('roots.map((root) =>') && clientSource.includes('h(SkillGroup'))
+check('目录里没有项目根时给「还没选工作区」引导', clientSource.includes("root.key === 'project-dsh'") && clientSource.includes("t('skills.noSessions')"))
+const fallbackUses = (clientSource.match(/t\([^)]*?'skills\.projectFallback/g) ?? []).length
+// 真实调用带参数（`t('skills.projectName', {...})`），所以 `includes("t('skills.projectName')")` 抓不到它；
+// 正则按「t( 紧接 'skills.projectName'」判，才真的在断言「没有人再调用这条文案」。
+const projectNameCalls = /t\('skills\.projectName'/.test(clientSource)
+check('技能页签不再自己播报「当前项目」，回落文案只剩工作区条那一处', !clientSource.includes("t('skills.projectName')") && !projectNameCalls && fallbackUses === 1, `projectName=${projectNameCalls} fallbackUses=${fallbackUses}`)
+
 // ── 结果 ──────────────────────────────────────────────────────────────────
 
 delete process.env.DSH_HOME
