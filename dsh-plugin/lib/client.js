@@ -1074,11 +1074,11 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 把用户选过的项目映射回**当前**的选项列表：先认会话 id，再认项目根。
+		 * 把用户选过的工作区映射回**当前**的选项列表：先认工作区目录（`value`），再认项目根。
 		 *
-		 * 宿主已把同一项目的多个会话收敛成一条，代表会话会随时间换人（同项目别的会话变新），
-		 * 所以只认 id 会让下拉框选空。两个都认不到（项目整个从列表里消失）返回 `null`，
-		 * 由调用方落回默认项目——而不是把界面停在一个选不中的值上。
+		 * 选的目录可能已经不在注册表里（工作区被移除、会话换了路径），但项目根还在——
+		 * 这时按根认领，下拉框不会选空。两个都认不到（工作区整个从列表里消失）返回 `null`，
+		 * 由调用方落回默认工作区——而不是把界面停在一个选不中的值上。
 		 *
 		 * @param pick - 用户选过的 `{value, root}`，或 `null`。
 		 * @param options - `projectOptionsOf()` 的结果。
@@ -1135,7 +1135,7 @@ window.__ModuleLoader__.load({
 		 *
 		 * @param state - `{loading, data, error}`（`error` 是原始 Error）。
 		 * @param pick - 用户选过的 `{value, root}`，或 null。
-		 * @param sessionId - 当前会话 id（仅作日志/语义保留，身份已改由目录路径决定）。
+		 * @param sessionId - 当前会话 id。只为签名兼容保留，已不参与这里的任何计算（身份由工作区目录路径决定）。
 		 */
 		function projectContextOf(state, pick, sessionId) {
 			const data = state && state.data ? state.data : null
@@ -1205,7 +1205,7 @@ window.__ModuleLoader__.load({
 		/**
 		 * 「当前项目」下拉：技能页签、角色页签、以及仓库页签的「装到项目」共用同一个。
 		 *
-		 * 选中值按项目根认领（`projectOptionOfPick`），所以这里只回传命中的 option 本身。
+		 * 选中值按工作区目录认领、认不到再退到项目根（`projectOptionOfPick`），所以这里只回传命中的 option 本身。
 		 * 没有可选项目时渲染 `null`——由调用方决定要不要另外解释原因。
 		 */
 		function ProjectSelect(props) {

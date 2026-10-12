@@ -2691,12 +2691,14 @@ const twoWorkspaces = {
 const optionList = exposed.projectOptionsOf(twoWorkspaces)
 check('选项的值是工作区目录路径', optionList.map((option) => option.value).join(',') === '/Users/x/code/proj-a,/Users/x/code/proj-b', JSON.stringify(optionList))
 check('选项的标签用工作区标题，没有绝对路径', optionList.map((option) => option.label).join(',') === 'proj-a,proj-b', JSON.stringify(optionList))
-check('标题缺失时回落到目录末段名', exposed.projectOptionsOf({ data: { workspaces: [{ workspaceId: 'w', path: '/Users/x/code/proj-c', root: '/Users/x/code/proj-c' }] } })[0].label === 'proj-c')
+check('标题缺失时回落到目录末段名', exposed.projectOptionsOf({ data: { workspaces: [{ workspaceId: 'w', path: '/Users/x/code/proj-c', root: '/Users/x/code/proj-c' }] } })[0]?.label === 'proj-c')
+check('选项缺 root 时用目录路径兜底', exposed.projectOptionsOf({ data: { workspaces: [{ workspaceId: 'w', path: '/Users/x/code/proj-c' }] } })[0]?.root === '/Users/x/code/proj-c')
 check('工作区列表为空/缺失时不抛', exposed.projectOptionsOf(undefined).length === 0 && exposed.projectOptionsOf(null).length === 0 && exposed.projectOptionsOf({ data: null }).length === 0)
 
 check('导出 projectOptionOfPick 供契约测试直接打', typeof exposed.projectOptionOfPick === 'function')
 const pickOptions = exposed.projectOptionsOf(twoWorkspaces)
 check('选过的工作区还在 → 按目录原样认领', exposed.projectOptionOfPick({ value: '/Users/x/code/proj-b', root: '/Users/x/code/proj-b' }, pickOptions)?.value === '/Users/x/code/proj-b')
+check('选过的目录没了但项目根还在 → 按根认领', exposed.projectOptionOfPick({ value: '/x/gone', root: '/Users/x/code/proj-b' }, pickOptions)?.value === '/Users/x/code/proj-b')
 check('工作区整个没了 → 返回 null，由调用方落回默认', exposed.projectOptionOfPick({ value: '/Users/x/code/proj-gone', root: '/Users/x/code/proj-gone' }, pickOptions) === null)
 check('没选过 / 选项缺失时不抛', exposed.projectOptionOfPick(null, pickOptions) === null && exposed.projectOptionOfPick({ value: '/x', root: '/x' }, undefined) === null)
 
@@ -2708,6 +2710,9 @@ const ctxFor = (state, pick, sessionId) => (typeof exposed.projectContextOf === 
 check('导出 projectContextOf 供契约测试直接打', typeof exposed.projectContextOf === 'function')
 check('没选过工作区时按项目根认领当前会话那个', ctxFor(twoWorkspaces, null, 's-1').active === '/Users/x/code/proj-a' && ctxFor(twoWorkspaces, null, 's-1').activeName === 'proj-a')
 check('选过的工作区还在 → 用选中的那个的目录', ctxFor(twoWorkspaces, { value: '/Users/x/code/proj-b', root: '/Users/x/code/proj-b' }, 's-1').active === '/Users/x/code/proj-b')
+// 旧的复合断言「pick 失效 ⇒ 落回当前会话」删掉后由这一条接管：pick 的目录与根都认不到时，
+// 必须落回当前会话的项目根，而不是把 active 停在选不中的值上。
+check('pick 整个失效（目录与根都认不到）→ 落回当前会话那个工作区', ctxFor(twoWorkspaces, { value: '/x/gone', root: '/x/gone' }, 's-1').active === '/Users/x/code/proj-a')
 check('版本号来自同一份 /state', ctxFor(twoWorkspaces, null, 's-1').version === '0.6.0')
 const unregisteredState = {
 	loading: false,
@@ -2720,7 +2725,7 @@ const unregisteredState = {
 	},
 }
 const looseContext = ctxFor(unregisteredState, null, 's-9')
-check('当前会话目录不在注册表里 → 作为「当前会话」一项列在最前', looseContext.options[0].value === '/Users/x/loose/dir' && looseContext.options[0].session === true && looseContext.active === '/Users/x/loose/dir', JSON.stringify(looseContext.options))
+check('当前会话目录不在注册表里 → 作为「当前会话」一项列在最前', looseContext.options[0]?.value === '/Users/x/loose/dir' && looseContext.options[0]?.session === true && looseContext.active === '/Users/x/loose/dir', JSON.stringify(looseContext.options))
 const emptyContext = ctxFor({ loading: true, data: null, error: null }, null, 's-1')
 check('拉不到 /state 时 active 退化成空串、选项为空、不抛', emptyContext.active === '' && emptyContext.options.length === 0 && emptyContext.loading === true)
 check('写请求体一定显式带上工作区目录', typeof exposed.withProject === 'function' && exposed.withProject({ active: '/Users/x/code/proj-b' }, { id: 'r1' }).project === '/Users/x/code/proj-b')
