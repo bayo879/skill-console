@@ -174,7 +174,8 @@ export function createRouteHandlers(deps) {
 			const path = typeof body.path === 'string' ? body.path : ''
 			if (path === '') throw httpError(400, 'error.proto.missingPath', '缺少 path')
 			const enabled = body.enabled === true
-			const { roots } = contextOf(req.headers['x-skill-console-session'])
+			const { project, roots } = roleContextOfRequest(req, body)
+			if (project === null) throw httpError(400, 'error.role.noProject', '解析不出项目技能根，无法启停')
 			const result = toggleSkill(roots, path, enabled)
 			if (result.changed) {
 				refreshSkills()
@@ -193,7 +194,8 @@ export function createRouteHandlers(deps) {
 			const body = await readJsonBody(req)
 			const items = Array.isArray(body.items) ? body.items.slice(0, MAX_BATCH) : []
 			if (items.length === 0) throw httpError(400, 'error.proto.missingItems', '缺少 items')
-			const { roots } = contextOf(req.headers['x-skill-console-session'])
+			const { project, roots } = roleContextOfRequest(req, body)
+			if (project === null) throw httpError(400, 'error.role.noProject', '解析不出项目技能根，无法批量启停')
 			const results = []
 			let changed = 0
 			for (const item of items) {
@@ -384,7 +386,8 @@ export function createRouteHandlers(deps) {
 			const body = await readJsonBody(req)
 			const filePath = String(body.path ?? '')
 			if (filePath === '') throw httpError(400, 'error.proto.missingPath', '缺少 path')
-			const { roots: visibleRoots } = contextOf(req.headers['x-skill-console-session'])
+			const { project, roots: visibleRoots } = roleContextOfRequest(req, body)
+			if (project === null) throw httpError(400, 'error.role.noProject', '解析不出项目技能根，无法删除')
 			const removal = planRemoval(visibleRoots, filePath)
 			// 先备份；备份失败一个字节都不删。
 			let backup

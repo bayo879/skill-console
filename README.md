@@ -67,9 +67,9 @@ DSH 自己不带技能管理界面，于是有几件事只能手工做：
 3. **安装目标可选全局根或当前项目根**：缺省写全局 DSH 技能根（`<DSH_HOME>/skills`），显式 `target:'project'` 时才写当前项目技能根（`<projectRoot>/.dsh/skills`）；装到项目**不更新订阅快照**。「移除订阅」依旧只删订阅记录，一个已装文件都不动。
 4. **角色切换只写项目技能根，全局根在结构上不可达**。`applyRole(projectRoot, plan)` 的入参就只有项目根，没有「顺便改一下全局」的分支；想改全局技能，只能自己去技能 tab 逐个点。
 
-**写接口一律严格**（读接口仍宽松）：四个写接口（装到项目、切换角色、取消角色、移动到项目）从请求体
-`project`（会话 id，优先于 `x-skill-console-session` 头）解析要写哪个项目，解析不出即 400
-`error.role.noProject`，**且一个字节都不写**——**绝不回落到「最近一个会话」写到别的项目去**；
+**写接口一律严格**（读接口仍宽松）：七个写接口（装到项目、切换角色、取消角色、移动到项目、启停技能、
+批量启停、删除技能）从请求体 `project`（会话 id，优先于 `x-skill-console-session` 头）解析要写哪个项目，
+解析不出即 400 `error.role.noProject`，**且一个字节都不写**——**绝不回落到「最近一个会话」写到别的项目去**；
 读接口解析不出时照旧回落，并在界面上标出「回落」。
 
 ---
@@ -100,14 +100,14 @@ DSH_HOME="$HOME/Library/Application Support/dsh-desktop/harness" \
 node skill-console/dsh-plugin/test/contract.mjs
 ```
 
-覆盖 621 项，守的是「重启之前就能确定」的事：
+覆盖 641 项，守的是「重启之前就能确定」的事：
 
 - **四份身份标识一致**：`package.json` 包名 / `cordis.patch.yml` insert id / 宿主 `name` / 客户端 bundle id。对不上时插件会**静默不加载**（DSH 不报错），所以必须机器守。
 - **扫描与启停**：发现规则（只扫一层、大小写敏感、跳过 `.`）、`.disabled` 语义、同名覆盖、软链接只读、越界拒绝、409 冲突、批量逐项结果。
 - **仓库订阅**：用桩 fetch 假造 GitHub（tree + raw），跑通 添加 → 拉取 → 安装 → 本地改动被保护 → 确认更新 + 备份 → 恢复 → 上游删除 → 内容被篡改时拒绝落盘 → 网络失败/限流 → 卸载保留技能 → 状态文件损坏拒绝覆盖。
 - **宿主路由**：回环围栏（非法 Host / 跨站 / 跨源 403）、写操作标记与 content-type、body 上限、各错误码。
 - **角色**：`roles.json` 的原子写 / 损坏拒写 / 上限 / 重名（id 归一化后再比）、`planRole` 的 copy/enable/disable/noop/skipped/localKept/missing 分类、`applyRole` 复制只落项目根且**全局根结构上不可达**，全局候选与项目候选**同形状、都可勾选**（勾上 = 切换时复制进项目；「全局只读」那套字段已不存在，能不能勾只看 `toggleable`，软链的只读原因单独一个字段），以及 6 个角色端点的状态码、围栏与 405。
-- **写接口的项目严格解析（0.5.0）**：`resolveProjectStrict` 对未知 / 空会话 id 返回 `null`（绝不回落）；带 `project` 的 `activate` / `deactivate` / `move-to-project` / `target:'project'` 的 `install` 落到指定的那个项目，**当前会话的项目一个字节没动**；未知 `project` → 400 `error.role.noProject` 且不写盘。
+- **写接口的项目严格解析（0.5.0）**：`resolveProjectStrict` 对未知 / 空会话 id 返回 `null`（绝不回落）；带 `project` 的 `activate` / `deactivate` / `move-to-project` / `target:'project'` 的 `install` / `toggle` / `toggle-batch` / `skills/delete` 落到指定的那个项目，**当前会话的项目一个字节没动**；未知 `project` → 400 `error.role.noProject` 且不写盘。技能页签的启停 / 批量启停 / 删除与角色写接口走同一条严格解析；`GET /skill` 是**读**接口，接受 `?project=`（优先于请求头）并按读路径宽松解析。
 - **项目上下文与技能分组（0.5.0）**：整个控制台只在**一处**拉 `/state`（三个页签共享同一个当前项目，换页签不重拉）；技能按仓库分组（仓库名有序、组内保持宿主顺序、本地组固定最后），根与仓库**两级折叠**（折叠只隐藏行，组头批量按钮仍可用），根头批量作用于整根、仓库组头批量只作用于该仓库。
 - **删除 / 移动到项目 / 安装目标**：`POST /skills/delete` 先备份再删、删完能从备份原样恢复、技能根永不被删、根外路径 400；`POST /skills/move-to-project` 只允许全局→项目，非全局 400 / 同名 409 / 软链 400，删全局失败时不回滚并如实带 `warning`；`POST /repositories/install` 的 `target:'project'` 端到端证明落进项目技能根、缺省仍落全局根、解析不出项目根 400 而不退回全局。
 - **浏览器半边**：模块表注册、`inject` 面、`settings.section` 契约、降级边界、缺 primitives / 缺 slots / 缺 locale 都不崩；受控输入框的 `onChange` 按**原生事件**取值（角色的名字输入框必须交出字符串，不能把 Event 当名字）。

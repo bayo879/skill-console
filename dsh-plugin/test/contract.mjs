@@ -1288,10 +1288,11 @@ check('写操作缺客户端标记被拒（403）', noMarker.status === 403 && n
 const wrongType = await call({ method: 'POST', path: '/api/skill-console/toggle', headers: { 'x-skill-console': '1', 'content-type': 'text/plain' }, body: { path: x => x } })
 check('写操作 content-type 不对被拒（415）', wrongType.status === 415 && wrongType.json.code === 'error.proto.contentType', `${wrongType.status} ${wrongType.json?.code}`)
 
+// 写路径严格解析后不再有回落可依赖：这些调用必须像真实客户端那样带上会话头。
 const toggleResponse = await call({
 	method: 'POST',
 	path: '/api/skill-console/toggle',
-	headers: { 'x-skill-console': '1', 'content-type': 'application/json' },
+	headers: { 'x-skill-console': '1', 'content-type': 'application/json', 'x-skill-console-session': fakeSession.id },
 	body: { path: join(globalRoot, 'beta', 'SKILL.md'), enabled: false },
 })
 check('POST /toggle 成功并返回技能', toggleResponse.status === 200 && toggleResponse.json.data.skill.enabled === false, JSON.stringify(toggleResponse.json))
@@ -1300,7 +1301,7 @@ check('/toggle 报告接管者（同名技能还有谁在生效）', Array.isArr
 const toggleBack = await call({
 	method: 'POST',
 	path: '/api/skill-console/toggle',
-	headers: { 'x-skill-console': '1', 'content-type': 'application/json' },
+	headers: { 'x-skill-console': '1', 'content-type': 'application/json', 'x-skill-console-session': fakeSession.id },
 	body: { path: join(globalRoot, 'beta', 'SKILL.md.disabled'), enabled: true },
 })
 check('POST /toggle 可以再启用回来', toggleBack.json.data.skill.enabled === true && existsSync(join(globalRoot, 'beta', 'SKILL.md')))
@@ -1308,7 +1309,7 @@ check('POST /toggle 可以再启用回来', toggleBack.json.data.skill.enabled =
 const batch = await call({
 	method: 'POST',
 	path: '/api/skill-console/toggle-batch',
-	headers: { 'x-skill-console': '1', 'content-type': 'application/json' },
+	headers: { 'x-skill-console': '1', 'content-type': 'application/json', 'x-skill-console-session': fakeSession.id },
 	body: { items: [{ path: join(globalRoot, 'alpha', 'SKILL.md'), enabled: false }, { path: '/etc/hosts', enabled: false }] },
 })
 check('批量启停逐项报告结果', batch.json.data.results.length === 2 && batch.json.data.results[0].ok === true && batch.json.data.results[1].ok === false, JSON.stringify(batch.json.data.results))
@@ -1316,7 +1317,7 @@ check('批量里越界的那项给了错误码', batch.json.data.results[1].code
 await call({
 	method: 'POST',
 	path: '/api/skill-console/toggle',
-	headers: { 'x-skill-console': '1', 'content-type': 'application/json' },
+	headers: { 'x-skill-console': '1', 'content-type': 'application/json', 'x-skill-console-session': fakeSession.id },
 	body: { path: join(globalRoot, 'alpha', 'SKILL.md.disabled'), enabled: true },
 })
 
@@ -1459,14 +1460,14 @@ check('守卫 ctx 下 GET /state 仍返回 200', guardedState.status === 200, gu
 const guardedToggle = await callRouteOrReport(guarded.routeOf(), {
 	method: 'POST',
 	path: '/api/skill-console/toggle',
-	headers: { 'x-skill-console': '1', 'content-type': 'application/json' },
+	headers: { 'x-skill-console': '1', 'content-type': 'application/json', 'x-skill-console-session': fakeSession.id },
 	body: { path: join(globalRoot, 'beta', 'SKILL.md'), enabled: false },
 })
 check('守卫 ctx 下写路由也跑通', guardedToggle.status === 200, guardedToggle.threw ?? `${guardedToggle.status} ${JSON.stringify(guardedToggle.json).slice(0, 120)}`)
 await callRouteOrReport(guarded.routeOf(), {
 	method: 'POST',
 	path: '/api/skill-console/toggle',
-	headers: { 'x-skill-console': '1', 'content-type': 'application/json' },
+	headers: { 'x-skill-console': '1', 'content-type': 'application/json', 'x-skill-console-session': fakeSession.id },
 	body: { path: join(globalRoot, 'beta', 'SKILL.md.disabled'), enabled: true },
 })
 check('跑完全部路由后依旧没有未 inject 的服务读', guarded.reads.length === 0, guarded.reads.join(','))
@@ -1696,6 +1697,54 @@ const moveOther = await call({ method: 'POST', path: '/api/skill-console/skills/
 check('move-to-project 带 project：搬到那个项目', moveOther.status === 200 && existsSync(join(otherSkillsRoot, 'move-other', 'SKILL.md')), `${moveOther.status} ${JSON.stringify(moveOther.json).slice(0, 200)}`)
 const moveUnknown = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesProjectSkills, 'rp-keep', 'SKILL.md'), project: 'session-gone' } })
 check('move-to-project 未知 project → 400 且没搬走', moveUnknown.status === 400 && existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')), `${moveUnknown.status} ${JSON.stringify(moveUnknown.json).slice(0, 160)}`)
+
+// ── 4d. 技能写路径也跟项目走 ──────────────────────────────────────────────
+//
+// 现场背景：「当前项目」已提升为控制台级共享上下文（在角色页签切项目会连带换掉技能页签
+// 展示的目录），但 `/toggle`、`/toggle-batch`、`/skills/delete` 三个写 handler 只读请求头、
+// 客户端调用也没带 `project`——在界面上选着项目 B 做启停/删除，会 400，或（批量）200 但
+// 逐项 `ok:false`。技能页签的写路径必须和角色写接口走同一条严格解析。
+
+placeSkill(otherSkillsRoot, 'rp-toggle', true)
+placeSkill(otherSkillsRoot, 'rp-trash', true)
+placeSkill(otherSkillsRoot, 'rp-flip', false)
+placeSkill(otherSkillsRoot, 'rp-outside', true)
+
+const crossToggle = await call({ method: 'POST', path: '/api/skill-console/toggle', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-toggle', 'SKILL.md'), enabled: false, project: otherSession.id } })
+check('POST /toggle 带 project：关的是那个项目的技能', crossToggle.status === 200 && crossToggle.json.data?.changed === true, `${crossToggle.status} ${JSON.stringify(crossToggle.json).slice(0, 200)}`)
+check('/toggle 带 project：那个项目的文件真的重命名了', existsSync(join(otherSkillsRoot, 'rp-toggle', 'SKILL.md.disabled')))
+check('/toggle 带 project：当前会话的项目一个字节没动', existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')))
+
+const noProjectToggle = await call({ method: 'POST', path: '/api/skill-console/toggle', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), enabled: false } })
+check('POST /toggle 不带 project + 别的项目的路径 → 400 error.path.outsideRoots（不静默写别的项目）', noProjectToggle.status === 400 && noProjectToggle.json?.code === 'error.path.outsideRoots', `${noProjectToggle.status} ${JSON.stringify(noProjectToggle.json).slice(0, 160)}`)
+check('/toggle 不带 project：别的项目的文件没被动', existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')))
+
+const goneToggle = await call({ method: 'POST', path: '/api/skill-console/toggle', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), enabled: false, project: 'session-gone' } })
+check('POST /toggle 未知 project → 400 error.role.noProject', goneToggle.status === 400 && goneToggle.json?.code === 'error.role.noProject', `${goneToggle.status} ${JSON.stringify(goneToggle.json).slice(0, 160)}`)
+check('/toggle 未知 project：那个技能的文件没被动', existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')))
+
+const crossBatch = await call({ method: 'POST', path: '/api/skill-console/toggle-batch', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: otherSession.id, items: [{ path: join(otherSkillsRoot, 'rp-flip', 'SKILL.md.disabled'), enabled: true }] } })
+check('POST /toggle-batch 带 project：逐项 ok:true（旧行为是 200 + ok:false）', crossBatch.status === 200 && crossBatch.json.data?.results?.[0]?.ok === true, `${crossBatch.status} ${JSON.stringify(crossBatch.json).slice(0, 200)}`)
+check('/toggle-batch 带 project：changed 记到那个项目', crossBatch.json.data?.changed === 1 && existsSync(join(otherSkillsRoot, 'rp-flip', 'SKILL.md')))
+
+const crossDelete = await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-trash', 'SKILL.md'), project: otherSession.id } })
+check('POST /skills/delete 带 project：删的是那个项目的技能', crossDelete.status === 200 && existsSync(join(otherSkillsRoot, 'rp-trash', 'SKILL.md')) === false, `${crossDelete.status} ${JSON.stringify(crossDelete.json).slice(0, 200)}`)
+check('/skills/delete 带 project：当前会话的项目还在', existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')))
+
+const otherDetail = await call({ path: `/api/skill-console/skill?path=${encodeURIComponent(join(otherSkillsRoot, 'rp-outside', 'SKILL.md'))}&project=${otherSession.id}` })
+check('GET /skill?project= 读的是那个项目的技能', otherDetail.status === 200 && otherDetail.json.data?.name === 'rp-outside', `${otherDetail.status} ${JSON.stringify(otherDetail.json).slice(0, 160)}`)
+const crossDetail = await call({ path: `/api/skill-console/skill?path=${encodeURIComponent(join(otherSkillsRoot, 'rp-outside', 'SKILL.md'))}`, headers: roleSession })
+check('GET /skill 不带 project + 别的项目的路径 → 400 error.path.outsideRoots', crossDetail.status === 400 && crossDetail.json?.code === 'error.path.outsideRoots', `${crossDetail.status} ${JSON.stringify(crossDetail.json).slice(0, 160)}`)
+
+// 客户端接线：四处写/读调用都必须把当前项目塞进参数（把空白折叠后再比，避开换行与缩进差异）。
+if (clientSource !== '') {
+	const flat = clientSource.replace(/\s+/g, ' ')
+	check('客户端四处调用都带上当前项目', (flat.match(/withProject\(project,/g) ?? []).length >= 4, String((flat.match(/withProject\(project,/g) ?? []).length))
+	check('客户端不再有裸的 /toggle 调用', !flat.includes("apiPost('/toggle', { path: skill.path, enabled }, sessionId)"))
+	check('客户端不再有裸的 /toggle-batch 调用', !flat.includes("apiPost('/toggle-batch', { items }, sessionId)"))
+	check('客户端不再有裸的 /skills/delete 调用', !flat.includes("apiPost('/skills/delete', { path: skill.path }, sessionId)"))
+	check('客户端不再有裸的 /skill 调用', !flat.includes("apiGet('/skill', { path: skill.path }, sessionId)"))
+}
 
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
@@ -2531,6 +2580,7 @@ for (const key of [
 	'roles.copyCount', 'roles.localKept', 'roles.localKeptHint', 'roles.globalHint',
 	'skills.expand', 'skills.collapse', 'skills.batchEnableAria', 'skills.batchDisableAria',
 	'repos.installTarget', 'repos.targetGlobal', 'repos.targetProject', 'repos.targetProjectHint',
+	'error.roleNoProject', 'error.tooMany',
 ]) {
 	check(`词典 zh / en 都有 ${key}`, typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string', `zh=${typeof dictionaryZh[key]} en=${typeof dictionaryEn[key]}`)
 }

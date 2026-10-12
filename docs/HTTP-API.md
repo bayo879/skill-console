@@ -21,13 +21,14 @@ kind: 'prefix'   path: '/api/skill-console'
 - 项目从两处来：`x-skill-console-session: <sessionId>` 头（浏览器半边从 `props.useSessions`
   拿到当前会话 id 后带上），或请求里的 `project`（会话 id）。宿主把会话解析成它的 `header.cwd`。
   **读宽松、写严格**：
-  - **读接口**（`/state`、`/catalog`、`/roles`、`/roles/preview`）：解析不出会话时**回落**到
+  - **读接口**（`/state`、`/catalog`、`/roles`、`/roles/preview`、`/skill`）：解析不出会话时**回落**到
     「最近一个会话的 cwd」，并在 `data.project.fallback === true` 里说明；`/catalog`、`/roles`、
-    `/roles/preview` 的 `?project=<sessionId>` 优先于请求头（优先级不变）。
-  - **写接口**（`/repositories/install`、`/roles/activate`、`/roles/deactivate`、`/skills/move-to-project`）：
+    `/roles/preview`、`/skill` 的 `?project=<sessionId>` 优先于请求头（优先级不变）。
+  - **写接口**（`/repositories/install`、`/roles/activate`、`/roles/deactivate`、`/skills/move-to-project`、
+    `/toggle`、`/toggle-batch`、`/skills/delete`）：
     请求体 `project` 优先于请求头，两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd 就是
     400 `error.role.noProject`，**绝不回落到「最近一个会话」**（否则界面上选着项目 B、写却落到 A）。
-    四个写接口都在解析出项目之后**先判空再动手**：解析不出时**一个字节都不写**。空串
+    七个写接口都在解析出项目之后**先判空再动手**：解析不出时**一个字节都不写**。空串
     `"project": ""` 等同「未提供」，按请求头解析。
 - 所有路径参数都是**绝对路径**，宿主会校验它落在已知技能根内，否则 400
   `error.path.outsideRoots`。前端不要自己拼路径去猜。
@@ -124,7 +125,8 @@ kind: 'prefix'   path: '/api/skill-console'
 
 ## 3. `GET /skill?path=<abs>`
 
-读单个技能正文（**禁用状态也能读**）。
+读单个技能正文（**禁用状态也能读**）。`?project=<sessionId>` 优先于 `x-skill-console-session` 头，
+按**读路径宽松解析**（解析不出就回落到「最近一个会话」的项目技能根）。
 
 ```jsonc
 {
@@ -143,14 +145,16 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 4. `POST /toggle`
 
 ```jsonc
-// 请求
-{ "path": "/Users/…/harness/skills/tdd/SKILL.md", "enabled": false }
+// 请求（project 省略时按请求头解析的会话；两条路都严格解析）
+{ "path": "/Users/…/harness/skills/tdd/SKILL.md", "enabled": false, "project": "<sessionId>" }
 // 响应 data
 { "skill": { …与 /catalog 里的技能条目同形… },
   "takeover": [ { "root": "user-dsh", "label": "全局 DSH", "scope": "global", "path": "…" } ],
   "changed": true }   // 关掉后接管同名技能的其他已启用副本（enabled=true 时 takeover 恒为 []）
 ```
 语义：**只重命名发现文件**，绝不改写内容。
+- `project` 优先于 `x-skill-console-session` 头，两条路都严格解析；解析不出 → 400 `error.role.noProject`，
+  **一个字节都不写**。
 - 禁用：`SKILL.md` → `SKILL.md.disabled`；`<name>.md` → `<name>.md.disabled`
 - 启用：反向。
 - 目标已存在时 409 `error.toggle.conflict`（不覆盖任何东西）。
@@ -160,12 +164,14 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 5. `POST /toggle-batch`
 
 ```jsonc
-// 请求
-{ "items": [ { "path": "…", "enabled": false }, … ] }   // 最多只处理前 200 项：items.slice(0, 200)，其余静默丢弃（不分片、不报错）
+// 请求（project 省略时按请求头解析的会话；两条路都严格解析）
+{ "items": [ { "path": "…", "enabled": false }, … ], "project": "<sessionId>" }   // 最多只处理前 200 项：items.slice(0, 200)，其余静默丢弃（不分片、不报错）
 // 响应 data
 { "results": [ { "path": "…", "ok": true }, { "path": "…", "ok": false, "error": "…" } ],
   "changed": 1 }
 ```
+`project` 优先于 `x-skill-console-session` 头，两条路都严格解析；解析不出 → 400 `error.role.noProject`，
+**一个字节都不写**（不会退化成「逐项 `ok:false`」的静默失败）。
 
 ## 6. `GET /repositories`
 
@@ -450,14 +456,16 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 21. `POST /skills/delete`  ← 删除技能（破坏性，先备份）
 
 ```jsonc
-// 请求（发现文件的绝对路径，可能是 .disabled）
-{ "path": "/Users/…/.dsh/skills/tdd/SKILL.md" }
+// 请求（发现文件的绝对路径，可能是 .disabled；project 省略时按请求头解析的会话）
+{ "path": "/Users/…/.dsh/skills/tdd/SKILL.md", "project": "<sessionId>" }
 // data
 { "name": "tdd", "path": "…/tdd/SKILL.md", "kind": "directory", "form": "directory",
   "root": "user-dsh", "directory": "…/tdd", "backup": "…/backups/tdd/1789…",
   "removed": ["…/tdd"], "deleted": true }
 ```
 语义（顺序是硬要求）：
+- `project` 优先于 `x-skill-console-session` 头，两条路都严格解析；解析不出 → 400 `error.role.noProject`，
+  **一个字节都不写**（连备份都不会创建）。
 - 先围栏（400 `error.path.outsideRoots`）与存在性检查（404 `error.skill.notFound`）；缺 `path` → 400 `error.proto.missingPath`。
 - **先整份备份**：目录包备份整个包目录（含内部脚本/resources），扁平文件备份那一个文件，软链接只存链接本身（`meta.json` 记 `link`）。备份抛错 → 500 `error.delete.backup`，**一个字节都不删**。
 - 再删：目录包 `rmSync(directory, {recursive:true})`；扁平删那个文件；软链接只 `unlinkSync` 链接本身，**绝不 dereference**。

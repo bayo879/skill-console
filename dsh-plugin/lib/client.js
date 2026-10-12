@@ -221,6 +221,8 @@ window.__ModuleLoader__.load({
 				'error.repoSubdirectory': '子目录不合法（不能是绝对路径、也不能含 ..），已拒绝这次编辑。',
 				'error.repoState': '订阅状态文件损坏了，为避免覆盖你的数据，这次操作被拒绝。可以检查 DSH_HOME 下的 skill-console/repositories.json。',
 				'error.backupNotFound': '没有可恢复的备份。',
+				'error.roleNoProject': '解析不出要操作哪个项目：请先在面板上选一个项目，再重试。',
+				'error.tooMany': '一次提交的条目太多，请分批操作。',
 				'error.endpointMissing': '后端接口没挂上（HTTP {status}）。通常是插件没被加载，或装好后还没重启 DSH。',
 				'error.internal': '后端处理这次请求时抛了异常，没有改动任何文件。可以看 DSH 日志里的 web-server 警告。',
 				'error.action': '操作失败：{error}',
@@ -448,6 +450,8 @@ window.__ModuleLoader__.load({
 				'error.repoSubdirectory': 'Invalid subdirectory (it cannot be an absolute path or contain ..); the edit was refused.',
 				'error.repoState': 'The subscription state file is corrupted, so this operation was refused to avoid overwriting your data. Check skill-console/repositories.json under DSH_HOME.',
 				'error.backupNotFound': 'There is no backup to restore.',
+				'error.roleNoProject': 'Could not resolve which project this applies to. Pick a project in the panel and try again.',
+				'error.tooMany': 'Too many items in one request; please split it into smaller batches.',
 				'error.endpointMissing': 'The backend endpoint is not mounted (HTTP {status}). Usually the plugin was not loaded, or DSH has not been restarted since installing it.',
 				'error.internal': 'The backend threw while handling this request; nothing was changed on disk. Check the web-server warnings in the DSH log.',
 				'error.action': 'Action failed: {error}',
@@ -912,6 +916,8 @@ window.__ModuleLoader__.load({
 			// 宿主原文里带状态文件的绝对路径，所以这一条必须翻译（面板不显示目录地址）。
 			'error.repo.state': 'error.repoState',
 			'error.backup.notFound': 'error.backupNotFound',
+			'error.role.noProject': 'error.roleNoProject',
+			'error.proto.tooMany': 'error.tooMany',
 		}
 
 		/** 把任何异常变成本地化的一行话。 */
@@ -1645,7 +1651,7 @@ window.__ModuleLoader__.load({
 
 			const loadDetail = (skill) => {
 				setDetail({ loading: true, data: null, error: null, name: skill.name })
-				apiGet('/skill', { path: skill.path }, sessionId)
+				apiGet('/skill', withProject(project, { path: skill.path }), sessionId)
 					.then((data) => setDetail({ loading: false, data, error: null, name: skill.name }))
 					.catch((error) => setDetail({ loading: false, data: null, error: actionError(t, error), name: skill.name }))
 			}
@@ -1655,7 +1661,7 @@ window.__ModuleLoader__.load({
 				setActionFail(null)
 				setNotice(null)
 				setBusyPath(skill.path)
-				apiPost('/toggle', { path: skill.path, enabled }, sessionId)
+				apiPost('/toggle', withProject(project, { path: skill.path, enabled }), sessionId)
 					.then((data) => {
 						const takeover = data && Array.isArray(data.takeover) ? data.takeover : []
 						if (takeover.length > 0) {
@@ -1686,7 +1692,7 @@ window.__ModuleLoader__.load({
 				setBatchBusy(true)
 				setActionFail(null)
 				setNotice(null)
-				apiPost('/toggle-batch', { items }, sessionId)
+				apiPost('/toggle-batch', withProject(project, { items }), sessionId)
 					.then((data) => {
 						const results = data && Array.isArray(data.results) ? data.results : []
 						const failed = results.filter((entry) => entry && entry.ok !== true)
@@ -1710,7 +1716,7 @@ window.__ModuleLoader__.load({
 				setBusyPath(skill.path)
 				setNotice(null)
 				setActionFail(null)
-				apiPost('/skills/delete', { path: skill.path }, sessionId)
+				apiPost('/skills/delete', withProject(project, { path: skill.path }), sessionId)
 					.then((data) => {
 						// 备份落在 DSH_HOME 下，是绝对路径：面板不显示具体目录地址，所以只报「已备份」。
 						setNotice(t('skills.deleteDone', { name: data.name || skill.name || '' }))
