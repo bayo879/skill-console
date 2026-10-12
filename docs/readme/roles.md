@@ -1,12 +1,12 @@
 # 角色（技能组合）
 
-状态：**已实现**（`dsh-skill-console@0.4.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
+状态：**已实现**（`dsh-skill-console@0.5.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
 
 ---
 
 ## 1. 目标
 
-在技能控制台里加第三个标签页「角色」，用来**保存自定义的技能组合**，并通过**切换角色**改变**当前项目**下生效的技能，**全程不修改全局技能根**。面板上**可以切换要操作哪个项目**（下拉在范围栏最前）：切换后，读（角色列表、候选）与写（切换 / 取消角色）都作用在选中的那个项目上。
+在技能控制台里加第三个标签页「角色」，用来**保存自定义的技能组合**，并通过**切换角色**改变**当前项目**下生效的技能，**全程不修改全局技能根**。面板上**可以切换要操作哪个项目**（下拉在范围栏最前）：切换后，读（角色列表、候选）与写（切换 / 取消角色）都作用在选中的那个项目上。这个「当前项目」是**整屏共享**的——技能 / 技能仓库 / 角色三个页签看的是同一个；角色页签自己也能切，切了另外两个页签跟着一起变。
 
 一句话说清它的价值：现在要换一套技能得逐个点开关；有了角色，点一次就换一套。
 
@@ -171,7 +171,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 | `error.role.duplicate` | 409 | 角色重名 |
 | `error.role.tooMany` | 400 | 角色数或每角色技能数超上限 |
 | `error.role.skills` | 400 | `skills` 不是字符串数组 |
-| `error.role.noProject` | 400 | 解析不出项目根（`/roles/activate`、`/roles/deactivate`） |
+| `error.role.noProject` | 400 | 解析不出项目根（`/roles/activate`、`/roles/deactivate`；同一枚码也用于 `/skills/move-to-project` 与 `target:'project'` 的 `/repositories/install`，见 `docs/HTTP-API.md`） |
 | `error.proto.missingId` | 400 | 复用现有 |
 | `error.path.outsideRoots` | 400 | 复用现有（第二层保证触发时） |
 
@@ -194,7 +194,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ### 单文件增长的取舍（已知代价）
 
-角色面板约 +500~550 行，`client.js` 从 2200 涨到约 2700 行，超过「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
+角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3225 行**（`wc -l dsh-plugin/lib/client.js`，0.5.0 收尾时），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
 
 已选择：**接受增长，不引入构建机制**（保住「改代码就生效」，且没有「改了源码忘了跑构建、界面静默跑旧代码」这种故障态）。缓解办法是把角色面板的**逻辑尽量压到宿主 `roles.js`**，客户端只留渲染。
 
@@ -217,7 +217,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ## 9. 测试覆盖（沿用现有三层）
 
-**`test/contract.mjs`（离线；0.4.0 收尾时全量 556 项）**
+**`test/contract.mjs`（离线；0.5.0 收尾时全量 621 项）**
 
 - 角色 CRUD；`roles.json` 损坏时拒绝写入且原文件不动；角色数/技能数上限；重名 409；名字非法 400。
 - `planRole` 纯函数：`copy` / `localKept` / `missing` / `disable` / 软链进 `skipped` / 同名双副本一起处置 / 连切两次第二次全 `noop` / `stats.total = copy+enable+disable+noop+skipped` 且 `localKept` 不计入。
@@ -236,7 +236,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 - `README.md`：功能节的「角色 tab」、四条设计边界的第 4 条、已知边界里「全局技能无法被角色排除」与「客户端单文件超 2000 行」两条、模块表的 `roles.js` 行，都是本文件的入口摘要。
 - `docs/HTTP-API.md` 第 15–20 节是这 6 个角色端点的冻结契约（含 `copy` / `localKept` / `missing` 字段）。
-- 插件版本 `0.4.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
+- 插件版本 `0.5.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
 - `planRole` 的输入多了 `sources`（全局根扫描结果）；不传时按「没有全局来源」处理，只是不会有 `copy` / `localKept`。
 
 ## 11. 明确不做的事

@@ -56,7 +56,7 @@ kind: 'prefix'   path: '/api/skill-console'
 {
   "ok": true,
   "data": {
-    "version": "0.4.0",              // 插件版本（package.json 的 version）；配置页头部显示它
+    "version": "0.5.0",              // 插件版本（package.json 的 version）；配置页头部显示它
     "dshHome": "/Users/…/harness",
     "token": false,                    // 是否配了 GitHub token（只报存在性，不回显值）
     "roots": [
@@ -333,6 +333,7 @@ kind: 'prefix'   path: '/api/skill-console'
 ```jsonc
 // 读接口，宽松：?project=<sessionId> 优先于 x-skill-console-session 头；
 // 两者都解析不出时回落到最近一个会话，并把 project.fallback 置为 true
+// （这是**读路径**：写路径只认请求体 project / 请求头且严格解析，见 §19、§20）
 {
   "ok": true,
   "data": {
