@@ -1793,6 +1793,8 @@ check('注册了 locale 字典（zh + en）', localeDictionaries.length >= 1 && 
 // 两套词典必须键集一致：缺一个键，英文界面就会原样吐出 `repos.xxx` 这种机器码。
 const dictionaryZh = localeDictionaries[0]?.dictionaries?.zh ?? {}
 const dictionaryEn = localeDictionaries[0]?.dictionaries?.en ?? {}
+check('旧的「全局只读」说法已经删掉', !('roles.globalReadonly' in dictionaryZh) && !('roles.globalReadonly' in dictionaryEn))
+check('新的全局分组说明讲清「复制进项目、全局不受影响」', typeof dictionaryZh['roles.globalHint'] === 'string' && dictionaryZh['roles.globalHint'].includes('项目') && dictionaryEn['roles.globalHint'].includes('project'))
 const missingInEn = Object.keys(dictionaryZh).filter((key) => !(key in dictionaryEn)).sort()
 const missingInZh = Object.keys(dictionaryEn).filter((key) => !(key in dictionaryZh)).sort()
 check('zh 与 en 的键集完全一致', missingInEn.length === 0 && missingInZh.length === 0, `en 缺 ${missingInEn.join(',')} / zh 缺 ${missingInZh.join(',')}`)
@@ -1943,7 +1945,7 @@ const roleEditorTree = RoleEditorExport({
 	draft: { id: null, name: '新角色', skills: ['rp-alpha'] },
 	candidates: {
 		project: [{ name: 'rp-alpha', path: '/p/rp-alpha/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null }],
-		global: [{ name: 'rp-global', path: '/g/rp-global/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null, readOnly: true, reason: 'global-uncontrollable' }],
+		global: [{ name: 'rp-global', path: '/g/rp-global/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null }],
 	},
 	missing: [],
 	busy: false,
@@ -1953,7 +1955,28 @@ const roleEditorTree = RoleEditorExport({
 	onCancel: () => {},
 	onActivate: () => {},
 })
-check('RoleEditor 为全局技能渲染只读说明', collectTexts(roleEditorTree).some((text) => text.includes('globalReadonly')), collectTexts(roleEditorTree).join('|').slice(0, 200))
+check('RoleEditor 让全局技能也能勾选（不再是只读清单）', (() => {
+	const switchFor = (name) => collect(roleEditorTree, (element) => element.props !== undefined && element.props.label === name && typeof element.props.onChange === 'function')[0]
+	return switchFor('rp-alpha') !== undefined && switchFor('rp-global') !== undefined
+})(), collectTexts(roleEditorTree).join('|').slice(0, 200))
+check('勾选全局技能回报的是「技能名 + 是否选中」', (() => {
+	const toggles = []
+	const tree = RoleEditorExport({
+		t: tStub,
+		draft: { id: null, name: 'x', skills: [] },
+		candidates: { project: [], global: [{ name: 'rp-global', path: '/g/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null }] },
+		missing: [],
+		busy: false,
+		onName: () => {},
+		onToggle: (name, next) => toggles.push([name, next]),
+		onSave: () => {},
+		onCancel: () => {},
+		onActivate: () => {},
+	})
+	const row = collect(tree, (element) => element.props !== undefined && element.props.label === 'rp-global' && typeof element.props.onChange === 'function')[0]
+	row?.props?.onChange(true)
+	return toggles.length === 1 && toggles[0][0] === 'rp-global' && toggles[0][1] === true
+})())
 check('RoleEditor 把可勾选的项目技能渲染出来', collectTexts(roleEditorTree).some((text) => text.includes('rp-alpha')), collectTexts(roleEditorTree).join('|').slice(0, 160))
 check('RoleEditor 列出角色里缺失的技能', collectTexts(RoleEditorExport({ t: tStub, draft: { id: 'r', name: 'x', skills: ['gone'] }, candidates: { project: [], global: [] }, missing: ['gone'], busy: false, onName: () => {}, onToggle: () => {}, onSave: () => {}, onCancel: () => {}, onActivate: () => {} })).some((text) => text.includes('gone')))
 
@@ -2031,6 +2054,8 @@ check('本地技能气泡里没有 commit 行', !collectTexts(localTip?.props?.l
 
 // 面板上不出现任何具体目录地址（技能根 / 项目根 / 技能文件 / 备份目录）。
 const exposed = loaded.factory(requireFor(true))
+check('导出 missingSkillsOf：全局根能找到就不算缺', typeof exposed.missingSkillsOf === 'function' && exposed.missingSkillsOf(['a', 'b'], { project: [{ name: 'a' }], global: [{ name: 'b' }] }).length === 0)
+check('三个根都找不到才算缺', exposed.missingSkillsOf(['a', 'gone'], { project: [{ name: 'a' }], global: [] }).join(',') === 'gone')
 check('导出 SkillGroup / RepoRow 供契约测试直接渲染', typeof exposed.SkillGroup === 'function' && typeof exposed.RepoRow === 'function')
 const groupTree = exposed.SkillGroup({
 	t: tStub,
@@ -2372,7 +2397,7 @@ for (const key of [
 	'skills.delete', 'skills.deleteConfirm', 'skills.deleteSymlinkHint', 'skills.deleteGlobalHint',
 	'skills.deleteDone', 'skills.deleteFailed', 'skills.move', 'skills.moveConfirm', 'skills.moveDone',
 	'skills.movePartial', 'skills.moveFailed', 'skills.formFlat', 'skills.formDirectory', 'skills.formSymlink',
-	'roles.copyCount', 'roles.localKept', 'roles.localKeptHint',
+	'roles.copyCount', 'roles.localKept', 'roles.localKeptHint', 'roles.globalHint',
 	'repos.installTarget', 'repos.targetGlobal', 'repos.targetProject', 'repos.targetProjectHint',
 ]) {
 	check(`词典 zh / en 都有 ${key}`, typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string', `zh=${typeof dictionaryZh[key]} en=${typeof dictionaryEn[key]}`)

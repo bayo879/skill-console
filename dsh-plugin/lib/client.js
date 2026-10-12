@@ -110,8 +110,8 @@ window.__ModuleLoader__.load({
 				'roles.statusDrifted': '已偏离角色',
 				'roles.statusDriftedHint': '项目技能与角色不一致（可能手工改过开关）。不会自动纠正，再切一次即可对齐。',
 				'roles.projectSkills': '项目技能·角色可控制',
-				'roles.globalSkills': '全局技能·不受角色控制',
-				'roles.globalReadonly': '全局技能不受角色控制，切换角色后仍然生效',
+				'roles.globalSkills': '全局技能·可复制到项目',
+				'roles.globalHint': '勾选 = 切换时把全局这份复制进项目（全局那份不动、仍然生效）；不勾 = 什么都不做。',
 				'roles.missingSkills': '角色里包含、但本项目没有的技能',
 				'roles.missingHint': '这些名字在别的项目里可能有；在本项目里切换时会被跳过。',
 				'roles.noProjectRoot': '这个项目还没有技能根（<项目根>/.dsh/skills 不存在）。',
@@ -334,8 +334,8 @@ window.__ModuleLoader__.load({
 				'roles.statusDrifted': 'Drifted from role',
 				'roles.statusDriftedHint': 'Project skills no longer match the role (toggles were changed by hand). Nothing is corrected automatically — switch again to realign.',
 				'roles.projectSkills': 'Project skills · controlled by the role',
-				'roles.globalSkills': 'Global skills · not controlled by roles',
-				'roles.globalReadonly': 'Global skills are not controlled by roles and stay active after switching',
+				'roles.globalSkills': 'Global skills · can be copied into the project',
+				'roles.globalHint': 'Checked = the global copy is copied into the project when switching (it stays active globally). Unchecked = nothing happens.',
 				'roles.missingSkills': 'In the role but missing from this project',
 				'roles.missingHint': 'These names may exist in other projects; switching here skips them.',
 				'roles.noProjectRoot': 'This project has no skill root yet (<projectRoot>/.dsh/skills does not exist).',
@@ -2562,10 +2562,22 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 角色里有、但本机两个根都找不到的技能名。
+		 *
+		 * 全局候选也能勾（切换时会复制进项目），所以「项目里没有」**不再**等于「缺」——
+		 * 三个根都找不到才算真的缺。
+		 */
+		function missingSkillsOf(skills, candidates) {
+			const known = new Set([...(candidates?.project ?? []), ...(candidates?.global ?? [])].map((skill) => skill.name))
+			return (Array.isArray(skills) ? skills : []).filter((name) => !known.has(name))
+		}
+
+		/**
 		 * 角色编辑器。
 		 *
 		 * 左栏是「项目技能」——角色真正能控制的部分，可勾选；
-		 * 右栏是「全局技能」——只读展示，每条都带一句为什么。
+		 * 右栏是「全局技能」——同样可勾选：勾上只表示「切换时复制一份进项目」，
+		 * 全局那份不受影响（不勾也不会被停用）。
 		 *
 		 * @param props - `{t, draft, candidates, missing, busy, onName, onToggle, onSave, onCancel, onActivate}`。
 		 */
@@ -2609,6 +2621,8 @@ window.__ModuleLoader__.load({
 					),
 				)
 
+			// 全局候选和项目候选用同一套勾选行：勾上 = 切换时把全局这份复制进项目，
+			// 不勾 = 什么都不做（全局那份照样生效）。软链（toggleable !== true）照旧挡在开关外面。
 			const globalList = globalSkills.length === 0
 				? null
 				: h(
@@ -2616,10 +2630,17 @@ window.__ModuleLoader__.load({
 					{ className: 'sc-role-skills' },
 					globalSkills.map((skill) =>
 						h(
-							'div',
-							{ key: skill.name, className: 'sc-role-skill sc-role-skill-readonly' },
+							'label',
+							{ key: skill.name, className: 'sc-role-skill' + (skill.toggleable === true ? '' : ' sc-role-skill-readonly'), 'data-skill': skill.name },
+							h(UiSwitch, {
+								checked: picked.has(skill.name),
+								disabled: props.busy || skill.toggleable !== true,
+								label: skill.name,
+								onChange: (next) => props.onToggle(skill.name, next),
+							}),
 							h('span', { className: 'sc-role-skill-name' }, skill.name),
 							h('span', { className: 'sc-sub' }, skill.enabled ? '●' : '○'),
+							skill.toggleable === true ? null : h(UiTag, { tone: 'quiet' }, readOnlyText(t, skill)),
 						),
 					),
 				)
@@ -2664,7 +2685,7 @@ window.__ModuleLoader__.load({
 							{ className: 'sc-group-head' },
 							h('span', { className: 'sc-group-title' }, t('roles.globalSkills')),
 						),
-						h('div', { className: 'sc-role-global-note' }, t('roles.globalReadonly')),
+						h('div', { className: 'sc-role-global-note' }, t('roles.globalHint')),
 						globalList,
 					),
 				h(
@@ -2731,7 +2752,7 @@ window.__ModuleLoader__.load({
 			const draftOf = (role) => ({ id: role.id, name: role.name, skills: [...(role.skills ?? [])] })
 
 			const current = draft ?? { id: null, name: '', skills: [] }
-			const missingInDraft = current.skills.filter((name) => !(data.candidates?.project ?? []).some((skill) => skill.name === name))
+			const missingInDraft = missingSkillsOf(current.skills, data.candidates)
 
 			/**
 			 * 准备一份「将复制 A / 启用 M / 停用 N」的确认文案（本地算，不为了弹窗再打一次接口）。
@@ -3030,6 +3051,7 @@ window.__ModuleLoader__.load({
 		exports.projectContextOf = projectContextOf
 		exports.ProjectSelect = ProjectSelect
 		exports.withProject = withProject
+		exports.missingSkillsOf = missingSkillsOf
 		return module.exports
 	},
 })
