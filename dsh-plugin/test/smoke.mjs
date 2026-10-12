@@ -258,7 +258,7 @@ try {
 	check('GET /roles 返回 200', rolesBefore.status === 200 && rolesBefore.body?.ok === true, `http=${rolesBefore.status}`)
 	check('角色列表是数组', Array.isArray(rolesBefore.body?.data?.roles))
 	check('候选里项目技能与全局技能分开', Array.isArray(rolesBefore.body?.data?.candidates?.project) && Array.isArray(rolesBefore.body?.data?.candidates?.global))
-	check('全局技能一律标只读', (rolesBefore.body?.data?.candidates?.global ?? []).every((entry) => entry.readOnly === true && entry.reason === 'global-uncontrollable'))
+	check('全局候选与项目候选同形状（可勾选，不再标只读）', (rolesBefore.body?.data?.candidates?.global ?? []).every((entry) => !('readOnly' in entry) && !('reason' in entry) && 'toggleable' in entry && 'readOnlyReason' in entry))
 	if (rolesBefore.body?.data?.roles?.some((role) => role.name === roleFixtureName)) {
 		console.error(`\n同名角色已存在，拒绝覆盖：${roleFixtureName}`)
 		console.error('请先在面板里删除它，或手工编辑 roles.json 后重跑。')
