@@ -34,6 +34,9 @@ const CHROME_CANDIDATES = [
 ].filter(Boolean)
 
 const chromePath = CHROME_CANDIDATES.find((candidate) => existsSync(candidate))
+// 默认 1400 宽（真实控制台宽度）。要验证「名称行折成两行」这条量测真的能变红，
+// 用 LAYOUT_WINDOW=700,600 跑一次：headRows 会从 1 变成 2，断言随之失败。
+const windowSize = process.env.LAYOUT_WINDOW || '1400,600'
 if (!chromePath) {
 	console.log('[layout] 跳过：没找到 Chrome（设 CHROME=/path/to/chrome 可指定）。')
 	process.exit(0)
@@ -92,6 +95,26 @@ function measure(id) {
 }
 // 需求 ③「动作按钮移到名称行右侧」：这条只能在真浏览器里量——选择器对得再准，
 // 也不能证明按钮真的和输入框同一行、且在勾选列表之前。
+// 名称行有没有折成两行：数 head 的直接子元素落在几个不同的横向上。
+// 比的是**中线**（top + height/2）而不是 top——同一行里一个空 span（spacer）和输入框
+// 的 top 能差十来个像素，拿 top 比会把单行误判成两行。
+// 也不量高度：flex-wrap 真折行时整行高度只比单行多一点点（实测 59px vs 26px），
+// 用高度阈值判断会在窄面板上判「只有一行」而放过折行。
+function headRowsOf(head, round) {
+	if (!head) return null
+	const centers = Array.from(head.children)
+		.map((child) => {
+			const box = child.getBoundingClientRect()
+			return round(box.top + box.height / 2)
+		})
+		.sort((a, b) => a - b)
+	if (centers.length === 0) return 0
+	let rows = 1
+	for (let i = 1; i < centers.length; i += 1) {
+		if (centers[i] - centers[i - 1] > 8) rows += 1
+	}
+	return rows
+}
 function measureRole(id) {
 	const root = document.getElementById('ROLE-' + id)
 	if (!root) return null
@@ -103,6 +126,7 @@ function measureRole(id) {
 	const topOf = (element) => (element ? round(element.getBoundingClientRect().top) : null)
 	return {
 		headHeight: head ? round(head.getBoundingClientRect().height) : null,
+		headRows: headRowsOf(head, round),
 		inputTop: topOf(input),
 		firstButtonTop: topOf(buttons[0]),
 		firstSkillTop: topOf(firstSkill),
@@ -164,7 +188,7 @@ const run = spawnSync(
 		'--disable-breakpad',
 		'--disable-component-update',
 		`--user-data-dir=${join(OUT_DIR, 'profile')}`,
-		'--window-size=1400,600',
+		'--window-size=' + windowSize,
 		'--virtual-time-budget=2000',
 		'--dump-dom',
 		`file://${htmlPath}`,
@@ -198,7 +222,7 @@ const checks = [
 	['改动后：溢出交给 .sc-body 自己滚动', after.bodyScrolls === true],
 	['需求③ 角色编辑器：动作按钮与名称输入框在同一行', role.inputTop !== null && role.firstButtonTop !== null && Math.abs(role.inputTop - role.firstButtonTop) < 8],
 	['需求③ 角色编辑器：动作按钮在勾选列表之前', role.firstButtonTop !== null && role.firstSkillTop !== null && role.firstButtonTop < role.firstSkillTop],
-	['需求③ 角色编辑器：名称行没被 flex-wrap 撑成两行', role.headHeight !== null && role.headHeight < 60],
+	['需求③ 角色编辑器：名称行没被 flex-wrap 撑成两行（默认宽度下 headRows===1）', role.headRows === 1],
 	['需求③ 角色编辑器：名称行里就是那三个动作按钮', role.buttonsInHead === 3],
 ]
 

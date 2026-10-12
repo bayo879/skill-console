@@ -2067,6 +2067,13 @@ check('保存 / 取消 / 切换三个按钮都在名称行里', (() => {
 	return hasChildText('roles.save') && hasChildText('roles.cancel') && hasChildText('roles.activate')
 })(), JSON.stringify(roleEditorTree).slice(0, 200))
 check('编辑器底部不再留动作行', collect(roleEditorTree, (element) => element.props !== undefined && element.props.className === 'sc-row-actions').length === 0)
+// 需求③还有一半只有坐标才看得出来（按钮和输入框同一行）：那个由 layout-probe 在真浏览器里量。
+// 这里补一条**结构顺序**断言，防止「按钮在 head 里、但整块 head 被渲染到勾选列表之后」——
+// 那种改法坐标断言仍然全绿。collect 是深度优先前序，拿到的就是文档顺序。
+check('名称行排在技能勾选列表之前（结构顺序，不只看坐标）', (() => {
+	const ordered = collect(roleEditorTree, (element) => element.props !== undefined && typeof element.props.className === 'string' && (element.props.className === 'sc-role-editor-head' || element.props.className.includes('sc-role-skill')))
+	return ordered.length >= 2 && ordered[0].props.className === 'sc-role-editor-head'
+})(), JSON.stringify(collect(roleEditorTree, (element) => element.props !== undefined && typeof element.props.className === 'string' && (element.props.className === 'sc-role-editor-head' || element.props.className.includes('sc-role-skill'))).map((element) => element.props.className)))
 check('RoleEditor 列出角色里缺失的技能', collectTexts(RoleEditorExport({ t: tStub, draft: { id: 'r', name: 'x', skills: ['gone'] }, candidates: { project: [], global: [] }, missing: ['gone'], busy: false, onName: () => {}, onToggle: () => {}, onSave: () => {}, onCancel: () => {}, onActivate: () => {} })).some((text) => text.includes('gone')))
 
 // 角色名输入框：`onChange` 收到的是**原生 DOM 事件**，不是字符串。
@@ -2325,7 +2332,7 @@ check(
 // 需求 ③「编辑器按钮上移」的样式锚点：分隔线只画在真实的相邻节点上，别留死选择器。
 check(
 	'组内首行的分隔线指向真实相邻节点（死选择器已清）',
-	!/\.sc-group \.sc-row:first-child/.test(clientSource) && !/\.sc-repogroup \.sc-row:first-child/.test(clientSource) && /\.sc-repogroup-head \+ \.sc-row/.test(clientSource) && /\.sc-role-skills > \.sc-role-skill:first-child/.test(clientSource),
+	!/\.sc-group \.sc-row:first-child/.test(clientSource) && !/\.sc-repogroup \.sc-row:first-child/.test(clientSource) && /\.sc-group-head \+ \.sc-row/.test(clientSource) && /\.sc-repogroup-head \+ \.sc-row/.test(clientSource) && /\.sc-role-skills > \.sc-role-skill:first-child/.test(clientSource),
 )
 
 // 折叠开关的可访问性细节与订阅卡片（RepoRow）保持一致：悬停有 title，三角对读屏隐藏。

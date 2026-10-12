@@ -111,7 +111,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 | POST | `/roles/activate` | 对齐：把项目技能根切到该角色 `{id, project?}` |
 | POST | `/roles/deactivate` | 只清本项目的激活记录 `{project?}`（不动磁盘） |
 
-角色自己的四个写端点都**读请求体**；其中 `project`（会话 id）只对 `/roles/activate` 与 `/roles/deactivate` 有意义，
+角色自己的四个写端点（`save` / `remove` / `activate` / `deactivate`）都**读请求体**；其中 `project`（会话 id）只对 `/roles/activate` 与 `/roles/deactivate` 有意义，
 用来指定**要操作哪个项目**，**优先于** `x-skill-console-session` 头；`project` 省略时按请求头解析。
 两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd → 400
 `error.role.noProject`，**不会回落到「最近一个会话」**。
