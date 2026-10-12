@@ -1902,6 +1902,41 @@ check('RoleEditor 为全局技能渲染只读说明', collectTexts(roleEditorTre
 check('RoleEditor 把可勾选的项目技能渲染出来', collectTexts(roleEditorTree).some((text) => text.includes('rp-alpha')), collectTexts(roleEditorTree).join('|').slice(0, 160))
 check('RoleEditor 列出角色里缺失的技能', collectTexts(RoleEditorExport({ t: tStub, draft: { id: 'r', name: 'x', skills: ['gone'] }, candidates: { project: [], global: [] }, missing: ['gone'], busy: false, onName: () => {}, onToggle: () => {}, onSave: () => {}, onCancel: () => {}, onActivate: () => {} })).some((text) => text.includes('gone')))
 
+// 角色名输入框：`onChange` 收到的是**原生 DOM 事件**，不是字符串。
+// 宿主的 primitives.Input 把 rest 直接铺在内部 `<input>` 上（见
+// @deepseek-ai/dsh-client-ui-primitives 的 Input 实现），无 primitives 时的退化实现同样如此。
+// 把整个 event 当成名字塞进草稿，React 会把受控值写成 "[object Object]"，
+// 用户看到的现象就是「新建角色后名字打不进去」。
+const nameInputOf = (tree) =>
+	collect(
+		tree,
+		(element) => element.props !== undefined && typeof element.props.onChange === 'function' && element.props.placeholder === 'roles.namePlaceholder',
+	)[0]
+for (const [label, withPrimitives] of [
+	['有 primitives', true],
+	['无 primitives（原生退化）', false],
+]) {
+	let typed = null
+	const editorTree = loaded.factory(requireFor(withPrimitives)).RoleEditor({
+		t: tStub,
+		draft: { id: null, name: '', skills: [] },
+		candidates: { project: [], global: [] },
+		missing: [],
+		busy: false,
+		onName: (value) => {
+			typed = value
+		},
+		onToggle: () => {},
+		onSave: () => {},
+		onCancel: () => {},
+		onActivate: null,
+	})
+	const nameInput = nameInputOf(editorTree)
+	check(`RoleEditor 渲染出角色名输入框（${label}）`, nameInput !== undefined)
+	if (nameInput !== undefined) nameInput.props.onChange({ target: { value: '前端' } })
+	check(`RoleEditor 的名字 onChange 交出字符串而不是事件对象（${label}）`, typed === '前端', `实际 ${Object.prototype.toString.call(typed)} ${String(typed)}`)
+}
+
 const rolesReadme = readFileSync(join(LIB, 'client.js'), 'utf8')
 check('角色面板不复用全局根的写路径（不在客户端拼 applyRole 的入参）', !/applyRole/.test(rolesReadme))
 

@@ -2512,11 +2512,14 @@ window.__ModuleLoader__.load({
 			const globalSkills = props.candidates?.global ?? []
 			const missing = props.missing ?? []
 
+			// UiInput 把 rest 直接铺在原生 `<input>` 上（primitives.Input 与退化实现都是），
+			// 所以 onChange 拿到的是 DOM 事件——名字要从 `event.target.value` 取。
+			// 直接透传 event 会让草稿名变成对象，受控值被 React 写成 "[object Object]"。
 			const nameInput = h(UiInput, {
 				value: draft.name ?? '',
 				placeholder: t('roles.namePlaceholder'),
 				disabled: props.busy,
-				onChange: (value) => props.onName(value),
+				onChange: (event) => props.onName(event.target.value),
 			})
 
 			const projectList = projectSkills.length === 0

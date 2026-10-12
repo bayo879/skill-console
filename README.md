@@ -94,7 +94,7 @@ DSH_HOME="$HOME/Library/Application Support/dsh-desktop/harness" \
 node skill-console/dsh-plugin/test/contract.mjs
 ```
 
-覆盖 552 项，守的是「重启之前就能确定」的事：
+覆盖 556 项，守的是「重启之前就能确定」的事：
 
 - **四份身份标识一致**：`package.json` 包名 / `cordis.patch.yml` insert id / 宿主 `name` / 客户端 bundle id。对不上时插件会**静默不加载**（DSH 不报错），所以必须机器守。
 - **扫描与启停**：发现规则（只扫一层、大小写敏感、跳过 `.`）、`.disabled` 语义、同名覆盖、软链接只读、越界拒绝、409 冲突、批量逐项结果。
@@ -102,7 +102,7 @@ node skill-console/dsh-plugin/test/contract.mjs
 - **宿主路由**：回环围栏（非法 Host / 跨站 / 跨源 403）、写操作标记与 content-type、body 上限、各错误码。
 - **角色**：`roles.json` 的原子写 / 损坏拒写 / 上限 / 重名（id 归一化后再比）、`planRole` 的 copy/enable/disable/noop/skipped/localKept/missing 分类、`applyRole` 复制只落项目根且**全局根结构上不可达**，以及 6 个角色端点的状态码、围栏与 405。
 - **删除 / 移动到项目 / 安装目标**：`POST /skills/delete` 先备份再删、删完能从备份原样恢复、技能根永不被删、根外路径 400；`POST /skills/move-to-project` 只允许全局→项目，非全局 400 / 同名 409 / 软链 400，删全局失败时不回滚并如实带 `warning`；`POST /repositories/install` 的 `target:'project'` 端到端证明落进项目技能根、缺省仍落全局根、解析不出项目根 400 而不退回全局。
-- **浏览器半边**：模块表注册、`inject` 面、`settings.section` 契约、降级边界、缺 primitives / 缺 slots / 缺 locale 都不崩。
+- **浏览器半边**：模块表注册、`inject` 面、`settings.section` 契约、降级边界、缺 primitives / 缺 slots / 缺 locale 都不崩；受控输入框的 `onChange` 按**原生事件**取值（角色的名字输入框必须交出字符串，不能把 Event 当名字）。
 
 ### 三层验证（越往下越接近真实）
 

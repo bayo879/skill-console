@@ -208,14 +208,14 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ## 9. 测试覆盖（沿用现有三层）
 
-**`test/contract.mjs`（离线；0.4.0 收尾时全量 552 项）**
+**`test/contract.mjs`（离线；0.4.0 收尾时全量 556 项）**
 
 - 角色 CRUD；`roles.json` 损坏时拒绝写入且原文件不动；角色数/技能数上限；重名 409；名字非法 400。
 - `planRole` 纯函数：`copy` / `localKept` / `missing` / `disable` / 软链进 `skipped` / 同名双副本一起处置 / 连切两次第二次全 `noop` / `stats.total = copy+enable+disable+noop+skipped` 且 `localKept` 不计入。
 - **`applyRole` 只动项目根**：造一个全局技能，切换后断言它的文件名与 `mtime` 一个字节没变（含 `copy` 那一轮）；再造一个「plan 里塞了全局路径」的用例，断言抛 `error.path.outsideRoots`。
 - 漂移：手工改一个开关 → `status === 'drifted'`。
 - 激活角色被删 → `active` 失效、`status === 'unassigned'`。
-- 客户端：模块表注册 id、第三个 tab 的两份 locale 齐全、缺 primitives / 缺 slots / 缺 locale 都不崩。
+- 客户端：模块表注册 id、第三个 tab 的两份 locale 齐全、缺 primitives / 缺 slots / 缺 locale 都不崩；角色名输入框的 `onChange` 交出字符串（有 / 无 primitives 两条路径都测，宿主 `Input` 与退化实现都是原生 `<input>` 事件透传）。
 
 **`test/integration-cordis.mjs`**：在真 cordis 上按既有形状加一条 `GET /roles` 探针（`provideServices: {}`，不注入 services），断言 200 + JSON 壳，且 `data.status` 是字符串、`data.roles` 是数组、`data.candidates` 是对象。注意它读的是真实 `~/.dsh` 下的 `roles.json`：`GET` 不写盘，跑完 `~/.dsh/skill-console/` 不该多出文件。
 
