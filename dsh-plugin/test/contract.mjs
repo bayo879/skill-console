@@ -2673,59 +2673,57 @@ check('编辑表单只给分支 / 子目录两个输入框', ['repos.addRef', 'r
 const editInputs = collect(editFormTree, (element) => element.props && 'value' in element.props)
 check('编辑表单回填当前设置', editInputs.map((element) => element.props.value).join(',') === 'main,skills', JSON.stringify(editInputs.map((element) => element.props.value)))
 
-// 项目下拉：值是会话 id（宿主靠它解析 cwd），标签只有项目名（面板不显示绝对路径）。
+// 工作区下拉：值就是工作区目录路径（宿主按路径严格解析，不要求已注册）。
 check('导出 projectOptionsOf 供契约测试直接打', typeof exposed.projectOptionsOf === 'function')
-const optionList = exposed.projectOptionsOf([
-	{ sessionId: 's-1', cwd: '/Users/x/code/proj-a/sub', root: '/Users/x/code/proj-a', updatedAt: 2 },
-	{ sessionId: 's-2', cwd: '/Users/x/code/proj-b', root: '/Users/x/code/proj-b', updatedAt: 1 },
-])
-check('选项的值是会话 id', optionList.map((option) => option.value).join(',') === 's-1,s-2', JSON.stringify(optionList))
-check('选项的标签只有项目名，没有绝对路径', optionList.map((option) => option.label).join(',') === 'proj-a,proj-b', JSON.stringify(optionList))
-check('没有 root 时回落到 cwd 的末段名', exposed.projectOptionsOf([{ sessionId: 's-3', cwd: '/Users/x/code/proj-c' }])[0].label === 'proj-c')
-check('项目列表为空/缺失时不抛', exposed.projectOptionsOf(undefined).length === 0 && exposed.projectOptionsOf(null).length === 0)
-
-// 下拉框的当前值必须永远落在选项里：去重后同一项目的代表会话会换人。
-check('导出 projectOptionOfPick 供契约测试直接打', typeof exposed.projectOptionOfPick === 'function')
-const pickOptions = exposed.projectOptionsOf([
-	{ sessionId: 's-new', cwd: '/Users/x/code/proj-a', root: '/Users/x/code/proj-a' },
-	{ sessionId: 's-b', cwd: '/Users/x/code/proj-b', root: '/Users/x/code/proj-b' },
-])
-check('会话还在 → 原样认领', exposed.projectOptionOfPick({ value: 's-b', root: '/Users/x/code/proj-b' }, pickOptions)?.value === 's-b')
-check(
-	'代表会话换人（同项目根） → 认领新的代表，下拉不会选空',
-	exposed.projectOptionOfPick({ value: 's-old', root: '/Users/x/code/proj-a' }, pickOptions)?.value === 's-new',
-	JSON.stringify(exposed.projectOptionOfPick({ value: 's-old', root: '/Users/x/code/proj-a' }, pickOptions)),
-)
-check('项目整个没了 → 返回 null，由调用方落回默认', exposed.projectOptionOfPick({ value: 's-gone', root: '/Users/x/code/proj-gone' }, pickOptions) === null)
-check('没选过 / 选项缺失时不抛', exposed.projectOptionOfPick(null, pickOptions) === null && exposed.projectOptionOfPick({ value: 's-b', root: '/x' }, undefined) === null)
-
-// 选择状态认项目根而不是会话 id：源码里不能再出现旧的一次性会话 id 状态。
-check('面板不再按会话 id 记项目选择', !/setProjectId\b/.test(clientSource) && !/\[projectId,/.test(clientSource))
-
-// 反向守住「共享上下文」这个结构：多一处 /state 就说明有页签自己在拉，三个页签会看到分叉的项目。
-check('整个控制台只在一处拉 /state（项目上下文单点）', (clientSource.match(/apiGet\('\/state'/g) ?? []).length === 1)
-
-// 项目上下文（纯函数）：下拉、写请求、三个页签读的是同一份。
-const ctxFor = (state, pick, sessionId) => (typeof exposed.projectContextOf === 'function' ? exposed.projectContextOf(state, pick, sessionId) : {})
-const twoProjects = {
+const twoWorkspaces = {
 	loading: false,
 	error: null,
 	data: {
-		version: '0.5.0',
-		selected: { sessionId: 's-1' },
-		projects: [
-			{ sessionId: 's-1', cwd: '/Users/x/code/proj-a' },
-			{ sessionId: 's-2', cwd: '/Users/x/code/proj-b' },
+		version: '0.6.0',
+		workspacesFrom: 'registry',
+		selected: { sessionId: 's-1', cwd: '/Users/x/code/proj-a/sub', root: '/Users/x/code/proj-a', fallback: false, workspaceId: 'w-a' },
+		workspaces: [
+			{ workspaceId: 'w-a', path: '/Users/x/code/proj-a', title: 'proj-a', root: '/Users/x/code/proj-a', sessionIds: ['s-1'], fromRegistry: true },
+			{ workspaceId: 'w-b', path: '/Users/x/code/proj-b', title: 'proj-b', root: '/Users/x/code/proj-b', sessionIds: [], fromRegistry: true },
 		],
 	},
 }
+const optionList = exposed.projectOptionsOf(twoWorkspaces)
+check('选项的值是工作区目录路径', optionList.map((option) => option.value).join(',') === '/Users/x/code/proj-a,/Users/x/code/proj-b', JSON.stringify(optionList))
+check('选项的标签用工作区标题，没有绝对路径', optionList.map((option) => option.label).join(',') === 'proj-a,proj-b', JSON.stringify(optionList))
+check('标题缺失时回落到目录末段名', exposed.projectOptionsOf({ data: { workspaces: [{ workspaceId: 'w', path: '/Users/x/code/proj-c', root: '/Users/x/code/proj-c' }] } })[0].label === 'proj-c')
+check('工作区列表为空/缺失时不抛', exposed.projectOptionsOf(undefined).length === 0 && exposed.projectOptionsOf(null).length === 0 && exposed.projectOptionsOf({ data: null }).length === 0)
+
+check('导出 projectOptionOfPick 供契约测试直接打', typeof exposed.projectOptionOfPick === 'function')
+const pickOptions = exposed.projectOptionsOf(twoWorkspaces)
+check('选过的工作区还在 → 按目录原样认领', exposed.projectOptionOfPick({ value: '/Users/x/code/proj-b', root: '/Users/x/code/proj-b' }, pickOptions)?.value === '/Users/x/code/proj-b')
+check('工作区整个没了 → 返回 null，由调用方落回默认', exposed.projectOptionOfPick({ value: '/Users/x/code/proj-gone', root: '/Users/x/code/proj-gone' }, pickOptions) === null)
+check('没选过 / 选项缺失时不抛', exposed.projectOptionOfPick(null, pickOptions) === null && exposed.projectOptionOfPick({ value: '/x', root: '/x' }, undefined) === null)
+
+// 选择状态认工作区目录而不是会话 id：源码里不能再出现旧的一次性会话 id 状态。
+check('面板不再按会话 id 记项目选择', !/setProjectId\b/.test(clientSource) && !/\[projectId,/.test(clientSource))
+
+// 工作区上下文（纯函数）：下拉、写请求、三个页签读的是同一份。
+const ctxFor = (state, pick, sessionId) => (typeof exposed.projectContextOf === 'function' ? exposed.projectContextOf(state, pick, sessionId) : {})
 check('导出 projectContextOf 供契约测试直接打', typeof exposed.projectContextOf === 'function')
-check('没选过项目时就用当前会话', ctxFor(twoProjects, null, 's-2').active === 's-2' && ctxFor(twoProjects, null, 's-2').activeName === 'proj-b')
-check('选过的项目按项目根认领（代表会话换人也要选得中）', ctxFor(twoProjects, { value: 's-gone', root: '/Users/x/code/proj-b' }, 's-1').active === 's-2')
-check('项目整个没了就落回当前会话', ctxFor(twoProjects, { value: 's-3', root: '/Users/x/code/proj-gone' }, 's-1').active === 's-1')
-check('版本号来自同一份 /state（不再单独再拉一次）', ctxFor(twoProjects, null, 's-1').version === '0.5.0')
+check('没选过工作区时按项目根认领当前会话那个', ctxFor(twoWorkspaces, null, 's-1').active === '/Users/x/code/proj-a' && ctxFor(twoWorkspaces, null, 's-1').activeName === 'proj-a')
+check('选过的工作区还在 → 用选中的那个的目录', ctxFor(twoWorkspaces, { value: '/Users/x/code/proj-b', root: '/Users/x/code/proj-b' }, 's-1').active === '/Users/x/code/proj-b')
+check('版本号来自同一份 /state', ctxFor(twoWorkspaces, null, 's-1').version === '0.6.0')
+const unregisteredState = {
+	loading: false,
+	error: null,
+	data: {
+		version: '0.6.0',
+		workspacesFrom: 'registry',
+		selected: { sessionId: 's-9', cwd: '/Users/x/loose/dir', root: '/Users/x/loose/dir', fallback: true, workspaceId: null },
+		workspaces: [{ workspaceId: 'w-a', path: '/Users/x/code/proj-a', title: 'proj-a', root: '/Users/x/code/proj-a', sessionIds: [], fromRegistry: true }],
+	},
+}
+const looseContext = ctxFor(unregisteredState, null, 's-9')
+check('当前会话目录不在注册表里 → 作为「当前会话」一项列在最前', looseContext.options[0].value === '/Users/x/loose/dir' && looseContext.options[0].session === true && looseContext.active === '/Users/x/loose/dir', JSON.stringify(looseContext.options))
 const emptyContext = ctxFor({ loading: true, data: null, error: null }, null, 's-1')
-check('拉不到 /state 时 active 退化成会话 id、projects 为空、不抛', emptyContext.active === 's-1' && emptyContext.projects.length === 0 && emptyContext.loading === true)
+check('拉不到 /state 时 active 退化成空串、选项为空、不抛', emptyContext.active === '' && emptyContext.options.length === 0 && emptyContext.loading === true)
+check('写请求体一定显式带上工作区目录', typeof exposed.withProject === 'function' && exposed.withProject({ active: '/Users/x/code/proj-b' }, { id: 'r1' }).project === '/Users/x/code/proj-b')
 
 // 项目下拉与写请求的项目字段：角色页签 / 仓库页签（「装到项目」）消费的就是这一份。
 check('导出 ProjectSelect 供契约测试直接渲染', typeof exposed.ProjectSelect === 'function')
@@ -2739,7 +2737,6 @@ const selectElement = collect(selectTree, (element) => element.props !== undefin
 selectElement.props.onChange({ target: { value: 's-1' } })
 check('选中后回传完整 option（按项目根认领，不是裸会话 id）', pickedOptions[0]?.root === '/Users/x/code/proj-a', JSON.stringify(pickedOptions))
 check('没有可选项目时不渲染下拉', exposed.ProjectSelect({ t: tStub, context: { options: [], active: '', setPick: () => {} } }) === null)
-check('导出 withProject：写请求体一定显式带上选中项目', typeof exposed.withProject === 'function' && exposed.withProject({ active: 's-2' }, { id: 'r1' }).project === 's-2')
 const installWiring = clientSource.indexOf("installTarget === 'project'")
 check('仓库页签在「装到项目」时就地给出项目下拉', installWiring >= 0 && clientSource.slice(installWiring, installWiring + 400).includes('ProjectSelect'))
 
@@ -2836,6 +2833,19 @@ for (const key of [
 ]) {
 	check(`词典 zh / en 都有 ${key}`, typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string', `zh=${typeof dictionaryZh[key]} en=${typeof dictionaryEn[key]}`)
 }
+
+section('工作区：共享上下文按目录路径，三个页签读同一份')
+
+check('整个控制台只在一处拉 /state（工作区单点）', (clientSource.match(/apiGet\('\/state'/g) ?? []).length === 1)
+const WORKSPACE_WRITES = ["apiGet('/skill'", "apiPost('/toggle'", "apiPost('/toggle-batch'", "apiPost('/skills/delete'", "apiPost('/skills/move-to-project'", "apiPost('/repositories/install'", "apiPost('/roles/activate'", "apiPost('/roles/deactivate'"]
+check('八个按路径定位的读写请求都带上当前工作区', WORKSPACE_WRITES.every((snippet) => {
+	const at = clientSource.indexOf(snippet)
+	return at >= 0 && clientSource.slice(at, at + 200).includes('withProject(project')
+}), WORKSPACE_WRITES.filter((snippet) => {
+	const at = clientSource.indexOf(snippet)
+	return !(at >= 0 && clientSource.slice(at, at + 200).includes('withProject(project'))
+}).join(' / '))
+check('三个页签都由 section 注入同一份工作区上下文', ['SkillsPanel', 'ReposPanel', 'RolesPanel'].every((name) => new RegExp(`h\\(${name}, \\{ t, sessionId, project \\}\\)`).test(clientSource)))
 
 // ── 结果 ──────────────────────────────────────────────────────────────────
 

@@ -1091,55 +1091,77 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 项目下拉框的选项。
+		 * 工作区下拉框的选项。
 		 *
-		 * 值必须是**会话 id**：宿主靠它把请求解析成该会话的 `cwd`（进而项目根）。
-		 * 标签只给项目名——面板从头到尾不显示绝对路径，一排一模一样的地址更是没法选。
-		 * 去重由宿主做（`/state.projects` 已按项目根收敛），这里不再重复判重。
+		 * 值就是**工作区的目录路径**：宿主在写接口上按这个路径严格解析（`400 workspace.invalid`），
+		 * 不要求该工作区在会话里注册过。标签只给工作区名——面板从头到尾不显示绝对路径，
+		 * 一排一模一样的地址更是没法选。去重由宿主做（`/state.workspaces` 已按目录收敛），
+		 * 这里不再重复判重。
 		 *
-		 * @param projects - `/state` 的 `projects`。
-		 * @returns `[{value, label, root}]`；`root` 只在客户端用来「认领」用户选过的项目。
+		 * 当前会话的目录如果不在列表里（会话是临时的、或注册表里没有它），把它作为
+		 * 「当前会话」补在最前面——否则用户会发现自己当前所在的目录选不中。
+		 *
+		 * @param state - 整个 `/state` 上下文（`{loading, data, error}`）。
+		 * @returns `[{value, label, root, path, session}]`；`root`/`path` 只在客户端用来「认领」。
 		 */
-		function projectOptionsOf(projects) {
-			const list = Array.isArray(projects) ? projects : []
-			return list.map((entry) => ({
-				value: String(entry?.sessionId ?? ''),
-				label: projectNameOf(entry),
-				root: typeof entry?.root === 'string' ? entry.root : String(entry?.cwd ?? ''),
-			}))
+		function projectOptionsOf(state) {
+			const data = state && state.data ? state.data : null
+			const entries = data && Array.isArray(data.workspaces) ? data.workspaces : []
+			const options = entries.map((entry) => {
+				const path = String(entry?.path ?? '')
+				return {
+					value: path,
+					label: entry?.title || baseName(path),
+					root: entry?.root || path,
+					path,
+					session: false,
+				}
+			})
+			const selected = data && data.selected ? data.selected : null
+			const cwd = selected && typeof selected.cwd === 'string' ? selected.cwd : ''
+			const root = selected && typeof selected.root === 'string' ? selected.root : ''
+			const targets = root !== '' && root !== cwd ? [cwd, root] : [cwd]
+			if (cwd !== '' && !options.some((option) => targets.includes(option.path) || targets.includes(option.root))) {
+				options.unshift({ value: cwd, label: baseName(cwd), root, path: cwd, session: true })
+			}
+			return options
 		}
 
 		/**
-		 * 从 `/state` 的响应 + 用户选过的项目算出「当前项目」。
+		 * 从 `/state` 的响应 + 用户选过的工作区算出「当前工作区」。
 		 *
-		 * 纯函数：认领规则（按项目根，不按会话 id）要能被契约测试直接打到。
-		 * 三个页签共用这一份，所以「当前项目」在整屏只有一个答案。
+		 * 纯函数：认领规则（按工作区目录，不按会话 id）要能被契约测试直接打到。
+		 * 三个页签共用这一份，所以「当前工作区」在整屏只有一个答案。
 		 *
 		 * @param state - `{loading, data, error}`（`error` 是原始 Error）。
 		 * @param pick - 用户选过的 `{value, root}`，或 null。
-		 * @param sessionId - 当前会话 id（默认值）。
+		 * @param sessionId - 当前会话 id（仅作日志/语义保留，身份已改由目录路径决定）。
 		 */
 		function projectContextOf(state, pick, sessionId) {
 			const data = state && state.data ? state.data : null
-			const projects = data && Array.isArray(data.projects) ? data.projects : []
-			const selectedSession = data && data.selected && typeof data.selected.sessionId === 'string' ? data.selected.sessionId : ''
-			const options = projectOptionsOf(projects)
+			const selected = data && data.selected ? data.selected : null
+			const selectedCwd = selected && typeof selected.cwd === 'string' ? selected.cwd : ''
+			const selectedRoot = selected && typeof selected.root === 'string' ? selected.root : ''
+			const options = projectOptionsOf(state)
 			const picked = projectOptionOfPick(pick, options)
-			// 默认用当前会话；用户选过且那个项目还在列表里就听用户的。
-			const active = picked !== null ? picked.value : sessionId || selectedSession
-			const activeEntry = projects.find((entry) => entry && entry.sessionId === active) ?? null
+			// 默认认当前会话目录本身，其次认它的项目根；用户选过且那个工作区还在就听用户的。
+			const defaultOption =
+				(selectedCwd === '' ? null : options.find((option) => option.path === selectedCwd)) ??
+				(selectedRoot === '' ? null : options.find((option) => option.root === selectedRoot)) ??
+				null
+			const activeOption = picked ?? defaultOption
 			return {
 				loading: state === null || state === undefined ? true : state.loading === true,
 				error: state ? state.error ?? null : null,
 				data,
 				version: data && typeof data.version === 'string' ? data.version : '',
-				projects,
-				selectedSession,
 				options,
 				picked,
-				active,
-				activeEntry,
-				activeName: activeEntry === null ? '' : projectNameOf(activeEntry),
+				active: activeOption?.value ?? '',
+				activeName: activeOption?.label ?? baseName(selectedCwd),
+				activeRoot: activeOption?.root ?? '',
+				selectedPath: selectedCwd,
+				sessionOption: activeOption?.session === true ? activeOption.value : '',
 			}
 		}
 
@@ -1630,8 +1652,8 @@ window.__ModuleLoader__.load({
 			// 快速切换范围时旧响应可能后到：用递增令牌丢弃过期结果，避免目录闪回上一个 scope。
 			const catalogToken = react.useRef(0)
 
-			// 项目列表与「当前项目」都来自 section 的那一份 /state（见 useProjectContext）。
-			const projects = project.projects
+			// 工作区列表与「当前工作区」都来自 section 的那一份 /state（见 useProjectContext）。
+			const projects = project.options
 			const activeProject = project.active
 
 			const loadCatalog = () => {
