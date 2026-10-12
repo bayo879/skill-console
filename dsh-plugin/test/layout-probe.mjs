@@ -34,9 +34,6 @@ const CHROME_CANDIDATES = [
 ].filter(Boolean)
 
 const chromePath = CHROME_CANDIDATES.find((candidate) => existsSync(candidate))
-// 默认 1400 宽（真实控制台宽度）。要验证「名称行折成两行」这条量测真的能变红，
-// 用 LAYOUT_WINDOW=700,600 跑一次：headRows 会从 1 变成 2，断言随之失败。
-const windowSize = process.env.LAYOUT_WINDOW || '1400,600'
 if (!chromePath) {
 	console.log('[layout] 跳过：没找到 Chrome（设 CHROME=/path/to/chrome 可指定）。')
 	process.exit(0)
@@ -96,10 +93,16 @@ function measure(id) {
 // 需求 ③「动作按钮移到名称行右侧」：这条只能在真浏览器里量——选择器对得再准，
 // 也不能证明按钮真的和输入框同一行、且在勾选列表之前。
 // 名称行有没有折成两行：数 head 的直接子元素落在几个不同的横向上。
-// 比的是**中线**（top + height/2）而不是 top——同一行里一个空 span（spacer）和输入框
-// 的 top 能差十来个像素，拿 top 比会把单行误判成两行。
-// 也不量高度：flex-wrap 真折行时整行高度只比单行多一点点（实测 59px vs 26px），
-// 用高度阈值判断会在窄面板上判「只有一行」而放过折行。
+// 比的是**中线**（top + height/2）而不是 top——空 span（spacer，client.js 里 flex:1）高度为 0，
+// 它的 top 落在行的垂直中线上，而 label 的 top 在行的上沿，同一行里两者能差 13px；
+// 拿 top 比会把单行误判成两行（实测 top 基准报 2 行、中线基准报 1 行）。
+// 也不量高度：flex-wrap 真折行时整行高度只比单行多一点点（实测折行 59px vs 单行 26px），
+// 用高度阈值判断会判「只有一行」而放过折行。
+// 想亲眼确认这条量测能变红（探针只在受控窗口里跑，缩窗口到不了折行宽度——Chrome 把窗口宽度
+// 钳在 500 左右）：临时给页面注入
+//   #ROLE-AFTER .sc-role-editor-head { flex-direction: column !important; }
+// 或 #ROLE-AFTER .sc-role-editor-head > input { min-width: 1200px !important; }
+// 前者 headRows 变 6，后者变 2，两种改法都会让这条断言与「同一行」断言同时失败、退出码 1。
 function headRowsOf(head, round) {
 	if (!head) return null
 	const centers = Array.from(head.children)
@@ -188,7 +191,7 @@ const run = spawnSync(
 		'--disable-breakpad',
 		'--disable-component-update',
 		`--user-data-dir=${join(OUT_DIR, 'profile')}`,
-		'--window-size=' + windowSize,
+		'--window-size=1400,600',
 		'--virtual-time-budget=2000',
 		'--dump-dom',
 		`file://${htmlPath}`,
