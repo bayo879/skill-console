@@ -1839,6 +1839,65 @@ const fallbackToggle = await callRouteOrReport(wsRoute, {
 })
 check('project 为空串 → 退回请求头会话（写的仍是会话那个工作区）', fallbackToggle.status === 200 && existsSync(join(rolesProjectSkills, 'ws-fallback', 'SKILL.md.disabled')), `${fallbackToggle.status} ${JSON.stringify(fallbackToggle.json).slice(0, 200)}`)
 
+// ── 4f. 复审修复：按目录路径认领 / 非字符串 project / 坏掉的注册表 ─────────
+
+// ① 同一仓库里的两个工作区：项目根（`.git` 所在目录）**相同**、目录路径不同。
+// 只按 `root` 认领会永远选中注册表里的第一条——会话在 `packages/b` 也必须认到 `packages/b`。
+const wsRepoRoot = join(tempDir('sc-ws-repo'), 'repo')
+const wsPkgA = join(wsRepoRoot, 'packages', 'a')
+const wsPkgB = join(wsRepoRoot, 'packages', 'b')
+mkdirSync(join(wsRepoRoot, '.git'), { recursive: true })
+mkdirSync(wsPkgA, { recursive: true })
+mkdirSync(wsPkgB, { recursive: true })
+const pkgSession = sessionAt('session-pkg-b', wsPkgB, 60)
+let pkgRoute = null
+host.apply({
+	...pluginCtx,
+	sessions: { list: () => [pkgSession], get: (id) => (id === pkgSession.id ? pkgSession : undefined) },
+	get: (serviceName) => (serviceName === 'workspaceRegistry' ? { list: () => [
+		{ id: 'pkg-a', path: wsPkgA, title: 'pkg-a', sessionIds: [] },
+		{ id: 'pkg-b', path: wsPkgB, title: 'pkg-b', sessionIds: [pkgSession.id] },
+	] } : undefined),
+	webServer: { register: (route) => { pkgRoute = route; return () => {} } },
+})
+const pkgState = await callRouteOrReport(pkgRoute, { path: '/api/skill-console/state', headers: { 'x-skill-console-session': pkgSession.id } })
+check('同一仓库里的两个工作区：selected 按目录路径认领（不是按项目根）', pkgState.status === 200 && pkgState.json.data?.selected?.workspaceId === 'pkg-b', `${pkgState.status} ${JSON.stringify(pkgState.json?.data?.selected)}`)
+
+// ② 显式给了**非字符串**的 `project`：绝不能当成「没给」而回落到请求头会话（那正是要杀的失败模式）。
+placeSkill(rolesProjectSkills, 'ws-nonstring', true)
+const numberProject = await callRouteOrReport(wsRoute, {
+	method: 'POST',
+	path: '/api/skill-console/toggle',
+	headers: { ...ROLE_WRITE, ...roleSession },
+	body: { path: join(rolesProjectSkills, 'ws-nonstring', 'SKILL.md'), enabled: false, project: 123 },
+})
+check('project 给数字 → 400 error.workspace.invalid 且不回落、不写盘', numberProject.status === 400 && numberProject.json?.code === 'error.workspace.invalid' && existsSync(join(rolesProjectSkills, 'ws-nonstring', 'SKILL.md')), `${numberProject.status} ${JSON.stringify(numberProject.json).slice(0, 200)}`)
+const objectProject = await callRouteOrReport(wsRoute, {
+	method: 'POST',
+	path: '/api/skill-console/toggle',
+	headers: { ...ROLE_WRITE, ...roleSession },
+	body: { path: join(rolesProjectSkills, 'ws-nonstring', 'SKILL.md'), enabled: false, project: {} },
+})
+check('project 给对象 → 400 error.workspace.invalid 且不回落、不写盘', objectProject.status === 400 && objectProject.json?.code === 'error.workspace.invalid' && existsSync(join(rolesProjectSkills, 'ws-nonstring', 'SKILL.md')), `${objectProject.status} ${JSON.stringify(objectProject.json).slice(0, 200)}`)
+
+// ③ 注册表本身坏掉（`list()` 抛异常 / 返回非数组）不能把 `/state` 打成 500：必须退回会话并如实置 `workspacesFrom`。
+let brokenRegistryRoute = null
+host.apply({
+	...pluginCtx,
+	get: (serviceName) => (serviceName === 'workspaceRegistry' ? { list: () => { throw new Error('registry down') } } : undefined),
+	webServer: { register: (route) => { brokenRegistryRoute = route; return () => {} } },
+})
+const brokenRegistryState = await callRouteOrReport(brokenRegistryRoute, { path: '/api/skill-console/state' })
+check('注册表 list() 抛异常 → /state 200 且退回活着的会话', brokenRegistryState.status === 200 && brokenRegistryState.json.data?.workspacesFrom === 'sessions' && brokenRegistryState.json.data?.workspaces?.length > 0, `${brokenRegistryState.status} ${brokenRegistryState.threw ?? JSON.stringify(brokenRegistryState.json?.data?.workspacesFrom)}`)
+let nonArrayRegistryRoute = null
+host.apply({
+	...pluginCtx,
+	get: (serviceName) => (serviceName === 'workspaceRegistry' ? { list: () => ({}) } : undefined),
+	webServer: { register: (route) => { nonArrayRegistryRoute = route; return () => {} } },
+})
+const nonArrayRegistryState = await callRouteOrReport(nonArrayRegistryRoute, { path: '/api/skill-console/state' })
+check('注册表 list() 返回非数组 → /state 200 且退回活着的会话', nonArrayRegistryState.status === 200 && nonArrayRegistryState.json.data?.workspacesFrom === 'sessions', `${nonArrayRegistryState.status} ${nonArrayRegistryState.threw ?? JSON.stringify(nonArrayRegistryState.json?.data?.workspacesFrom)}`)
+
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
 section('浏览器半边（模块表 / slot 契约 / 降级）')

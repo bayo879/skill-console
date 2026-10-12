@@ -142,8 +142,8 @@ export function rootsFor(project) {
  * 为什么不能只看会话：没开过会话的工作区根本不在列表里，而下拉框把它当「项目」——
  * 用户看到的就是「工作区选项只剩当前那一个」。
  *
- * 读取失败**降级不改语义**：注册表抛异常时退回会话，并且 `from` 如实说 `'sessions'`，
- * 界面据此知道自己看到的是残缺列表，而不是「世界上只有这一个工作区」。
+ * 读取失败**降级不改语义**：注册表抛异常、或 `list()` 没返回数组时退回会话，并且 `from`
+ * 如实说 `'sessions'`，界面据此知道自己看到的是残缺列表，而不是「世界上只有这一个工作区」。
  *
  * @param ctx - 宿主上下文。
  * @returns `{from: 'registry' | 'sessions', list: [{workspaceId?, sessionId?, path, title, root, sessionIds, fromRegistry}]}`。
@@ -151,27 +151,34 @@ export function rootsFor(project) {
 export function workspacesOf(ctx) {
 	const registry = typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry', false) : undefined
 	if (registry !== undefined && registry !== null && typeof registry.list === 'function') {
-		let raw = []
+		let raw
 		try {
-			raw = registry.list() ?? []
+			raw = registry.list()
 		} catch (error) {
+			raw = undefined
 			ctx?.logger?.warn?.(`[dsh-skill-console] 读取工作区注册表失败：${errorText(error)}`)
 		}
-		const list = []
-		for (const item of raw) {
-			const workspacePath = typeof item?.path === 'string' ? item.path : ''
-			if (workspacePath === '') continue
-			const workspaceId = item?.id ?? item?.workspaceId
-			list.push({
-				workspaceId: workspaceId === undefined || workspaceId === null ? workspacePath : String(workspaceId),
-				path: workspacePath,
-				title: typeof item?.title === 'string' && item.title !== '' ? item.title : basename(workspacePath),
-				root: findProjectRoot(workspacePath) ?? workspacePath,
-				sessionIds: Array.isArray(item?.sessionIds) ? item.sessionIds.map((sessionId) => String(sessionId)) : [],
-				fromRegistry: true,
-			})
+		// 非数组（老版本 / 被改坏的实现）等同注册表不可用：退回会话，别让 `/state` 500。
+		if (Array.isArray(raw)) {
+			const list = []
+			for (const item of raw) {
+				const workspacePath = typeof item?.path === 'string' ? item.path : ''
+				if (workspacePath === '') continue
+				const workspaceId = item?.id ?? item?.workspaceId
+				list.push({
+					workspaceId: workspaceId === undefined || workspaceId === null ? workspacePath : String(workspaceId),
+					path: workspacePath,
+					title: typeof item?.title === 'string' && item.title !== '' ? item.title : basename(workspacePath),
+					root: findProjectRoot(workspacePath) ?? workspacePath,
+					sessionIds: Array.isArray(item?.sessionIds) ? item.sessionIds.map((sessionId) => String(sessionId)) : [],
+					fromRegistry: true,
+				})
+			}
+			return { from: 'registry', list }
 		}
-		return { from: 'registry', list }
+		if (raw !== undefined) {
+			ctx?.logger?.warn?.('[dsh-skill-console] 工作区注册表的 list() 没返回数组，退回活着的会话')
+		}
 	}
 	const list = listProjects(ctx).map((entry) => ({
 		sessionId: entry.sessionId,

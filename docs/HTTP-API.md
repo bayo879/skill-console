@@ -25,7 +25,7 @@ kind: 'prefix'   path: '/api/skill-console'
   - **写接口**（`/repositories/install`、`/roles/activate`、`/roles/deactivate`、`/skills/move-to-project`、
     `/toggle`、`/toggle-batch`、`/skills/delete`）：
     请求体 `project` 优先于请求头；给了 `project` 就**只认它**——必须是**存在的工作区目录**，
-    相对路径 / 不存在的路径 / 不是目录都是 400 `error.workspace.invalid`，**绝不回落到请求头会话**
+    相对路径 / 不存在的路径 / 不是目录 / **不是字符串**都是 400 `error.workspace.invalid`，**绝不回落到请求头会话**
     （否则界面上选着工作区 B、写却落到 A）。只有 `project` **缺席**（或空串 `"project": ""`）时才按
     请求头会话严格解析，会话 id 不存在 / 拿不到 cwd 就是 400 `error.role.noProject`，
     **绝不回落到「最近一个会话」**。
@@ -34,7 +34,8 @@ kind: 'prefix'   path: '/api/skill-console'
     请求头，给了但无效同样是 400 `error.workspace.invalid`；**没给**时才按请求头会话宽松解析——
     解析不出会话时**回落**到「最近一个会话的 cwd」，并在 `data.project.fallback === true` 里说明。
   - `/state` 的工作区列表来自 DSH 的 `workspaceRegistry`：**注册过的工作区都在，不管它有没有活着的会话**；
-    注册表不可用时退回「活着的会话按项目根去重」，并把 `workspacesFrom` 置成 `'sessions'`。
+    注册表不可用（拿不到 / `list()` 读失败 / `list()` 没返回数组）时退回「活着的会话按项目根去重」，
+    并把 `workspacesFrom` 置成 `'sessions'`。
 - 所有路径参数都是**绝对路径**，宿主会校验它落在已知技能根内，否则 400
   `error.path.outsideRoots`。前端不要自己拼路径去猜。
 - 技能「根」的 key 固定为两个（`.agents` 不在本插件的管理面内，面板不扫描、也不展示）：
@@ -80,7 +81,7 @@ kind: 'prefix'   path: '/api/skill-console'
       { "workspaceId": "ws-…", "path": "/Users/…/proj-a", "title": "proj-a",
         "root": "/Users/…/proj-a", "sessionIds": ["session-…"], "fromRegistry": true }
     ],
-    // 当前请求头会话落在哪条工作区上（按项目根匹配）：无会话时 null。
+    // 当前请求头会话落在哪条工作区上（先按**目录路径**、再退回项目根匹配）：无会话时 null。
     // workspaceId 为 null = 这条只经会话头解析出来，不在注册表里。
     "selected": { "sessionId": "session-…", "cwd": "/Users/…/proj-a", "root": "/Users/…/proj-a",
                   "fallback": false, "workspaceId": "ws-…" }
@@ -101,7 +102,10 @@ kind: 'prefix'   path: '/api/skill-console'
   "ok": true,
   "data": {
     "scope": "global",
-    "project": { "sessionId": "…", "cwd": "…", "root": "…", "fallback": false }, // global 时为 null
+    // 给了 `?project=<目录路径>` 时是工作区形态：`sessionId` 为 null、多一个 `path`、`cwd` 就是那个目录；
+    // 按请求头会话解析时则是会话形态（有 `sessionId`、没有 `path`）。global 时为 null。
+    "project": { "path": "/Users/…/proj-a", "cwd": "/Users/…/proj-a", "sessionId": null,
+                 "root": "/Users/…/proj-a", "fallback": false },
     "roots": [
       { "key": "user-dsh", "scope": "global", "label": "全局 DSH",
         "path": "…", "exists": true,

@@ -61,13 +61,21 @@ export function createRouteHandlers(deps) {
 	/**
 	 * 写请求的工作区：`body.project` 是**目录路径**，给了就只认它；没给才退回请求头会话。
 	 *
+	 * 「没给」只认 `undefined` / `null` / `''`（界面没选工作区时发的就是空串）。给了别的类型
+	 * （数字、对象…）同样是「指定了认不出的工作区」，一并 400——绝不能因为类型不对就当成
+	 * 「没给」而悄悄写回请求头会话，那正是 0.6.0 要杀的失败模式。
+	 *
 	 * 两条路都严格：解析不出来就 400，绝不悄悄写到别的工作区去。`code` 用来区分
 	 * 「给的路径无效」与「没给路径、会话也认不出」——界面按码翻译。
 	 */
 	const projectOfRequest = (req, body) => {
-		const explicit = body !== null && body !== undefined && typeof body.project === 'string' ? body.project : ''
-		if (explicit !== '') {
-			const project = resolveWorkspaceStrict(ctx, explicit)
+		const raw = body === null || body === undefined ? undefined : body.project
+		const absent = raw === undefined || raw === null || raw === ''
+		if (!absent && typeof raw !== 'string') {
+			return { project: null, roots: [], code: 'error.workspace.invalid' }
+		}
+		if (typeof raw === 'string' && raw !== '') {
+			const project = resolveWorkspaceStrict(ctx, raw)
 			return { project, roots: project === null ? [] : rootsFor(project), code: 'error.workspace.invalid' }
 		}
 		const project = resolveProjectStrict(ctx, req.headers['x-skill-console-session'])
@@ -144,7 +152,13 @@ export function createRouteHandlers(deps) {
 			const sessionId = req.headers['x-skill-console-session']
 			const project = resolveProject(ctx, sessionId)
 			const workspaces = workspacesOf(ctx)
-			const matched = project === null ? undefined : workspaces.list.find((entry) => entry.root === project.root)
+			// 认领当前会话落在哪条工作区上：先按**目录路径**，再退回项目根。
+			// 只按项目根认领的话，同一个仓库里的多个工作区（`repo/packages/a`、`repo/packages/b`）
+			// 根相同，永远认到注册表里的第一条。
+			const matched = project === null
+				? undefined
+				: (workspaces.list.find((entry) => entry.path === project.cwd)
+					?? workspaces.list.find((entry) => entry.root === project.root))
 			return {
 				version,
 				dshHome,
