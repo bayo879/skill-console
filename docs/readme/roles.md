@@ -196,7 +196,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ### 单文件增长的取舍（已知代价）
 
-角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3241 行**（`wc -l dsh-plugin/lib/client.js`，0.5.0 收尾时），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
+角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3455 行**（`wc -l dsh-plugin/lib/client.js`，0.6.0 收尾时；0.5.0 收尾时是 3241 行），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
 
 已选择：**接受增长，不引入构建机制**（保住「改代码就生效」，且没有「改了源码忘了跑构建、界面静默跑旧代码」这种故障态）。缓解办法是把角色面板的**逻辑尽量压到宿主 `roles.js`**，客户端只留渲染。
 

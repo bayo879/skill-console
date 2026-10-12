@@ -146,7 +146,7 @@ window.__ModuleLoader__.load({
 				'workspace.session': '这个目录不在工作区列表里，按它的目录用：{name}',
 				'skills.projectName': '当前工作区：{name}',
 				'skills.noSessions': '还没选工作区，列不出项目技能。请在节顶选一个工作区，再刷新。',
-				'skills.empty': '这个范围里没有发现技能。',
+				'skills.empty': '这个技能根还是空的。去「技能仓库」页签订阅一个仓库，装几个技能进来。',
 				'skills.noDescription': '未提供简介',
 				'skills.nameFromDirectory': 'frontmatter 没写 name，这里显示的是目录/文件名',
 				'skills.status.enabled': '已启用',
@@ -374,7 +374,7 @@ window.__ModuleLoader__.load({
 				'workspace.session': 'This directory is not in the workspace list; using it as one: {name}',
 				'skills.projectName': 'Current workspace: {name}',
 				'skills.noSessions': 'No workspace is selected, so project skills cannot be listed. Pick one in the workspace bar, then refresh.',
-				'skills.empty': 'No skills were found in this scope.',
+				'skills.empty': 'This skill root is empty. Subscribe to a repository in the Repositories tab and install a few skills.',
 				'skills.noDescription': 'No description provided',
 				'skills.nameFromDirectory': 'Frontmatter has no name; the folder/file name is shown instead',
 				'skills.status.enabled': 'Enabled',
@@ -1072,6 +1072,50 @@ window.__ModuleLoader__.load({
 			return parts.length > 0 ? parts[parts.length - 1] : value
 		}
 
+		/**
+		 * 路径的尾部 `count` 段（`/x/one/shared` + 2 → `one/shared`）。
+		 *
+		 * 段数不足就给整条路径：宁可比需要的长，也不能给一个空的区分串。
+		 */
+		function trailingSegments(value, count) {
+			const parts = typeof value === 'string' ? value.split(/[\\/]+/).filter((part) => part !== '') : []
+			const wanted = Math.max(1, Math.floor(count) || 1)
+			if (parts.length <= wanted) return parts.join('/')
+			return parts.slice(parts.length - wanted).join('/')
+		}
+
+		/**
+		 * 工作区下拉标签的消歧：重名的补上「最短能区分的目录尾段」。
+		 *
+		 * 只补一段不够：`/x/one/shared` 与 `/y/two/shared` 的末段都是 `shared`，必须再往上取一段。
+		 * 所以从最后 1 段起逐段加长，谁先唯一谁先停；加到 8 段还不唯一就退回整条路径
+		 * （极端深的重名目录，给全路径也比分不清强）。
+		 *
+		 * 只有**重复**的标签才补后缀——独一无二的名字照旧显示，不拿没用的括号噪声打扰人。
+		 * 面板仍然不显示绝对路径（`baseName` 那条规矩），这里补的是相对尾段。
+		 *
+		 * @param entries - `[{path, title}]`，与返回的标签一一对应。
+		 * @returns 与 `entries` 等长的标签数组。
+		 */
+		function disambiguatedLabels(entries) {
+			const list = Array.isArray(entries) ? entries : []
+			const paths = list.map((entry) => String(entry?.path ?? ''))
+			const labels = list.map((entry, index) => entry?.title || baseName(paths[index]) || paths[index] || '—')
+			const total = new Map()
+			for (const label of labels) total.set(label, (total.get(label) ?? 0) + 1)
+			return labels.map((label, index) => {
+				if ((total.get(label) ?? 0) < 2) return label
+				for (let count = 1; count < 8; count += 1) {
+					const suffix = trailingSegments(paths[index], count)
+					const clash = labels.some(
+						(other, otherIndex) => otherIndex !== index && other === label && trailingSegments(paths[otherIndex], count) === suffix,
+					)
+					if (suffix !== '' && !clash) return `${label}（${suffix}）`
+				}
+				return `${label}（${paths[index]}）`
+			})
+		}
+
 		/** 项目在界面上的显示名：只有末段目录名，拿不到就用一个中性占位符。 */
 		function projectNameOf(project) {
 			const name = baseName(project && (project.root || project.cwd))
@@ -1100,11 +1144,13 @@ window.__ModuleLoader__.load({
 		 *
 		 * 值就是**工作区的目录路径**：宿主在写接口上按这个路径严格解析（`400 workspace.invalid`），
 		 * 不要求该工作区在会话里注册过。标签只给工作区名——面板从头到尾不显示绝对路径，
-		 * 一排一模一样的地址更是没法选。去重由宿主做（`/state.workspaces` 已按目录收敛），
-		 * 这里不再重复判重。
+		 * 一排一模一样的地址更是没法选。**重名的补最短能区分的目录尾段**（见 `disambiguatedLabels`），
+		 * 所以两个 `shared` 会显示成「shared（one/shared）」与「shared（two/shared）」。去重由宿主做
+		 * （`/state.workspaces` 已按目录收敛），这里不再重复判重。
 		 *
 		 * 当前会话的目录如果不在列表里（会话是临时的、或注册表里没有它），把它作为
-		 * 「当前会话」补在最前面——否则用户会发现自己当前所在的目录选不中。
+		 * 「当前会话」补在最前面——否则用户会发现自己当前所在的目录选不中。伪会话项**不参与**
+		 * 消歧：它是「我正待着的那个目录」，不该因为注册表里有个同名工作区就被贴上后缀。
 		 *
 		 * @param state - 整个 `/state` 上下文（`{loading, data, error}`）。
 		 * @returns `[{value, label, root, path, session}]`；`root`/`path` 只在客户端用来「认领」。
@@ -1112,11 +1158,12 @@ window.__ModuleLoader__.load({
 		function projectOptionsOf(state) {
 			const data = state && state.data ? state.data : null
 			const entries = data && Array.isArray(data.workspaces) ? data.workspaces : []
-			const options = entries.map((entry) => {
+			const labels = disambiguatedLabels(entries)
+			const options = entries.map((entry, index) => {
 				const path = String(entry?.path ?? '')
 				return {
 					value: path,
-					label: entry?.title || baseName(path),
+					label: labels[index] || baseName(path),
 					root: entry?.root || path,
 					path,
 					session: false,
@@ -1463,6 +1510,75 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * `sessionStorage`，取不到就 `null`（隐私模式、被策略禁用、非浏览器环境）。
+		 *
+		 * 折叠状态不是数据，是「这个人在这个工作区里看过什么」：丢了只会回到默认展开，
+		 * 不值得为它报错、更不该拦住渲染，所以调用方一律静默降级。
+		 */
+		function storageOf() {
+			try {
+				const storage = typeof window === 'undefined' ? null : window.sessionStorage
+				return storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function' ? storage : null
+			} catch (error) {
+				return null
+			}
+		}
+
+		/** 折叠记忆的键前缀（sessionStorage 里只放这一个插件的键）。 */
+		const COLLAPSE_PREFIX = 'dsh-skill-console.collapsed:'
+
+		/**
+		 * 一个折叠键的存储键：前缀 + 工作区目录 + `|` + 折叠键。
+		 *
+		 * 带上工作区是刚需：换工作区就是换了一屏技能，A 的「收起这个仓库」不该让 B 也收起。
+		 */
+		function collapseStoreKey(workspacePath, rootKey) {
+			return COLLAPSE_PREFIX + String(workspacePath ?? '') + '|' + String(rootKey ?? '')
+		}
+
+		/**
+		 * 一个工作区里全部的折叠键：与界面上可折叠的东西一一对应（根头 + 根内的仓库组头）。
+		 *
+		 * 仓库组键沿用 `groupSkillsByRepo` 的顺序（仓库名有序、本地组固定最后）——顺序不影响
+		 * 语义，但读写顺序一致，读出来的才是刚写进去的那一批。
+		 */
+		function collapseKeysOf(roots) {
+			const keys = []
+			for (const root of Array.isArray(roots) ? roots : []) {
+				if (!root) continue
+				keys.push(String(root.key ?? ''))
+				for (const group of groupSkillsByRepo(root.skills)) keys.push((root.key || '') + ':' + group.key)
+			}
+			return keys
+		}
+
+		/** 从存储里读出「折叠着」的那些键（只有写成 `'1'` 的才算，别的一概当展开）。 */
+		function collapsedOf(storage, workspacePath, keys) {
+			const result = {}
+			if (!storage || typeof storage.getItem !== 'function') return result
+			for (const key of Array.isArray(keys) ? keys : []) {
+				try {
+					if (storage.getItem(collapseStoreKey(workspacePath, key)) === '1') result[key] = true
+				} catch (error) {
+					// 单键读失败 = 这一项没记忆，不是错误。
+				}
+			}
+			return result
+		}
+
+		/** 记住 / 忘掉一个折叠键：折叠写 `'1'`，展开直接清键（展开是默认态，不留垃圾）。 */
+		function persistCollapsed(storage, workspacePath, key, collapsed) {
+			if (!storage || typeof storage.setItem !== 'function' || typeof storage.removeItem !== 'function') return
+			try {
+				const storeKey = collapseStoreKey(workspacePath, key)
+				if (collapsed) storage.setItem(storeKey, '1')
+				else storage.removeItem(storeKey)
+			} catch (error) {
+				// 配额满、隐私模式：记不住就记不住，不能反过来拦住「折叠」这件事本身。
+			}
+		}
+
+		/**
 		 * 把一组技能收敛成 `/toggle-batch` 的入参：只留**需要变**的项（不可勾、已是目标态、
 		 * 路径不是字符串的都不要）。返回空数组时调用方直接返回，一个字节都不发给宿主。
 		 */
@@ -1627,7 +1743,12 @@ window.__ModuleLoader__.load({
 			)
 		}
 
-		/** 技能详情（分区内的面板，不用 Modal：不抢焦点、不遮住目录，方便左右对照）。 */
+		/**
+		 * 技能详情（分区内的面板，不用 Modal：不抢焦点、不遮住目录，方便左右对照）。
+		 *
+		 * 可选 prop `collision = {name, winner, shadowed}`（label 已翻好）：同名技能在这里说清
+		 * 谁生效、谁被盖住——「详情」是用户问「这份为什么没生效」时最自然的一站。
+		 */
 		function SkillDetail(props) {
 			const t = props.t
 			const state = props.state || {}
@@ -1671,7 +1792,7 @@ window.__ModuleLoader__.load({
 						: h('div', { className: 'sc-hint' }, t('skills.detailNoBody')),
 				)
 			}
-			return h('div', { className: 'sc-card' }, head, body)
+			return h('div', { className: 'sc-card' }, head, props.collision ? h('div', { className: 'sc-hint' }, t('skills.collisionRow', props.collision)) : null, body)
 		}
 
 		/** 技能标签页：一次拿两个源（全局 + 当前工作区）+ 目录 + 详情。 */
@@ -1686,9 +1807,9 @@ window.__ModuleLoader__.load({
 			const [actionFail, setActionFail] = react.useState(null)
 			const [busyPath, setBusyPath] = react.useState(null)
 			const [batchBusy, setBatchBusy] = react.useState(false)
-			// 折叠状态只活在这次挂载里（与仓库页签同口径）：刷新目录不重置，切页签会重置。
+			// 折叠状态分两层：sessionStorage 是**记忆**（按工作区 + 根记，切页签、刷新页面都还记得），
+			// 这个 state 只是「本次挂载的覆盖层」——用户刚点的那一下立刻生效，不必等存储读回来。
 			const [collapsedRepos, setCollapsedRepos] = react.useState({})
-			const toggleRepo = (key) => setCollapsedRepos((previous) => ({ ...previous, [key]: previous[key] !== true }))
 			const revision = useStore(catalogRevisionStore)
 			// 切换工作区时旧响应可能后到：用递增令牌丢弃过期结果，避免目录闪回上一个工作区。
 			const catalogToken = react.useRef(0)
@@ -1721,10 +1842,12 @@ window.__ModuleLoader__.load({
 			}, [project.active])
 
 			const loadDetail = (skill) => {
-				setDetail({ loading: true, data: null, error: null, name: skill.name })
+				// 同名冲突按名次跟到这一份详情里（没有冲突就是 null）。
+				const collision = collisionRowOf(t, catalog.data, skill.name)
+				setDetail({ loading: true, data: null, error: null, name: skill.name, collision })
 				apiGet('/skill', withProject(project, { path: skill.path }), sessionId)
-					.then((data) => setDetail({ loading: false, data, error: null, name: skill.name }))
-					.catch((error) => setDetail({ loading: false, data: null, error: actionError(t, error), name: skill.name }))
+					.then((data) => setDetail({ loading: false, data, error: null, name: skill.name, collision }))
+					.catch((error) => setDetail({ loading: false, data: null, error: actionError(t, error), name: skill.name, collision }))
 			}
 
 			/** 启停一项：成功就整表重拉，并把 takeover 讲清楚。 */
@@ -1821,15 +1944,19 @@ window.__ModuleLoader__.load({
 			const collisions = catalog.data && Array.isArray(catalog.data.collisions) ? catalog.data.collisions : []
 			const warnings = catalog.data && Array.isArray(catalog.data.warnings) ? catalog.data.warnings : []
 			const roots = catalog.data && Array.isArray(catalog.data.roots) ? catalog.data.roots : []
+			// 折叠记忆：存储里读到的（记忆）+ 本次挂载的覆盖层（用户刚点的那一下优先）。
+			// 键按「工作区 + 根」算，换工作区就换一批键——A 工作区收起过的仓库不影响 B。
+			const collapseKeys = collapseKeysOf(roots)
+			const collapsedReposView = { ...collapsedOf(storageOf(), project.active, collapseKeys), ...collapsedRepos }
+			const toggleRepo = (key) => {
+				const next = collapsedReposView[key] !== true
+				persistCollapsed(storageOf(), project.active, key, next)
+				setCollapsedRepos((previous) => ({ ...previous, [key]: next }))
+			}
 
 			return h(
 				'div',
 				{ className: 'sc-body' },
-				// 目录里没有项目根 = 还没选工作区（或那条工作区解析不到项目根）：给一句引导。
-				// 判断按**根**做，不再是「范围切到项目」——范围开关已删，一次请求就是两个源。
-				!catalog.loading && catalog.data !== null && !roots.some((root) => root.key === 'project-dsh')
-					? h('div', { className: 'sc-note' }, t('skills.noSessions'))
-					: null,
 				project.error ? h('div', { className: 'sc-err' }, actionError(t, project.error)) : null,
 				notice ? h('div', { className: 'sc-ok', role: 'status' }, notice) : null,
 				actionFail ? h('div', { className: 'sc-err', role: 'alert' }, actionFail) : null,
@@ -1864,7 +1991,7 @@ window.__ModuleLoader__.load({
 							),
 						)
 					: null,
-				detail ? h(SkillDetail, { t, state: detail, onClose: () => setDetail(null) }) : null,
+				detail ? h(SkillDetail, { t, state: detail, collision: detail.collision ?? null, onClose: () => setDetail(null) }) : null,
 				catalog.loading && !catalog.data ? h('div', { className: 'sc-empty' }, t('skills.loading')) : null,
 				roots.map((root) =>
 					h(SkillGroup, {
@@ -1873,7 +2000,7 @@ window.__ModuleLoader__.load({
 						root,
 						busy: batchBusy,
 						busyPath,
-						collapsedRepos,
+						collapsedRepos: collapsedReposView,
 						onToggleRepo: toggleRepo,
 						onOpen: loadDetail,
 						onToggle: toggle,
@@ -1882,6 +2009,23 @@ window.__ModuleLoader__.load({
 						onMove: moveSkillToProject,
 					}),
 				),
+				// 目录里没有项目根 = 还没选工作区（或那条工作区解析不到项目根）。
+				// 这条引导要占住**项目块的槽位**：套上与项目技能根同形的组容器，读起来是
+				// 「项目这块是空的、原因是还没选工作区」，而不是一条游离在顶上的告示。
+				// 判断按**根**做，不再是「范围切到项目」——范围开关已删，一次请求就是两个源。
+				!catalog.loading && catalog.data !== null && !roots.some((root) => root.key === 'project-dsh')
+					? h(
+							'div',
+							{ className: 'sc-group sc-skillroot' },
+							h(
+								'div',
+								{ className: 'sc-group-head' },
+								h('span', { className: 'sc-group-title' }, t('skills.project')),
+								h('span', { className: 'sc-spacer' }),
+							),
+							h('div', { className: 'sc-empty' }, t('skills.noSessions')),
+						)
+					: null,
 				roots.length > 0 && batchBusy ? h('div', { className: 'sc-hint' }, t('common.loading')) : null,
 			)
 		}
@@ -1893,6 +2037,29 @@ window.__ModuleLoader__.load({
 			if (!data || !Array.isArray(data.roots) || typeof key !== 'string') return null
 			const found = data.roots.find((root) => root && root.key === key)
 			return found && typeof found.label === 'string' ? found.label : null
+		}
+
+		/** 在这份同名冲突清单里按**技能名**找一条（找不到给 `null`，详情照常显示，只是不提名次）。 */
+		function collisionOf(collisions, name) {
+			if (!Array.isArray(collisions) || typeof name !== 'string') return null
+			return collisions.find((item) => item && item.name === name) ?? null
+		}
+
+		/**
+		 * 详情卡上那条「谁生效、谁被盖住」：按技能名在 `/catalog.collisions` 里找一条。
+		 *
+		 * 面板顶部已经有一份全局的冲突清单，但用户点开的是**某一个**技能——名次得跟到他眼前这一份
+		 * 详情里，否则「我点的这份为什么没生效」要回到清单里逐条找。label 在这里就翻好，渲染层只管摆位置。
+		 */
+		function collisionRowOf(t, data, name) {
+			const found = collisionOf(data && data.collisions, name)
+			if (found === null) return null
+			const labelOf = (entry) => rootLabel(t, entry && entry.root, labelOfRoot(data, entry && entry.root))
+			return {
+				name: found.name,
+				winner: labelOf(found.winner),
+				shadowed: (Array.isArray(found.shadowed) ? found.shadowed : []).map(labelOf).join('、'),
+			}
 		}
 
 		/** 添加仓库表单。受控组件定义在工厂作用域，输入框不会因为父组件重渲染而失焦。 */
@@ -3272,6 +3439,15 @@ window.__ModuleLoader__.load({
 		exports.WorkspaceBar = WorkspaceBar
 		exports.withProject = withProject
 		exports.rootLabel = rootLabel
+		exports.disambiguatedLabels = disambiguatedLabels
+		exports.trailingSegments = trailingSegments
+		exports.storageOf = storageOf
+		exports.collapseStoreKey = collapseStoreKey
+		exports.collapseKeysOf = collapseKeysOf
+		exports.collapsedOf = collapsedOf
+		exports.persistCollapsed = persistCollapsed
+		exports.collisionOf = collisionOf
+		exports.SkillDetail = SkillDetail
 		exports.missingSkillsOf = missingSkillsOf
 		exports.batchItems = batchItems
 		return module.exports

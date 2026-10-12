@@ -2933,6 +2933,84 @@ check('根标签优先走词典（英文界面不再显示中文）', rootLabelO
 check('词典里没有这个 key 时才退回宿主 label', rootLabelOf(tFallbackOnly, 'user-dsh', '全局 DSH') === '全局 DSH')
 check('两者都没有时给一个可读的兜底', rootLabelOf(tFallbackOnly, '', '') === 'diagnostic.unknown')
 
+section('交互补充：折叠记得住、同名分得清、详情讲得明')
+
+// RED 也要跑到结果行：导出没落地时用**会失败**的兜底（不是 no-op），既不中断整轮，
+// 也不让检查靠「函数缺席」通过——0.6.0 里已经踩过一次未导出直接调用把整轮打断的坑。
+const fnOr = (name, fallback) => (typeof exposed[name] === 'function' ? exposed[name] : fallback)
+const collapseStoreKeyOf = fnOr('collapseStoreKey', () => '«collapseStoreKey 未导出»')
+const collapseKeysOfOf = fnOr('collapseKeysOf', () => [])
+const collapsedOfOf = fnOr('collapsedOf', () => ({ '«collapsedOf 未导出»': true }))
+const persistCollapsedOf = fnOr('persistCollapsed', () => {})
+const collisionOfOf = fnOr('collisionOf', () => null)
+const SkillDetailOf = fnOr('SkillDetail', () => null)
+
+// §4-2 批量按钮的 aria 必须报出作用域（根 = 整根，仓库组 = 那个仓库）。
+const ariaOf = (tree) => collect(tree, (element) => typeof element.props?.['aria-label'] === 'string').map((element) => element.props['aria-label'])
+const ariaSkills = [
+	{ name: 'ar-a', path: join(rolesProjectSkills, 'ar-a', 'SKILL.md'), enabled: true, toggleable: true, installed: { owner: 'o', name: 'r' } },
+	{ name: 'ar-b', path: join(rolesProjectSkills, 'ar-b', 'SKILL.md'), enabled: false, toggleable: true, installed: null },
+]
+const ariaRootTree = exposed.SkillGroup({ t: tStub, root: { key: 'user-dsh', label: '全局 DSH', exists: true, skills: ariaSkills }, collapsedRepos: {}, onToggleRepo: () => {}, onBatch: () => {} })
+const ariaOtherTree = exposed.SkillGroup({ t: tStub, root: { key: 'project-dsh', label: '项目 DSH', exists: true, skills: ariaSkills }, collapsedRepos: {}, onToggleRepo: () => {}, onBatch: () => {} })
+check('根头批量按钮的 aria 报出作用域（两个根各不相同）', ariaOf(ariaRootTree).some((label) => label.includes('全局 DSH')) && ariaOf(ariaOtherTree).some((label) => label.includes('项目 DSH')) && !ariaOf(ariaRootTree).some((label) => label.includes('项目 DSH')), `${ariaOf(ariaRootTree).join(' | ')} ;; ${ariaOf(ariaOtherTree).join(' | ')}`)
+const ariaRepoTree = exposed.SkillRepoGroup({ t: tStub, root: { key: 'user-dsh' }, group: { key: 'o/r', label: 'o/r', skills: ariaSkills }, collapsed: false, onToggleRepo: () => {}, onBatch: () => {} })
+check('仓库组头批量按钮的 aria 报出作用域', ariaOf(ariaRepoTree).some((label) => label.includes('o/r')), ariaOf(ariaRepoTree).join(' | '))
+
+// §4-3 同名工作区：标签补上「最短能区分的目录尾段」，能分辨。
+const sameName = { data: { workspaces: [
+	{ workspaceId: 'w1', path: '/x/one/shared', title: 'shared', root: '/x/one', sessionIds: [] },
+	{ workspaceId: 'w2', path: '/y/two/shared', title: 'shared', root: '/y/two', sessionIds: [] },
+] } }
+const sameLabels = exposed.projectOptionsOf(sameName).map((option) => option.label)
+check('同名工作区在下拉里分得清（目录尾段相同就再往上取一段）', sameLabels[0] === 'shared（one/shared）' && sameLabels[1] === 'shared（two/shared）', sameLabels.join(' | '))
+const nearName = { data: { workspaces: [
+	{ workspaceId: 'w3', path: '/x/alpha', title: 'shared', root: '/x', sessionIds: [] },
+	{ workspaceId: 'w4', path: '/y/beta', title: 'shared', root: '/y', sessionIds: [] },
+] } }
+check('目录尾段本来就不同时只补一段', exposed.projectOptionsOf(nearName).map((option) => option.label).join(',') === 'shared（alpha）,shared（beta）', exposed.projectOptionsOf(nearName).map((option) => option.label).join(','))
+check('导出 disambiguatedLabels 供契约测试直接打', typeof exposed.disambiguatedLabels === 'function')
+check('不同名的工作区不加后缀', exposed.projectOptionsOf(twoWorkspaces).map((option) => option.label).join(',') === 'proj-a,proj-b')
+
+// §4-4 折叠记忆：按「工作区 + 根 key」记 sessionStorage，纯函数可测。
+const fakeStorage = () => {
+	const map = new Map()
+	return { getItem: (key) => (map.has(key) ? map.get(key) : null), setItem: (key, value) => map.set(key, String(value)), removeItem: (key) => map.delete(key), size: () => map.size }
+}
+check('导出折叠记忆的三个纯函数', typeof exposed.collapseStoreKey === 'function' && typeof exposed.collapsedOf === 'function' && typeof exposed.persistCollapsed === 'function')
+check('折叠键带前缀 + 工作区 + 根 key', collapseStoreKeyOf('/x/proj', 'user-dsh') === 'dsh-skill-console.collapsed:/x/proj|user-dsh', collapseStoreKeyOf('/x/proj', 'user-dsh'))
+check('折叠键覆盖两级（根 + 根内的仓库组）', collapseKeysOfOf([{ key: 'user-dsh', skills: ariaSkills }]).join(',') === 'user-dsh,user-dsh:o/r,user-dsh:@local', collapseKeysOfOf([{ key: 'user-dsh', skills: ariaSkills }]).join(','))
+const collapseStore = fakeStorage()
+persistCollapsedOf(collapseStore, '/x/proj', 'user-dsh', true)
+check('写进去读得出来，且按工作区隔离', collapsedOfOf(collapseStore, '/x/proj', ['user-dsh', 'project-dsh'])['user-dsh'] === true && collapsedOfOf(collapseStore, '/x/proj', ['project-dsh'])['project-dsh'] === undefined && Object.keys(collapsedOfOf(collapseStore, '/y/other', ['user-dsh'])).length === 0)
+persistCollapsedOf(collapseStore, '/x/proj', 'user-dsh', false)
+check('展开会把它从存储里清掉', collapseStore.size() === 0 && Object.keys(collapsedOfOf(collapseStore, '/x/proj', ['user-dsh'])).length === 0)
+// 两个函数真在场时才谈得上「静默降级」——否则这条会靠兜底的空实现白过。
+let degradedQuiet = true
+try {
+	collapsedOfOf(null, '/x/proj', ['user-dsh'])
+	persistCollapsedOf(null, '/x/proj', 'k', true)
+} catch {
+	degradedQuiet = false
+}
+check('存储不可用时静默降级（不抛）', degradedQuiet && typeof exposed.collapsedOf === 'function' && typeof exposed.persistCollapsed === 'function')
+
+// §4-5 技能详情里的优先级：命中 / 被谁盖住。
+check('导出 collisionOf 供契约测试直接打', typeof exposed.collisionOf === 'function')
+const collisionsFixture = [{ name: 'dup', winner: { root: 'user-dsh', path: '/g/dup/SKILL.md' }, shadowed: [{ root: 'project-dsh', path: '/p/dup/SKILL.md' }] }]
+check('按技能名取到冲突条目', collisionOfOf(collisionsFixture, 'dup')?.winner?.root === 'user-dsh' && collisionOfOf(collisionsFixture, 'other') === null)
+check('导出 SkillDetail 供契约测试直接渲染', typeof exposed.SkillDetail === 'function')
+const detailTree = SkillDetailOf({ t: tStub, state: { loading: false, error: null, data: { name: 'dup', enabled: true, frontmatter: '', body: '' } }, collision: { name: 'dup', winner: '全局技能', shadowed: '项目技能' }, onClose: () => {} })
+const detailTexts = collectTexts(detailTree).join('|')
+check('详情里说清谁生效、谁被盖住', detailTexts.includes('skills.collisionRow') && detailTexts.includes('全局技能') && detailTexts.includes('项目技能'), detailTexts)
+
+// §4-6 空根给引导，而不是只报 0。
+check('空技能根改说「去订阅」（不再是「这个范围里没有技能」）', dictionaryZh['skills.empty'].includes('技能仓库') && dictionaryEn['skills.empty'].toLowerCase().includes('repositor'), `${dictionaryZh['skills.empty']} / ${dictionaryEn['skills.empty']}`)
+// §3.5「没有工作区」的引导要占住**项目块**那一格（源码级：stub 下 catalog 恒 null，渲染进不去）。
+const noSessionsAt = clientSource.indexOf("t('skills.noSessions')")
+const noSessionsWindow = clientSource.slice(Math.max(0, noSessionsAt - 400), noSessionsAt)
+check('「还没选工作区」的引导落在项目块之后（占住项目块的槽位）', noSessionsAt > clientSource.indexOf('roots.map(') && noSessionsWindow.includes("'sc-empty'") && noSessionsWindow.includes("t('skills.project')"), `noSessions@${noSessionsAt} roots.map@${clientSource.indexOf('roots.map(')} 窗口有 sc-empty=${noSessionsWindow.includes("'sc-empty'")} 有 skills.project=${noSessionsWindow.includes("t('skills.project')")}`)
+
 // ── 结果 ──────────────────────────────────────────────────────────────────
 
 delete process.env.DSH_HOME

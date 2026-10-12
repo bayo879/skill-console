@@ -145,8 +145,10 @@ function measureRole(id) {
 	}
 }
 // 0.6.0 需求②：节头那个唯一的工作区条，切页签时不能跳。
-// 页面上三个页签叠在同一个槽位（.tab-stage 里绝对定位），所以直接比它们工作区条的绝对 top：
-// 三份节头同构时三个 top 必须完全相等；哪份节头在条前面多塞了东西，这条就会红。
+// 页面把三个页签叠在同一个槽位（.tab-stage 里绝对定位），所以「三个 top 全等」曾经被当成
+// 这条需求的断言——**那个断言已删**：三份节头共用同一个 head 常量、又落在同一槽位，top 相等
+// 是 fixture 自己造出来的（fixture 自证），换个 fixture 才会红，测不到「切页签不跳」这件事。
+// 这里保留测量**只作诊断**（打印出来供人眼比对），不再据此判红；判红交给下面那条结构断言。
 // 节头里有两条 .sc-bar：标题一条、工作区条一条（与 SkillConsoleSection 同构），取后一条。
 function measureBar(id) {
 	const tab = document.getElementById('TAB-' + id)
@@ -154,6 +156,18 @@ function measureBar(id) {
 	const bars = tab.querySelectorAll('.sc-head > .sc-bar')
 	if (bars.length < 2) return null
 	return Math.round(bars[1].getBoundingClientRect().top * 100) / 100
+}
+// 0.6.0 需求②的结构断言：工作区**下拉**只长在节头里，页签体内一个都不该有。
+// 用「select.sc-select」而不是「.sc-bar」做标识是有原因的：真实 DOM 里 ReposPanel 的
+// .sc-body 第一个子节点本来就是一条 .sc-bar（「已订阅的仓库」头），所以「体内没有 .sc-bar」
+// 对真实界面为假；而「select.sc-select」全仓只出现在工作区下拉上（.sc-select 这个类还被
+// UiInput 用在 input 上，所以必须带 select 限定）。把下拉塞进任一页签体，这条就红。
+function measureWorkspaceSelects() {
+	const ids = ['skills', 'repos', 'roles']
+	return {
+		body: ids.reduce((total, id) => total + document.querySelectorAll('#TAB-' + id + ' .sc-body select.sc-select').length, 0),
+		head: ids.map((id) => document.querySelectorAll('#TAB-' + id + ' > .sc-head select.sc-select').length),
+	}
 }
 // 0.6.0 需求②：技能页签里两个源块（全局一块、项目一块）。
 // 量每块组头的 top（要递增，说明是两块而不是叠在一起）与 caret 相对块标题左边界的位置。
@@ -172,7 +186,7 @@ function measureSkillRoots(id) {
 		}
 	})
 }
-const result = { viewport: [innerWidth, innerHeight], before: measure('BEFORE'), after: measure('AFTER'), roleAfter: measureRole('AFTER'), barTops: ['skills', 'repos', 'roles'].map(measureBar), skillBlocks: measureSkillRoots('TAB-skills') }
+const result = { viewport: [innerWidth, innerHeight], before: measure('BEFORE'), after: measure('AFTER'), roleAfter: measureRole('AFTER'), barTops: ['skills', 'repos', 'roles'].map(measureBar), workspaceSelects: measureWorkspaceSelects(), skillBlocks: measureSkillRoots('TAB-skills') }
 document.getElementById('results').textContent = JSON.stringify(result)
 </script>
 </body></html>`
@@ -212,7 +226,8 @@ function section(id) {
 
 /* 0.6.0 需求②的探针场景：三个页签（技能 / 技能仓库 / 角色）各一份节头，
    技能页签里放两块源块（全局 + 项目）。三份节头同构，只有正文不同——
-   切页签时工作区条应该停在原地，这就是 measureBar 比的东西。 */
+   判红用的是「工作区下拉只在节头里」（measureWorkspaceSelects），
+   measureBar 的 top 只打印出来作诊断，不再参与断言。 */
 function tabStage() {
 	const head = `
 		<div class="sc-head">
@@ -300,6 +315,7 @@ try {
 const { before, after, roleAfter } = measured
 const role = roleAfter ?? {}
 const barTops = Array.isArray(measured.barTops) ? measured.barTops : []
+const workspaceSelects = measured.workspaceSelects ?? { body: null, head: [] }
 const skillBlocks = Array.isArray(measured.skillBlocks) ? measured.skillBlocks : []
 const checks = [
 	['改动前：订阅卡片被压到只剩边框（< 6px）', before.repoGroup !== null && before.repoGroup < 6],
@@ -312,13 +328,16 @@ const checks = [
 	['需求③ 角色编辑器：动作按钮在勾选列表之前', role.firstButtonTop !== null && role.firstSkillTop !== null && role.firstButtonTop < role.firstSkillTop],
 	['需求③ 角色编辑器：名称行没被 flex-wrap 撑成两行（默认宽度下 headRows===1）', role.headRows === 1],
 	['需求③ 角色编辑器：名称行里就是那三个动作按钮', role.buttonsInHead === 3],
-	['需求② 三个页签的工作区条停在同一个位置（切页签不跳）', barTops.length === 3 && barTops.every((top) => top !== null) && barTops[0] === barTops[1] && barTops[1] === barTops[2]],
-	['需求② 技能页签是两块源块，且每块的折叠 caret 贴在块标题左侧', skillBlocks.length === 2 && skillBlocks[1].headTop !== null && skillBlocks[0].headTop !== null && skillBlocks[1].headTop > skillBlocks[0].headTop && skillBlocks.every((block) => block.caretLeft !== null && block.titleLeft !== null && Math.abs(block.caretLeft - block.titleLeft) < 24)],
+	['需求② 工作区下拉只长在节头里，页签体内不再自带一个', workspaceSelects.body === 0 && workspaceSelects.head.length === 3 && workspaceSelects.head.every((count) => count === 1)],
+	// 源块这条量的是 **fixture 的结构**（两块 .sc-skillroot 依次排开、caret 贴在块标题左侧），
+	// 它不宣称验证 CSS：真实样式在 client.js 里，fixture 只复刻类名与嵌套关系。
+	// caret 阈值 24 → 28：留出字体/缩放的漂移余量，不然换台机器就会假红。
+	['需求② 技能页签是两块源块，且每块的折叠 caret 贴在块标题左侧', skillBlocks.length === 2 && skillBlocks[1].headTop !== null && skillBlocks[0].headTop !== null && skillBlocks[1].headTop > skillBlocks[0].headTop && skillBlocks.every((block) => block.caretLeft !== null && block.titleLeft !== null && Math.abs(block.caretLeft - block.titleLeft) < 28)],
 ]
 
 console.log(`[layout] Chrome：${chromePath}`)
 console.log(`[layout] 视口 ${measured.viewport.join('×')}；改动前 ${JSON.stringify(before)}；改动后 ${JSON.stringify(after)}；角色编辑器 ${JSON.stringify(role)}`)
-console.log(`[layout] 工作区条 top ${JSON.stringify(barTops)}；技能页签源块 ${JSON.stringify(skillBlocks)}`)
+console.log(`[layout] 工作区条 top ${JSON.stringify(barTops)}（只作诊断）；工作区下拉 体内 ${workspaceSelects.body} / 节头 ${JSON.stringify(workspaceSelects.head)}；技能页签源块 ${JSON.stringify(skillBlocks)}`)
 let failed = 0
 for (const [label, ok] of checks) {
 	console.log(`  ${ok ? '✓' : '✗'} ${label}`)
@@ -329,4 +348,4 @@ if (failed > 0) {
 	console.error(`[layout] ${failed} 项失败：flex 收缩、角色编辑器按钮位置或节头/源块版面可能又回来了。`)
 	process.exit(1)
 }
-console.log(`[layout] ${passed}/${passed + failed} 项通过：订阅卡片不再被压扁，角色编辑器的按钮在名称行里，工作区条不跳、技能页签是两块。`)
+console.log(`[layout] ${passed}/${passed + failed} 项通过：订阅卡片不再被压扁，角色编辑器的按钮在名称行里，工作区下拉只在节头里、技能页签是两块。`)
