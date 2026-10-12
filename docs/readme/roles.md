@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-在技能控制台里加第三个标签页「角色」，用来**保存自定义的技能组合**，并通过**切换角色**改变**当前项目**下生效的技能，**全程不修改全局技能根**。
+在技能控制台里加第三个标签页「角色」，用来**保存自定义的技能组合**，并通过**切换角色**改变**当前项目**下生效的技能，**全程不修改全局技能根**。面板上**可以切换要操作哪个项目**（下拉在范围栏最前）：切换后，读（角色列表、候选）与写（切换 / 取消角色）都作用在选中的那个项目上。
 
 一句话说清它的价值：现在要换一套技能得逐个点开关；有了角色，点一次就换一套。
 
@@ -108,8 +108,14 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 | GET | `/roles/preview?role=<id>` | 切换会做什么（**只读，不落盘**） |
 | POST | `/roles/save` | 新建/更新角色 `{id?, name, skills[]}` |
 | POST | `/roles/remove` | 删除角色 `{id}`（**不动磁盘**） |
-| POST | `/roles/activate` | 对齐：把项目技能根切到该角色 `{id}` |
-| POST | `/roles/deactivate` | 只清本项目的激活记录 `{}`（不动磁盘） |
+| POST | `/roles/activate` | 对齐：把项目技能根切到该角色 `{id, project?}` |
+| POST | `/roles/deactivate` | 只清本项目的激活记录 `{project?}`（不动磁盘） |
+
+两个写端点都**读请求体**：`project`（会话 id）指定**要操作哪个项目**，**优先于** `x-skill-console-session` 头；
+`project` 省略时按请求头解析。两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd → 400
+`error.role.noProject`，**不会回落到「最近一个会话」**。
+`GET /roles` 与 `GET /roles/preview` 仍是读接口，保持宽松：`?project=<sessionId>` 优先于请求头，
+解析不出时回落最近会话并在 `project.fallback` 里置 `true`。
 
 ### `GET /roles` 响应
 
@@ -123,11 +129,14 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
   localKept: [{ name, projectPath, globalPath }],
   candidates: {
     project: [{ name, path, enabled, toggleable, readOnlyReason }],
-    global:  [{ name, path, enabled, toggleable, readOnlyReason, readOnly: true, reason: 'global-uncontrollable' }]
+    global:  [{ name, path, enabled, toggleable, readOnlyReason }]
   }
 }
 ```
 
+- `candidates.project` 与 `candidates.global` **同形状**，**全局候选也可勾选**——勾选 = 切换时把全局那份
+  **复制进项目**，不是「控制全局那一份」（全局那份文件本身不会被改）。能不能操作一律由 `toggleable` 表达：
+  软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`。
 - `stats.enable` / `stats.disable` / `stats.copy` 就是这次切换的落盘动作数（直接来自 `planRole`）：界面用 `disable` 讲「切换会停用 N 个」、用 `copy` 讲「会从全局复制 N 个进来」。
 - `stats.localKept` 与顶层 `localKept` 是「项目里已有同名、全局也有同名」的条目：**保留项目那份，绝不被全局覆盖**；它不计入 `stats.total`。
 - `status` 由 `planRole` 推导：无激活角色 → `unassigned`；`steps` 为空 → `matched`；否则 → `drifted`。注意 `missing` **不影响** `status`——角色里本项目不存在的技能只是没得管，不算「磁盘偏离角色」；它由 `stats.missing` 单独讲。

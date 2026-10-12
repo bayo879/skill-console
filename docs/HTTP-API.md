@@ -18,9 +18,15 @@ kind: 'prefix'   path: '/api/skill-console'
   - `content-type: application/json`
   - `x-skill-console: 1`（跨站表单无法伪造自定义头 + JSON content-type）
   - 否则 403 / 415。
-- 任何请求都可带 `x-skill-console-session: <sessionId>`（浏览器半边从 `props.useSessions`
-  拿到当前会话 id 后带上）。宿主用它把「项目」解析成该会话的 `header.cwd`。
-  不带时宿主回落到「最近一个会话的 cwd」，并在 `data.project.fallback === true` 里说明。
+- 项目从两处来：`x-skill-console-session: <sessionId>` 头（浏览器半边从 `props.useSessions`
+  拿到当前会话 id 后带上），或请求里的 `project`（会话 id）。宿主把会话解析成它的 `header.cwd`。
+  **读宽松、写严格**：
+  - **读接口**（`/state`、`/catalog`、`/roles`、`/roles/preview`）：解析不出会话时**回落**到
+    「最近一个会话的 cwd」，并在 `data.project.fallback === true` 里说明；`/catalog`、`/roles`、
+    `/roles/preview` 的 `?project=<sessionId>` 优先于请求头（优先级不变）。
+  - **写接口**（`/repositories/install`、`/roles/activate`、`/roles/deactivate`、`/skills/move-to-project`）：
+    请求体 `project` 优先于请求头，两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd 就是
+    400 `error.role.noProject`，**绝不回落到「最近一个会话」**（否则界面上选着项目 B、写却落到 A）。
 - 所有路径参数都是**绝对路径**，宿主会校验它落在已知技能根内，否则 400
   `error.path.outsideRoots`。前端不要自己拼路径去猜。
 - 技能「根」的 key 固定为两个（`.agents` 不在本插件的管理面内，面板不扫描、也不展示）：
@@ -266,8 +272,9 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 12. `POST /repositories/install`  ← 安装 / 更新
 
 ```jsonc
-// 请求（target 省略或非 'project' 一律按 'global' 处理）
-{ "id": "obra/superpowers", "skills": ["tdd", "brainstorming"], "confirm": false, "target": "project" }
+// 请求（target 省略或非 'project' 一律按 'global' 处理；project 只在 target:'project' 时有意义）
+{ "id": "obra/superpowers", "skills": ["tdd", "brainstorming"], "confirm": false,
+  "target": "project", "project": "<sessionId>" }
 // data
 { "installed": [ { "name": "tdd", "path": "…", "updated": true,
                    "backup": "/Users/…/skill-console/backups/tdd/1789…" } ],
@@ -278,7 +285,9 @@ kind: 'prefix'   path: '/api/skill-console'
 - `global` → `<DSH_HOME>/skills/<name>`（与 0.3.0 完全一致）；`project` → `<projectRoot>/.dsh/skills/<name>`（根不存在时随写入创建）。
 - 装到 `project` 时，目标位置已有同名技能就**一律**要 `confirm:true` 才覆盖：订阅快照只描述全局那一份，不能用来证明项目这份没被改过。
 - 装到 `project` **不更新订阅快照**（台账只记全局那份），也不写别的 Agent 目录。
-- 解析不出项目根时 400 `error.role.noProject`——**不会静默退回全局**。
+- 装到**哪个项目**由请求体 `project`（会话 id）指定，**优先于** `x-skill-console-session` 头；
+  两条路都走**严格解析**，解析不出就 400 `error.role.noProject`——**不会回落到「最近一个会话」，
+  也不会静默退回全局**。
 - 覆盖前把旧目录整份复制到 `<DSH_HOME>/skill-console/backups/<name>/<ts>/content/`，
   并把 `files` 快照（`相对路径 → git blob SHA-1`，即 `sha1("blob <len>\0" + bytes)`）记进订阅状态。
 - 上一版快照里有、新清单里没有的文件会被删除（真正的同步），因此**必须先备份**。
@@ -322,7 +331,8 @@ kind: 'prefix'   path: '/api/skill-console'
 角色清单 + 本项目激活角色 + 对齐状态。**只读**。
 
 ```jsonc
-// ?project=<sessionId> 或 x-skill-console-session 头；都不带时回落最近会话并置 fallback
+// 读接口，宽松：?project=<sessionId> 优先于 x-skill-console-session 头；
+// 两者都解析不出时回落到最近一个会话，并把 project.fallback 置为 true
 {
   "ok": true,
   "data": {
@@ -334,8 +344,7 @@ kind: 'prefix'   path: '/api/skill-console'
     "localKept": [ { "name": "g", "projectPath": "…/g/SKILL.md", "globalPath": "…/g/SKILL.md" } ],
     "candidates": {
       "project": [ { "name": "a", "path": "…", "enabled": true, "toggleable": true, "readOnlyReason": null } ],
-      "global":  [ { "name": "g", "path": "…", "enabled": true, "toggleable": true, "readOnlyReason": null,
-                     "readOnly": true, "reason": "global-uncontrollable" } ]
+      "global":  [ { "name": "g", "path": "…", "enabled": true, "toggleable": true, "readOnlyReason": null } ]
     }
   }
 }
@@ -344,8 +353,10 @@ kind: 'prefix'   path: '/api/skill-console'
 - `status`：无激活角色 → `unassigned`；`planRole` 的 `steps` 为空 → `matched`；否则 `drifted`。
   `missing` **不影响** `status`（只是「角色里有、本项目没有」）。
 - `drifted` **不自动纠正**：手工改过开关就一直显示「已偏离」，等用户主动再切一次。
-- `candidates.global` 里的每一条都带 `readOnly: true` 与 `reason: 'global-uncontrollable'`：
-  角色管不到全局根，这是 DSH 的加载模型决定的硬边界。
+- `candidates.project` 与 `candidates.global` **同形状**，只带 `name` / `path` / `enabled` / `toggleable` /
+  `readOnlyReason`；**全局候选也可勾选**——勾选的含义是「切换时把全局那份**复制进项目**」，不是
+  「控制全局那一份」。能不能操作一律由 `toggleable` 表达（软链技能是 `toggleable: false` +
+  `readOnlyReason: 'symlink'`）。
 - `stats.copy`：角色里要、项目里没有、**全局有**的技能数量——切换时会把它们复制进项目根（复制出来一律启用态）。
 - `stats.localKept` / 顶层 `localKept`：项目里已有同名、全局也有同名的条目；**保留项目那份，绝不被全局覆盖**，该条目自身该 enable / disable / noop 照旧。`localKept` 不计入 `stats.total`。
 - `stats.missing`：角色里要、项目与全局都没有的名字数量；只报告，不算失败，也不影响 `status`。
@@ -400,7 +411,8 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 19. `POST /roles/activate`  ← 对齐（唯一破坏性的角色操作）
 
 ```jsonc
-{ "id": "…" }
+// 请求：project（会话 id，要操作哪个项目）优先于 x-skill-console-session 头；两条路都严格解析
+{ "id": "…", "project": "<sessionId>" }
 // data
 { "role": { "id": "…", "name": "前端" },
   "status": "matched",                       // 逐项失败时 'drifted'
@@ -415,16 +427,21 @@ kind: 'prefix'   path: '/api/skill-console'
 **只写项目技能根**，全局根在结构上不可达。逐项隔离：一项失败不影响其余项。
 `changed > 0` 时让技能注册表失效，并对每个真正改动的路径各发一次 `fs/observed` 通知。
 `takeover` 报告「停用项目副本后，全局同名技能接管生效」；`localKept` 报告「两边同名、保留项目那份」。
+写的是**哪个项目**：请求体 `project` 优先于 `x-skill-console-session` 头，两条路都严格解析；
+解析不出（会话不存在 / 拿不到 cwd）→ 400 `error.role.noProject`，**绝不回落到「最近一个会话」**。
+
 错误：400 `error.proto.missingId`、400 `error.role.noProject`（解析不出项目根）、
 404 `error.role.unknown`、500 `error.role.state`。
 
 ## 20. `POST /roles/deactivate`
 
 ```jsonc
-{}   // 清掉本项目「激活了哪个角色」的记录
+{ "project": "<sessionId>" }   // 清掉本项目「激活了哪个角色」的记录；project 可省略（省略时按请求头解析）
 // data: { "cleared": true }   // 本来就没记录时 false
 ```
 **只清记录，不动磁盘**：技能保持现状，不还原成切换前的样子（当前没有快照/回滚）。
+本端点**会读请求体**：`project`（会话 id，优先于 `x-skill-console-session` 头）指定要操作哪个项目，
+两条路都严格解析，解析不出 → 400 `error.role.noProject`，**不会回落到「最近一个会话」**。
 错误：400 `error.role.noProject`、500 `error.role.state`。
 
 ## 21. `POST /skills/delete`  ← 删除技能（破坏性，先备份）
@@ -448,15 +465,16 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 22. `POST /skills/move-to-project`  ← 全局技能搬到当前项目（破坏性，先备份）
 
 ```jsonc
-// 请求：必须是全局技能根里的发现文件路径
-{ "path": "/Users/…/.dsh/skills/tdd/SKILL.md" }
+// 请求：必须是全局技能根里的发现文件路径；project 指定搬进哪个项目（优先于 x-skill-console-session 头）
+{ "path": "/Users/…/.dsh/skills/tdd/SKILL.md", "project": "<sessionId>" }
 // data
 { "name": "tdd", "from": "/Users/…/.dsh/skills", "to": "/Users/…/proj/.dsh/skills",
   "kind": "directory", "backup": "…/backups/tdd/1789…", "globalRemoved": true }
 // 删全局失败时：{ …, "globalRemoved": false, "warning": "项目里已经就位，但全局那份没删掉：…" }
 ```
 语义：
-- 只允许全局 → 项目：非全局来源 400 `error.transfer.notGlobal`；软链接 400 `error.transfer.symlink`；项目里已有同名技能 409 `error.transfer.exists`（**按技能名判**，不按目标路径；不覆盖、不备份、不动手）；解析不出项目根 400 `error.role.noProject`。
+- 只允许全局 → 项目：非全局来源 400 `error.transfer.notGlobal`；软链接 400 `error.transfer.symlink`；项目里已有同名技能 409 `error.transfer.exists`（**按技能名判**，不按目标路径；不覆盖、不备份、不动手）。
+- 搬进**哪个项目**由请求体 `project`（会话 id，优先于 `x-skill-console-session` 头）决定，两条路都走**严格解析**；解析不出项目根 400 `error.role.noProject`，**不会回落到「最近一个会话」**。
 - 顺序：① 备份全局那份（失败 → 500 `error.delete.backup`，什么都不移）② 复制进项目 ③ 删全局那份。
 - **③ 失败不回滚**：项目里那份留着，响应 `globalRemoved:false` + `warning` 如实报告；再点一次「删除」即可清掉全局那份。
 - 复制失败时按复制自身的错误码上抛（`error.copy.exists` 409 / `error.transfer.symlink` 400 / `error.skill.notFound` 404），此时全局那份没动。
@@ -483,7 +501,7 @@ kind: 'prefix'   path: '/api/skill-console'
 | `error.role.duplicate` | 角色重名，提示换个名字 |
 | `error.role.tooMany` | 角色数或每角色技能数超出上限（角色 > 50 / 每角色技能 > 200） |
 | `error.role.skills` | `skills` 不是字符串数组 |
-| `error.role.noProject` | 解析不出项目技能根（没带会话 / 会话没有项目目录）：角色只能落在项目根上，提示先打开一个项目 |
+| `error.role.noProject` | 写接口里请求指定的项目解析不出（会话 id 不存在 / 拿不到 cwd，**绝不回落到最近会话**），或角色只能落在项目根上却没有项目目录：提示先打开 / 选对一个项目 |
 | `error.delete.backup` | 删除/移动前的备份失败：**什么都没改**，提示看日志后重试 |
 | `error.copy.exists` | 复制/移动的目标位置已有同名技能，拒绝覆盖 |
 | `error.transfer.notGlobal` | 只能把**全局**技能移到项目；项目技能请用「删除」 |
