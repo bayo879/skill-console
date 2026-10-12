@@ -1078,6 +1078,95 @@ window.__ModuleLoader__.load({
 			}))
 		}
 
+		/**
+		 * 从 `/state` 的响应 + 用户选过的项目算出「当前项目」。
+		 *
+		 * 纯函数：认领规则（按项目根，不按会话 id）要能被契约测试直接打到。
+		 * 三个页签共用这一份，所以「当前项目」在整屏只有一个答案。
+		 *
+		 * @param state - `{loading, data, error}`（`error` 是原始 Error）。
+		 * @param pick - 用户选过的 `{value, root}`，或 null。
+		 * @param sessionId - 当前会话 id（默认值）。
+		 */
+		function projectContextOf(state, pick, sessionId) {
+			const data = state && state.data ? state.data : null
+			const projects = data && Array.isArray(data.projects) ? data.projects : []
+			const selectedSession = data && data.selected && typeof data.selected.sessionId === 'string' ? data.selected.sessionId : ''
+			const options = projectOptionsOf(projects)
+			const picked = projectOptionOfPick(pick, options)
+			// 默认用当前会话；用户选过且那个项目还在列表里就听用户的。
+			const active = picked !== null ? picked.value : sessionId || selectedSession
+			const activeEntry = projects.find((entry) => entry && entry.sessionId === active) ?? null
+			return {
+				loading: state === null || state === undefined ? true : state.loading === true,
+				error: state ? state.error ?? null : null,
+				data,
+				version: data && typeof data.version === 'string' ? data.version : '',
+				projects,
+				selectedSession,
+				options,
+				picked,
+				active,
+				activeEntry,
+				activeName: activeEntry === null ? '' : projectNameOf(activeEntry),
+			}
+		}
+
+		/**
+		 * 「当前项目」的共享上下文：section 调一次 `/state`，整对象传给三个页签。
+		 *
+		 * 依赖里只放真正会变的值（`sessionId`、目录版本号）；`apiGet` 每次渲染都是新引用，
+		 * 放进依赖会变成无限重拉，effect 拿到的闭包属于它那一帧，语义正确。
+		 */
+		function useProjectContext(sessionId) {
+			const [state, setState] = react.useState({ loading: true, data: null, error: null })
+			const [pick, setPick] = react.useState(null)
+			const revision = useStore(catalogRevisionStore)
+			const token = react.useRef(0)
+
+			react.useEffect(() => {
+				let alive = true
+				const run = ++token.current
+				setState((previous) => ({ loading: true, data: previous.data, error: null }))
+				apiGet('/state', null, sessionId)
+					.then((data) => {
+						if (!alive || token.current !== run) return
+						setState({ loading: false, data, error: null })
+					})
+					.catch((error) => {
+						if (!alive || token.current !== run) return
+						setState({ loading: false, data: null, error })
+					})
+				return () => {
+					alive = false
+				}
+			}, [sessionId, revision])
+
+			return { ...projectContextOf(state, pick, sessionId), pick, setPick }
+		}
+
+		/**
+		 * 「当前项目」下拉：技能页签、角色页签、以及仓库页签的「装到项目」共用同一个。
+		 *
+		 * 选中值按项目根认领（`projectOptionOfPick`），所以这里只回传命中的 option 本身。
+		 * 没有可选项目时渲染 `null`——由调用方决定要不要另外解释原因。
+		 */
+		function ProjectSelect(props) {
+			const t = props.t
+			const context = props.context
+			if (context.options.length === 0) return null
+			return h(
+				'select',
+				{
+					className: 'sc-select',
+					value: context.active,
+					'aria-label': t('skills.project'),
+					onChange: (event) => context.setPick(context.options.find((option) => option.value === event.target.value) ?? null),
+				},
+				context.options.map((option) => h('option', { key: option.value, value: option.value }, option.label)),
+			)
+		}
+
 		/** 停止冒泡：行本身可点开详情，行内控件必须先掐断。 */
 		function stop(fn) {
 			return (event) => {
@@ -1336,10 +1425,9 @@ window.__ModuleLoader__.load({
 			const t = props.t
 			const sessionId = props.sessionId
 			const [scope, setScope] = react.useState('global')
-			// 用户选过的项目：存 `{value, root}` 而不是一个会话 id——见 projectOptionOfPick。
-			const [projectPick, setProjectPick] = react.useState(null)
-			const [env, setEnv] = react.useState({ loading: true, data: null, error: null })
 			const [catalog, setCatalog] = react.useState({ loading: true, data: null, error: null })
+			// 「当前项目」由 section 统一持有（useProjectContext），这里只读不写。
+			const project = props.project
 			const [detail, setDetail] = react.useState(null)
 			const [notice, setNotice] = react.useState(null)
 			const [actionFail, setActionFail] = react.useState(null)
@@ -1347,44 +1435,11 @@ window.__ModuleLoader__.load({
 			const [batchBusy, setBatchBusy] = react.useState(false)
 			const revision = useStore(catalogRevisionStore)
 			// 快速切换范围时旧响应可能后到：用递增令牌丢弃过期结果，避免目录闪回上一个 scope。
-			// /state 与 /catalog 各用一个令牌——共用一个的话，挂载时后发的 /catalog 会让
-			// 先发的 /state 结果被当成过期丢掉（项目列表与「未取到会话」提示就再也不会出现）。
-			const envToken = react.useRef(0)
 			const catalogToken = react.useRef(0)
 
-			const projects = env.data && Array.isArray(env.data.projects) ? env.data.projects : []
-			const selectedSession = env.data && env.data.selected && typeof env.data.selected.sessionId === 'string' ? env.data.selected.sessionId : ''
-			const projectOptions = projectOptionsOf(projects)
-			/**
-			 * 用户选过的项目按**项目根**认领，不是按会话 id：宿主已把同一项目的多个会话收敛成
-			 * 一条，代表会话会随时间换人（同项目别的会话变新），只认 id 会让下拉框选空。
-			 * 项目整个没了（会话都被回收）就落回默认，而不是把界面留在一个选不中的值上。
-			 */
-			const pickedOption = projectOptionOfPick(projectPick, projectOptions)
-			// 默认用当前会话；用户选过且那个项目还在列表里就听用户的。
-			const activeProject = pickedOption !== null ? pickedOption.value : sessionId || selectedSession
-
-			/**
-			 * 依赖里只放真正会变的值：`t` 和这两个加载函数每次渲染都是新引用，
-			 * 放进依赖会变成无限重拉。effect 拿到的闭包属于它那一帧，语义正确。
-			 */
-			react.useEffect(() => {
-				let alive = true
-				const run = ++envToken.current
-				setEnv((previous) => ({ loading: true, data: previous.data, error: null }))
-				apiGet('/state', null, sessionId)
-					.then((data) => {
-						if (!alive || envToken.current !== run) return
-						setEnv({ loading: false, data, error: null })
-					})
-					.catch((error) => {
-						if (!alive || envToken.current !== run) return
-						setEnv({ loading: false, data: null, error: errorMessage(t, error) })
-					})
-				return () => {
-					alive = false
-				}
-			}, [sessionId, revision])
+			// 项目列表与「当前项目」都来自 section 的那一份 /state（见 useProjectContext）。
+			const projects = project.projects
+			const activeProject = project.active
 
 			const loadCatalog = () => {
 				const run = ++catalogToken.current
@@ -1430,7 +1485,7 @@ window.__ModuleLoader__.load({
 						if (takeover.length > 0) {
 							// 宿主在 takeover 条目里直接给了 label（与分组标题同一份文案），优先级最高。
 							const names = takeover
-								.map((entry) => rootLabel(t, entry.root, entry.label || labelOfRoot(env.data, entry.root)))
+								.map((entry) => rootLabel(t, entry.root, entry.label || labelOfRoot(project.data, entry.root)))
 								.join('、')
 							setNotice(t('skills.takeover', { name: skill.name || '', roots: names }))
 						} else {
@@ -1473,11 +1528,6 @@ window.__ModuleLoader__.load({
 				loadCatalog()
 			}
 
-			const projectLabelOf = () => {
-				const entry = projects.find((item) => item && item.sessionId === activeProject) ?? projects[0]
-				return entry === undefined ? '' : projectNameOf(entry)
-			}
-
 			const removeSkillFile = (skill, rootName) => {
 				if (busyPath !== null) return
 				if (!askConfirm(deleteConfirmText(t, skill, rootName))) return
@@ -1496,7 +1546,7 @@ window.__ModuleLoader__.load({
 
 			const moveSkillToProject = (skill) => {
 				if (busyPath !== null) return
-				if (!askConfirm(moveConfirmText(t, skill, projectLabelOf()))) return
+				if (!askConfirm(moveConfirmText(t, skill, project.activeName))) return
 				setBusyPath(skill.path)
 				setNotice(null)
 				setActionFail(null)
@@ -1510,7 +1560,9 @@ window.__ModuleLoader__.load({
 					.then(() => setBusyPath(null))
 			}
 
-			const project = catalog.data && catalog.data.project ? catalog.data.project : null
+			// 宿主为这次 /catalog 实际解析出来的项目。与共享上下文里的「当前项目」是两个东西：
+			// 这一份带 `fallback`，用来暴露「宿主悄悄回落到了别的项目」；名字必须区分开。
+			const catalogProject = catalog.data && catalog.data.project ? catalog.data.project : null
 			const collisions = catalog.data && Array.isArray(catalog.data.collisions) ? catalog.data.collisions : []
 			const warnings = catalog.data && Array.isArray(catalog.data.warnings) ? catalog.data.warnings : []
 			const roots = catalog.data && Array.isArray(catalog.data.roots) ? catalog.data.roots : []
@@ -1525,18 +1577,7 @@ window.__ModuleLoader__.load({
 					h('span', { className: 'sc-hint' }, t('skills.scope')),
 					h(UiPill, { active: scope === 'global', onClick: () => setScope('global'), children: t('skills.scope.global') }),
 					h(UiPill, { active: scope === 'project', onClick: () => setScope('project'), children: t('skills.scope.project') }),
-					scope === 'project' && projects.length > 0
-						? h(
-								'select',
-								{
-									className: 'sc-select',
-									value: activeProject,
-									'aria-label': t('skills.project'),
-									onChange: (event) => setProjectPick(projectOptions.find((option) => option.value === event.target.value) ?? null),
-								},
-								projectOptions.map((option) => h('option', { key: option.value, value: option.value }, option.label)),
-							)
-						: null,
+					scope === 'project' ? h(ProjectSelect, { t, context: project }) : null,
 					h('span', { className: 'sc-spacer' }),
 					h(UiButton, {
 						variant: 'ghost',
@@ -1549,18 +1590,18 @@ window.__ModuleLoader__.load({
 				),
 				// 项目解析说明——回落到别的项目时绝不能装作没事。面板只显示项目名，
 				// 不显示任何具体目录地址（用户要知道「是不是这个项目」，不需要知道绝对路径）。
-				project
+				catalogProject
 					? h(
 							'div',
 							{ className: 'sc-hint' },
-							t('skills.projectName', { name: projectNameOf(project) }),
-							project.fallback === true
-								? h('div', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, project.cwd ? t('skills.projectFallback', { name: projectNameOf(project) }) : t('skills.projectFallbackUnknown')))
+							t('skills.projectName', { name: projectNameOf(catalogProject) }),
+							catalogProject.fallback === true
+								? h('div', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, catalogProject.cwd ? t('skills.projectFallback', { name: projectNameOf(catalogProject) }) : t('skills.projectFallbackUnknown')))
 								: null,
 						)
 					: null,
-				scope === 'project' && !env.loading && projects.length === 0 ? h('div', { className: 'sc-note' }, t('skills.noSessions')) : null,
-				env.error ? h('div', { className: 'sc-err' }, actionError(t, new Error(env.error))) : null,
+				scope === 'project' && !project.loading && projects.length === 0 ? h('div', { className: 'sc-note' }, t('skills.noSessions')) : null,
+				project.error ? h('div', { className: 'sc-err' }, actionError(t, project.error)) : null,
 				notice ? h('div', { className: 'sc-ok', role: 'status' }, notice) : null,
 				actionFail ? h('div', { className: 'sc-err', role: 'alert' }, actionFail) : null,
 				catalog.error ? h('div', { className: 'sc-err', role: 'alert' }, catalog.error) : null,
@@ -2846,24 +2887,9 @@ window.__ModuleLoader__.load({
 			const store = typeof props.useSessions === 'function' ? props.useSessions((state) => state) : undefined
 			const sessionId = sessionIdOf(store)
 			const [tab, setTab] = react.useState('skills')
-			// 版本号来自宿主的 /state（它读的是插件自己的 package.json）。
-			// 拉不到就不显示这一枚标签——配置页其余部分照常可用。
-			const [version, setVersion] = react.useState('')
-
-			react.useEffect(() => {
-				let alive = true
-				apiGet('/state', null, sessionId)
-					.then((data) => {
-						if (!alive) return
-						if (data && typeof data.version === 'string') setVersion(data.version)
-					})
-					.catch(() => {
-						// 版本号只是展示信息，读不到不值得报错。
-					})
-				return () => {
-					alive = false
-				}
-			}, [sessionId])
+			// 「当前项目」在这一层只拉一次 /state：三个页签读同一份，版本号也从这一份取。
+			const project = useProjectContext(sessionId)
+			const version = project.version
 
 			return h(
 				'div',
@@ -2888,10 +2914,10 @@ window.__ModuleLoader__.load({
 				),
 				// 两个页签各自再包一层边界：一个页签炸了不影响另一个。
 				tab === 'skills'
-					? h(PanelBoundary, { key: 'skills' }, h(SkillsPanel, { t, sessionId }))
+					? h(PanelBoundary, { key: 'skills' }, h(SkillsPanel, { t, sessionId, project }))
 					: tab === 'repos'
-						? h(PanelBoundary, { key: 'repos' }, h(ReposPanel, { t, sessionId }))
-						: h(PanelBoundary, { key: 'roles' }, h(RolesPanel, { t, sessionId })),
+						? h(PanelBoundary, { key: 'repos' }, h(ReposPanel, { t, sessionId, project }))
+						: h(PanelBoundary, { key: 'roles' }, h(RolesPanel, { t, sessionId, project })),
 			)
 		}
 
@@ -2972,6 +2998,7 @@ window.__ModuleLoader__.load({
 		exports.emptyDetailKeyFor = emptyDetailKeyFor
 		exports.projectOptionsOf = projectOptionsOf
 		exports.projectOptionOfPick = projectOptionOfPick
+		exports.projectContextOf = projectContextOf
 		return module.exports
 	},
 })

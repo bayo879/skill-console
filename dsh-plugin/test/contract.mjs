@@ -2245,6 +2245,28 @@ check('没选过 / 选项缺失时不抛', exposed.projectOptionOfPick(null, pic
 // 选择状态认项目根而不是会话 id：源码里不能再出现旧的一次性会话 id 状态。
 check('面板不再按会话 id 记项目选择', !/setProjectId\b/.test(clientSource) && !/\[projectId,/.test(clientSource))
 
+// 项目上下文（纯函数）：下拉、写请求、三个页签读的是同一份。
+const ctxFor = (state, pick, sessionId) => (typeof exposed.projectContextOf === 'function' ? exposed.projectContextOf(state, pick, sessionId) : {})
+const twoProjects = {
+	loading: false,
+	error: null,
+	data: {
+		version: '0.5.0',
+		selected: { sessionId: 's-1' },
+		projects: [
+			{ sessionId: 's-1', cwd: '/Users/x/code/proj-a' },
+			{ sessionId: 's-2', cwd: '/Users/x/code/proj-b' },
+		],
+	},
+}
+check('导出 projectContextOf 供契约测试直接打', typeof exposed.projectContextOf === 'function')
+check('没选过项目时就用当前会话', ctxFor(twoProjects, null, 's-2').active === 's-2' && ctxFor(twoProjects, null, 's-2').activeName === 'proj-b')
+check('选过的项目按项目根认领（代表会话换人也要选得中）', ctxFor(twoProjects, { value: 's-gone', root: '/Users/x/code/proj-b' }, 's-1').active === 's-2')
+check('项目整个没了就落回当前会话', ctxFor(twoProjects, { value: 's-3', root: '/Users/x/code/proj-gone' }, 's-1').active === 's-1')
+check('版本号来自同一份 /state（不再单独再拉一次）', ctxFor(twoProjects, null, 's-1').version === '0.5.0')
+const emptyContext = ctxFor({ loading: true, data: null, error: null }, null, 's-1')
+check('拉不到 /state 时 active 退化成会话 id、projects 为空、不抛', emptyContext.active === 's-1' && emptyContext.projects.length === 0 && emptyContext.loading === true)
+
 // primitives / locale 缺失时不能崩
 const quietWarn = console.warn
 console.warn = () => {}
