@@ -96,14 +96,19 @@ export function createRouteHandlers(deps) {
 	/** 内部角色 → 回给界面的形状。 */
 	const publicRole = (role, activeId) => ({ id: role.id, name: role.name, skills: [...role.skills], updatedAt: role.updatedAt, active: role.id === activeId })
 
-	/** 候选技能：项目根可勾选，全局根只读展示。 */
-	const candidateOf = (skill, global) => ({
+	/**
+	 * 候选技能：项目根和全局根**同形状**，都能勾。
+	 *
+	 * 勾上全局候选不是「控制全局技能」，而是「切换时把全局那份复制进项目」——
+	 * 所以这里没有 readOnly/reason 之类的话术，能不能动只看 `toggleable`
+	 * （软链是 false，`readOnlyReason` 说明原因）。
+	 */
+	const candidateOf = (skill) => ({
 		name: skill.name,
 		path: skill.path,
 		enabled: skill.enabled === true,
 		toggleable: skill.toggleable === true,
 		readOnlyReason: skill.readOnlyReason ?? null,
-		...(global ? { readOnly: true, reason: 'global-uncontrollable' } : {}),
 	})
 
 	/** 这个项目当前激活的角色（没有就 null）。 */
@@ -270,7 +275,7 @@ export function createRouteHandlers(deps) {
 			const { project, projectRoot, globalRoot } = roleContextOf(sessionId)
 			const activeRole = activeRoleOf(project)
 			const projectSkills = projectSkillsOf(projectRoot)
-			// 全局扫描结果一身二用：既是复制来源（sources），又是只读候选；别扫两遍。
+			// 全局扫描结果一身二用：既是复制来源（sources），又是候选名单；别扫两遍。
 			const globalSkills = globalRoot === null ? [] : scanRoot(globalRoot).skills
 			const plan = activeRole === null ? null : planRole({ role: activeRole, skills: projectSkills, sources: globalSkills })
 			const stats = plan === null
@@ -284,8 +289,8 @@ export function createRouteHandlers(deps) {
 				stats,
 				localKept: plan === null ? [] : plan.localKept,
 				candidates: {
-					project: projectSkills.map((skill) => candidateOf(skill, false)),
-					global: globalSkills.map((skill) => candidateOf(skill, true)),
+					project: projectSkills.map((skill) => candidateOf(skill)),
+					global: globalSkills.map((skill) => candidateOf(skill)),
 				},
 			}
 		},

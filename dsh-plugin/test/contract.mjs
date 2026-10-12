@@ -1503,7 +1503,12 @@ const rolesList = await call({ path: '/api/skill-console/roles', headers: roleSe
 check('GET /roles 返回 200', rolesList.status === 200 && rolesList.json.ok === true, `${rolesList.status} ${JSON.stringify(rolesList.json).slice(0, 160)}`)
 check('未激活角色时 status 是 unassigned', rolesList.json.data.status === 'unassigned', String(rolesList.json.data.status))
 check('候选里能拿到项目技能', rolesList.json.data.candidates.project.some((entry) => entry.name === 'rp-alpha'), JSON.stringify(rolesList.json.data.candidates.project.map((entry) => entry.name)))
-check('候选里的全局技能标了只读', rolesList.json.data.candidates.global.every((entry) => entry.readOnly === true && entry.reason === 'global-uncontrollable'))
+check('候选里的全局技能与项目技能同形状：不再有 readOnly / reason', (() => {
+	const shape = (entry) => Object.keys(entry).sort().join(',')
+	const reference = shape(rolesList.json.data.candidates.project[0] ?? {})
+	return rolesList.json.data.candidates.global.every((entry) => shape(entry) === reference && !('readOnly' in entry) && !('reason' in entry))
+})(), JSON.stringify(rolesList.json.data.candidates.global))
+check('可勾选性仍由 toggleable / readOnlyReason 表达（软链还要能挡住）', rolesList.json.data.candidates.global.every((entry) => 'toggleable' in entry && 'readOnlyReason' in entry))
 check('候选人带齐字段', rolesList.json.data.candidates.project.every((entry) => ['name', 'path', 'enabled', 'toggleable'].every((key) => key in entry)))
 check('带回项目名与 fallback 标记', typeof rolesList.json.data.project?.name === 'string' && typeof rolesList.json.data.project?.fallback === 'boolean', JSON.stringify(rolesList.json.data.project))
 
