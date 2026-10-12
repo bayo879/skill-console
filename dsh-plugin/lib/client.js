@@ -147,6 +147,7 @@ window.__ModuleLoader__.load({
 				'skills.project': '当前项目',
 				'skills.projectFallback': '没拿到当前会话，宿主回落到「{name}」——这不是当前会话的项目。',
 				'skills.projectFallbackUnknown': '没拿到当前会话，宿主回落到它自己的默认项目。',
+				'workspace.session': '这个目录不在工作区列表里，按它的目录用：{name}',
 				'skills.projectName': '当前项目：{name}',
 				'skills.noSessions': '当前没有活动会话，列不出项目技能。请在某个工作区里打开一个会话，再刷新。',
 				'skills.empty': '这个范围里没有发现技能。',
@@ -377,6 +378,7 @@ window.__ModuleLoader__.load({
 				'skills.project': 'Project',
 				'skills.projectFallback': 'No current session was available, so the host fell back to "{name}" — this is not the current session\'s project.',
 				'skills.projectFallbackUnknown': 'No current session was available, so the host fell back to its own default project.',
+				'workspace.session': 'This directory is not in the workspace list; using it as one: {name}',
 				'skills.projectName': 'Current project: {name}',
 				'skills.noSessions': 'There is no live session, so project skills cannot be listed. Open a session in a workspace, then refresh.',
 				'skills.empty': 'No skills were found in this scope.',
@@ -1203,7 +1205,7 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 「当前项目」下拉：技能页签、角色页签、以及仓库页签的「装到项目」共用同一个。
+		 * 「当前项目」下拉：整节只有节顶的 `WorkspaceBar` 用它。
 		 *
 		 * 选中值按工作区目录认领、认不到再退到项目根（`projectOptionOfPick`），所以这里只回传命中的 option 本身。
 		 * 没有可选项目时渲染 `null`——由调用方决定要不要另外解释原因。
@@ -1221,6 +1223,43 @@ window.__ModuleLoader__.load({
 					onChange: (event) => context.setPick(context.options.find((option) => option.value === event.target.value) ?? null),
 				},
 				context.options.map((option) => h('option', { key: option.value, value: option.value }, option.label)),
+			)
+		}
+
+		/**
+		 * 节顶部的工作区条：整节唯一的控制点（下拉 + 回落说明 + 刷新）。
+		 *
+		 * 三处旧下拉（技能页签只在项目态、仓库页签只在装到项目时、角色页签）全删——
+		 * 同一个东西在三个地方各出现一次，用户每换个页签就得重新找它在哪。
+		 *
+		 * 回落必须在**这里**说一次：解析不到会话的工作区、或这个目录不在工作区列表里，
+		 * 都直说到底在用哪个目录，绝不装作没事。
+		 */
+		function WorkspaceBar(props) {
+			const t = props.t
+			const context = props.context
+			const selected = context.data && context.data.selected ? context.data.selected : null
+			return h(
+				'div',
+				{ className: 'sc-bar' },
+				h('span', { className: 'sc-hint' }, t('skills.project')),
+				h(ProjectSelect, { t, context }),
+				context.loading ? h('span', { className: 'sc-hint' }, t('common.loading')) : null,
+				selected !== null && selected.fallback === true && context.sessionOption === ''
+					? h('span', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, t(context.selectedPath === '' ? 'skills.projectFallbackUnknown' : 'skills.projectFallback', { name: context.activeName })))
+					: null,
+				context.sessionOption !== ''
+					? h('span', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, t('workspace.session', { name: context.activeName })))
+					: null,
+				h('span', { className: 'sc-spacer' }),
+				h(UiButton, {
+					variant: 'ghost',
+					size: 'sm',
+					icon: UiIcon('IconRefreshOutline16', 14),
+					disabled: context.loading,
+					onClick: () => bumpCatalog(),
+					children: t('common.refresh'),
+				}),
 			)
 		}
 
@@ -1786,23 +1825,13 @@ window.__ModuleLoader__.load({
 			return h(
 				'div',
 				{ className: 'sc-body' },
-				// 范围 + 项目 + 刷新
+				// 范围（工作区下拉与刷新都在节顶的工作区条上）
 				h(
 					'div',
 					{ className: 'sc-bar' },
 					h('span', { className: 'sc-hint' }, t('skills.scope')),
 					h(UiPill, { active: scope === 'global', onClick: () => setScope('global'), children: t('skills.scope.global') }),
 					h(UiPill, { active: scope === 'project', onClick: () => setScope('project'), children: t('skills.scope.project') }),
-					scope === 'project' ? h(ProjectSelect, { t, context: project }) : null,
-					h('span', { className: 'sc-spacer' }),
-					h(UiButton, {
-						variant: 'ghost',
-						size: 'sm',
-						icon: UiIcon('IconRefreshOutline16', 14),
-						disabled: catalog.loading,
-						onClick: () => bumpCatalog(),
-						children: t('common.refresh'),
-					}),
 				),
 				// 项目解析说明——回落到别的项目时绝不能装作没事。面板只显示项目名，
 				// 不显示任何具体目录地址（用户要知道「是不是这个项目」，不需要知道绝对路径）。
@@ -2107,7 +2136,6 @@ window.__ModuleLoader__.load({
 					h(UiPill, { active: props.installTarget !== 'project', onClick: () => props.onInstallTarget('global'), children: t('repos.targetGlobal') }),
 					h(UiPill, { active: props.installTarget === 'project', onClick: () => props.onInstallTarget('project'), children: t('repos.targetProject') }),
 					props.installTarget === 'project' ? h('span', { className: 'sc-hint' }, t('repos.targetProjectHint')) : null,
-					props.installTarget === 'project' ? h(ProjectSelect, { t, context: props.project }) : null,
 				),
 				detail.error ? h('div', { className: 'sc-err', role: 'alert' }, detail.error) : null,
 				detail.loading ? h('div', { className: 'sc-hint' }, t('repos.detailLoading')) : null,
@@ -2641,14 +2669,6 @@ window.__ModuleLoader__.load({
 					tokenKnown === null ? null : h(UiTag, { tone: tokenKnown ? 'success' : 'quiet' }, t(tokenKnown ? 'repos.tokenOn' : 'repos.tokenOff')),
 					h('span', { className: 'sc-spacer' }),
 					openedCount > 0 ? h(UiButton, { variant: 'ghost', size: 'sm', disabled: busy, onClick: collapseAll, children: t('repos.collapseAll') }) : null,
-					h(UiButton, {
-						variant: 'ghost',
-						size: 'sm',
-						icon: UiIcon('IconRefreshOutline16', 14),
-						disabled: busy || list.loading,
-						onClick: () => loadList(),
-						children: t('common.refresh'),
-					}),
 				),
 				list.error ? h('div', { className: 'sc-err', role: 'alert' }, list.error) : null,
 				notice ? h('div', { className: 'sc-ok', role: 'status' }, notice) : null,
@@ -3046,8 +3066,6 @@ window.__ModuleLoader__.load({
 				h(
 					'div',
 					{ className: 'sc-bar' },
-					h(ProjectSelect, { t, context: project }),
-					h('span', null, `${t('roles.currentProject')}：${projectName}`),
 					h(UiTag, { tone: roleToneOf(status) }, t(roleStatusKey(status))),
 					data.active === null || data.active === undefined ? null : h(UiTag, { tone: 'quiet' }, data.active.name),
 					data.project?.fallback === true ? h(UiTag, { tone: 'warning' }, t('roles.fallback')) : null,
@@ -3156,6 +3174,8 @@ window.__ModuleLoader__.load({
 						h('span', { className: 'sc-title' }, t('section.title')),
 						version === '' ? null : h(UiTag, { tone: 'quiet' }, t('section.version', { version })),
 					),
+					// 工作区条：整节唯一的控制点，页签之上。
+					h(WorkspaceBar, { t, context: project }),
 					h('span', { className: 'sc-sub' }, t('section.subtitle')),
 				),
 				h(
@@ -3255,6 +3275,7 @@ window.__ModuleLoader__.load({
 		exports.projectOptionOfPick = projectOptionOfPick
 		exports.projectContextOf = projectContextOf
 		exports.ProjectSelect = ProjectSelect
+		exports.WorkspaceBar = WorkspaceBar
 		exports.withProject = withProject
 		exports.missingSkillsOf = missingSkillsOf
 		exports.batchItems = batchItems

@@ -2730,7 +2730,7 @@ const emptyContext = ctxFor({ loading: true, data: null, error: null }, null, 's
 check('拉不到 /state 时 active 退化成空串、选项为空、不抛', emptyContext.active === '' && emptyContext.options.length === 0 && emptyContext.loading === true)
 check('写请求体一定显式带上工作区目录', typeof exposed.withProject === 'function' && exposed.withProject({ active: '/Users/x/code/proj-b' }, { id: 'r1' }).project === '/Users/x/code/proj-b')
 
-// 项目下拉与写请求的项目字段：角色页签 / 仓库页签（「装到项目」）消费的就是这一份。
+// 项目下拉与写请求的项目字段：现在整节只有节顶的工作区条（Task 4）消费这一份。
 check('导出 ProjectSelect 供契约测试直接渲染', typeof exposed.ProjectSelect === 'function')
 const pickedOptions = []
 const selectTree = exposed.ProjectSelect({
@@ -2742,8 +2742,6 @@ const selectElement = collect(selectTree, (element) => element.props !== undefin
 selectElement.props.onChange({ target: { value: 's-1' } })
 check('选中后回传完整 option（按项目根认领，不是裸会话 id）', pickedOptions[0]?.root === '/Users/x/code/proj-a', JSON.stringify(pickedOptions))
 check('没有可选项目时不渲染下拉', exposed.ProjectSelect({ t: tStub, context: { options: [], active: '', setPick: () => {} } }) === null)
-const installWiring = clientSource.indexOf("installTarget === 'project'")
-check('仓库页签在「装到项目」时就地给出项目下拉', installWiring >= 0 && clientSource.slice(installWiring, installWiring + 400).includes('ProjectSelect'))
 
 // 切换是破坏性的：确认框必须点名「对齐的是哪个项目」，不然用户不知道动的是哪儿。
 check('切换确认文案带上项目名', typeof dictionaryZh['roles.activateConfirm'] === 'string' && dictionaryZh['roles.activateConfirm'].includes('{project}') && dictionaryEn['roles.activateConfirm'].includes('{project}'))
@@ -2835,6 +2833,7 @@ for (const key of [
 	'skills.expand', 'skills.collapse', 'skills.batchEnableAria', 'skills.batchDisableAria',
 	'repos.installTarget', 'repos.targetGlobal', 'repos.targetProject', 'repos.targetProjectHint',
 	'error.roleNoProject', 'error.tooMany',
+	'workspace.session',
 ]) {
 	check(`词典 zh / en 都有 ${key}`, typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string', `zh=${typeof dictionaryZh[key]} en=${typeof dictionaryEn[key]}`)
 }
@@ -2851,6 +2850,37 @@ check('八个按路径定位的读写请求都带上当前工作区', WORKSPACE_
 	return !(at >= 0 && clientSource.slice(at, at + 200).includes('withProject(project'))
 }).join(' / '))
 check('三个页签都由 section 注入同一份工作区上下文', ['SkillsPanel', 'ReposPanel', 'RolesPanel'].every((name) => new RegExp(`h\\(${name}, \\{ t, sessionId, project \\}\\)`).test(clientSource)))
+
+section('版面条：节顶唯一工作区条，三页签不再各自为政')
+
+check('整节只有一个工作区下拉（只在 WorkspaceBar 里）', (clientSource.match(/h\(ProjectSelect/g) ?? []).length === 1)
+check('刷新按钮也只剩一个（在工作区条里）', (clientSource.match(/t\('common\.refresh'\)/g) ?? []).length === 1)
+check('工作区条挂在节头部（页签之上）', /h\(WorkspaceBar, \{ t, context: project \}\)/.test(clientSource.slice(clientSource.indexOf("className: 'sc-head'"), clientSource.indexOf("className: 'sc-tabs'"))))
+check('角色页签不再自己写「当前项目：…」', !clientSource.includes("t('roles.currentProject')"))
+
+// 纯组件可以真渲染：工作区条 + 下拉必须带 aria、选中当前工作区、列出全部选项。
+check('导出 WorkspaceBar 供契约测试直接渲染', typeof exposed.WorkspaceBar === 'function')
+const markT = (key, params) => (params === undefined ? `«${key}»` : `«${key}:${JSON.stringify(params)}»`)
+// 测试替身的 createElement 不展开函数组件（见 SkillRepoGroup 那条注释），
+// 所以工作区条里的 ProjectSelect 要手动求值一层，才看得到它渲染出的 <select>。
+const barSelectOf = (barTree) => {
+	if (barTree === null || barTree === undefined) return null
+	const element = collect(barTree, (node) => node.type === exposed.ProjectSelect)[0]
+	return element === undefined ? null : element.type(element.props)
+}
+const barOf = (context) => (typeof exposed.WorkspaceBar === 'function' ? exposed.WorkspaceBar({ t: markT, context }) : null)
+const barContext = ctxFor(twoWorkspaces, null, 's-1')
+const barTree = barOf(barContext)
+const barSelect = barSelectOf(barTree)
+check('工作区条渲染出标签 + 带 aria 的下拉', collectTexts(barTree).includes('«skills.project»') && barSelect !== null && barSelect.props['aria-label'] === '«skills.project»' && barSelect.props.value === '/Users/x/code/proj-a', JSON.stringify(collectTexts(barTree)))
+check('下拉列出全部工作区，标签来自标题', collectTexts(barSelect).join(',') === 'proj-a,proj-b', collectTexts(barSelect).join(','))
+check('工作区条里有刷新按钮', collect(barTree, (element) => element.props !== undefined && element.props.children === '«common.refresh»').length === 1)
+const badBarTree = barOf(ctxFor({ loading: false, error: null, data: { ...twoWorkspaces.data, selected: { ...twoWorkspaces.data.selected, fallback: true } } }, null, 's-1'))
+check('宿主回落时必须直说', collectTexts(badBarTree).some((text) => text.startsWith('«skills.projectFallback')))
+const looseBarTree = barOf(ctxFor(unregisteredState, null, 's-9'))
+check('当前目录不在列表里时也直说', collectTexts(looseBarTree).some((text) => text.startsWith('«workspace.session')))
+const emptyBarTree = barOf(ctxFor({ loading: true, data: null, error: null }, null, ''))
+check('没有工作区、也没会话时下拉不渲染（但条还在）', emptyBarTree !== null && emptyBarTree.type === 'div' && barSelectOf(emptyBarTree) === null)
 
 // ── 结果 ──────────────────────────────────────────────────────────────────
 
