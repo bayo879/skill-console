@@ -111,7 +111,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 | POST | `/roles/activate` | 对齐：把项目技能根切到该角色 `{id, project?}` |
 | POST | `/roles/deactivate` | 只清本项目的激活记录 `{project?}`（不动磁盘） |
 
-四个写端点都**读请求体**；其中 `project`（会话 id）只对 `/roles/activate` 与 `/roles/deactivate` 有意义，
+角色自己的四个写端点都**读请求体**；其中 `project`（会话 id）只对 `/roles/activate` 与 `/roles/deactivate` 有意义，
 用来指定**要操作哪个项目**，**优先于** `x-skill-console-session` 头；`project` 省略时按请求头解析。
 两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd → 400
 `error.role.noProject`，**不会回落到「最近一个会话」**。
@@ -195,7 +195,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ### 单文件增长的取舍（已知代价）
 
-角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3225 行**（`wc -l dsh-plugin/lib/client.js`，0.5.0 收尾时），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
+角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3241 行**（`wc -l dsh-plugin/lib/client.js`，0.5.0 收尾时），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
 
 已选择：**接受增长，不引入构建机制**（保住「改代码就生效」，且没有「改了源码忘了跑构建、界面静默跑旧代码」这种故障态）。缓解办法是把角色面板的**逻辑尽量压到宿主 `roles.js`**，客户端只留渲染。
 
@@ -218,7 +218,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ## 9. 测试覆盖（沿用现有三层）
 
-**`test/contract.mjs`（离线；0.5.0 收尾时全量 621 项）**
+**`test/contract.mjs`（离线；0.5.0 收尾时全量 653 项）**
 
 - 角色 CRUD；`roles.json` 损坏时拒绝写入且原文件不动；角色数/技能数上限；重名 409；名字非法 400。
 - `planRole` 纯函数：`copy` / `localKept` / `missing` / `disable` / 软链进 `skipped` / 同名双副本一起处置 / 连切两次第二次全 `noop` / `stats.total = copy+enable+disable+noop+skipped` 且 `localKept` 不计入。

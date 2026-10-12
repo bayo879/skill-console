@@ -166,6 +166,7 @@ kind: 'prefix'   path: '/api/skill-console'
 ```jsonc
 // 请求（project 省略时按请求头解析的会话；两条路都严格解析）
 { "items": [ { "path": "…", "enabled": false }, … ], "project": "<sessionId>" }   // 最多只处理前 200 项：items.slice(0, 200)，其余静默丢弃（不分片、不报错）
+// 上限是**每次请求**的：客户端按技能根/按仓库分组各发一次请求，单个组自身超过 200 项时同样会被截断。
 // 响应 data
 { "results": [ { "path": "…", "ok": true }, { "path": "…", "ok": false, "error": "…" } ],
   "changed": 1 }
@@ -296,6 +297,8 @@ kind: 'prefix'   path: '/api/skill-console'
 - 装到**哪个项目**由请求体 `project`（会话 id）指定，**优先于** `x-skill-console-session` 头；
   两条路都走**严格解析**，解析不出就 400 `error.role.noProject`——**不会回落到「最近一个会话」，
   也不会静默退回全局**。
+- 一次安装的技能数 **> 200** → 400 `error.proto.tooMany`（**硬拒、一个字节不写**）。这与 `/toggle-batch`
+  的静默截断**不对称**：批量启停把超出的丢掉照样 200，安装则直接报错——安装要建目录、要备份，静默少装一半更危险。
 - 覆盖前把旧目录整份复制到 `<DSH_HOME>/skill-console/backups/<name>/<ts>/content/`，
   并把 `files` 快照（`相对路径 → git blob SHA-1`，即 `sha1("blob <len>\0" + bytes)`）记进订阅状态。
 - 上一版快照里有、新清单里没有的文件会被删除（真正的同步），因此**必须先备份**。
@@ -511,6 +514,7 @@ kind: 'prefix'   path: '/api/skill-console'
 | `error.role.name` | 角色名为空或超过 60 字 |
 | `error.role.duplicate` | 角色重名，提示换个名字 |
 | `error.role.tooMany` | 角色数或每角色技能数超出上限（角色 > 50 / 每角色技能 > 200） |
+| `error.proto.tooMany` | 一次安装的技能数 > 200（`/repositories/install`）：**硬 400**，与 `/toggle-batch` 的静默截断不同 |
 | `error.role.skills` | `skills` 不是字符串数组 |
 | `error.role.noProject` | 写接口里请求指定的项目解析不出（会话 id 不存在 / 拿不到 cwd，**绝不回落到最近会话**），或角色只能落在项目根上却没有项目目录：提示先打开 / 选对一个项目 |
 | `error.delete.backup` | 删除/移动前的备份失败：**什么都没改**，提示看日志后重试 |

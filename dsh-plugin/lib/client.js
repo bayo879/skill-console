@@ -629,9 +629,11 @@ window.__ModuleLoader__.load({
 .sc-group-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--dsw-alias-border-l3, rgba(127,127,127,0.3)); background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.06)); font-size: 12px; }
 .sc-group-title { font-weight: 600; }
 .sc-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
-.sc-group .sc-row:first-child { border-top: 0; }
-/* 一个技能根下面按仓库分组：两级都能折叠（需求 ④）。组内第一行不要再画分隔线——
-   .sc-group 那条 :first-child 规则够不到现在这一层。 */
+/* 第一行不画上分隔线，靠的是「谁是组头的下一个兄弟」：根/仓库组头下面紧跟着的第一行，
+   以及没有组头的明细列表（.sc-group > .sc-row）自己的首行。 */
+.sc-group-head + .sc-row, .sc-group > .sc-row:first-child { border-top: 0; }
+/* 一个技能根下面按仓库分组：两级都能折叠（需求 ④）。仓库组自带 border-top，
+   组内第一行紧跟在组头后面，再画一条就是双线。 */
 .sc-repogroup { border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 /* 首个仓库组紧跟在根组头下面：根组头自己已有 border-bottom，再画一条就是双线。 */
 .sc-group-head + .sc-repogroup { border-top: 0; }
@@ -640,7 +642,7 @@ window.__ModuleLoader__.load({
 .sc-repogroup-title { font-weight: 600; font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace); }
 /* 仓库组相对根缩进一级，层级一眼看得出来（规格 §4）。 */
 .sc-repogroup .sc-row { padding-left: 22px; }
-.sc-repogroup .sc-row:first-child { border-top: 0; }
+.sc-repogroup-head + .sc-row { border-top: 0; }
 /* 技能根收起后卡片只剩组头：组头那条分隔线会和卡片下边框叠成双线。
    只对技能根生效（.sc-skillroot），角色页签那几个 .sc-group 的分隔线要留着。 */
 .sc-skillroot:not(.is-open) > .sc-group-head { border-bottom: 0; }
@@ -708,6 +710,7 @@ window.__ModuleLoader__.load({
 .sc-role-editor-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sc-role-skills { display: flex; flex-direction: column; }
 .sc-role-skill { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
+.sc-role-skills > .sc-role-skill:first-child { border-top: 0; }
 .sc-role-skill-name { font-family: var(--dsw-font-mono, monospace); font-size: 12px; }
 .sc-role-skill-readonly { opacity: 0.6; }
 .sc-role-global-note { padding: 6px 10px; font-size: 12px; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
@@ -1396,6 +1399,14 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 把一组技能收敛成 `/toggle-batch` 的入参：只留**需要变**的项（不可勾、已是目标态、
+		 * 路径不是字符串的都不要）。返回空数组时调用方直接返回，一个字节都不发给宿主。
+		 */
+		function batchItems(skills, enabled) {
+			return (Array.isArray(skills) ? skills : []).filter((skill) => skill.toggleable !== false && skill.enabled !== enabled && typeof skill.path === 'string').map((skill) => ({ path: skill.path, enabled }))
+		}
+
+		/**
 		 * 一个根下面的一个仓库组：组头可折叠，组头自带「按仓库批量启停」。
 		 *
 		 * 批量范围**恰好是这一组**。今天组头按钮动的是整根，用户点的是「这个仓库」——
@@ -1682,9 +1693,7 @@ window.__ModuleLoader__.load({
 
 			/** 一组（一个技能根，或一个根里的一个仓库）的批量启停：只发需要变的项（宿主上限 200）。 */
 			const batch = (skills, enabled, label) => {
-				const items = (Array.isArray(skills) ? skills : [])
-					.filter((skill) => skill.toggleable !== false && skill.enabled !== enabled && typeof skill.path === 'string')
-					.map((skill) => ({ path: skill.path, enabled }))
+				const items = batchItems(skills, enabled)
 				if (items.length === 0) {
 					setNotice(t('skills.toggled', { name: label, state: t(enabled ? 'skills.stateOn' : 'skills.stateOff') }))
 					return
@@ -3226,6 +3235,7 @@ window.__ModuleLoader__.load({
 		exports.ProjectSelect = ProjectSelect
 		exports.withProject = withProject
 		exports.missingSkillsOf = missingSkillsOf
+		exports.batchItems = batchItems
 		return module.exports
 	},
 })

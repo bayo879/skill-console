@@ -90,7 +90,26 @@ function measure(id) {
 		bodyScrolls: body.scrollHeight > body.clientHeight + 1,
 	}
 }
-const result = { viewport: [innerWidth, innerHeight], before: measure('BEFORE'), after: measure('AFTER') }
+// 需求 ③「动作按钮移到名称行右侧」：这条只能在真浏览器里量——选择器对得再准，
+// 也不能证明按钮真的和输入框同一行、且在勾选列表之前。
+function measureRole(id) {
+	const root = document.getElementById('ROLE-' + id)
+	if (!root) return null
+	const head = root.querySelector('.sc-role-editor-head')
+	const input = head ? head.querySelector('input') : null
+	const buttons = head ? Array.from(head.querySelectorAll('button')) : []
+	const firstSkill = root.querySelector('.sc-role-skill')
+	const round = (value) => Math.round(value * 100) / 100
+	const topOf = (element) => (element ? round(element.getBoundingClientRect().top) : null)
+	return {
+		headHeight: head ? round(head.getBoundingClientRect().height) : null,
+		inputTop: topOf(input),
+		firstButtonTop: topOf(buttons[0]),
+		firstSkillTop: topOf(firstSkill),
+		buttonsInHead: buttons.length,
+	}
+}
+const result = { viewport: [innerWidth, innerHeight], before: measure('BEFORE'), after: measure('AFTER'), roleAfter: measureRole('AFTER') }
 document.getElementById('results').textContent = JSON.stringify(result)
 </script>
 </body></html>`
@@ -117,6 +136,14 @@ function section(id) {
 		</div>
 	</div>
 	<div class="sc-card"><div class="sc-desc">添加仓库</div></div>
+	<div class="sc-role-editor" id="ROLE-${id}">
+		<div class="sc-role-editor-head"><label>名称</label><input class="sc-select" value="前端"><span class="sc-spacer"></span><button type="button">保存</button><button type="button">取消</button><button type="button">切换到此角色</button></div>
+		<div class="sc-role-skills">
+			<label class="sc-role-skill" data-skill="rp-alpha"><input type="checkbox"><span class="sc-role-skill-name">rp-alpha</span><span>●</span></label>
+			<label class="sc-role-skill" data-skill="rp-beta"><input type="checkbox"><span class="sc-role-skill-name">rp-beta</span><span>○</span></label>
+			<label class="sc-role-skill" data-skill="rp-gamma"><input type="checkbox"><span class="sc-role-skill-name">rp-gamma</span><span>○</span></label>
+		</div>
+	</div>
 </div>`
 }
 
@@ -160,7 +187,8 @@ try {
 	process.exit(1)
 }
 
-const { before, after } = measured
+const { before, after, roleAfter } = measured
+const role = roleAfter ?? {}
 const checks = [
 	['改动前：订阅卡片被压到只剩边框（< 6px）', before.repoGroup !== null && before.repoGroup < 6],
 	['改动前：卡片里的仓库行本身仍有高度（说明内容在、只是盒子被压扁）', before.repoRow !== null && before.repoRow > 40],
@@ -168,17 +196,21 @@ const checks = [
 	['改动后：订阅卡片恢复正常高度（> 40px）', after.repoGroup !== null && after.repoGroup > 40],
 	['改动后：仓库行仍然完整', after.repoRow !== null && after.repoRow > 40],
 	['改动后：溢出交给 .sc-body 自己滚动', after.bodyScrolls === true],
+	['需求③ 角色编辑器：动作按钮与名称输入框在同一行', role.inputTop !== null && role.firstButtonTop !== null && Math.abs(role.inputTop - role.firstButtonTop) < 8],
+	['需求③ 角色编辑器：动作按钮在勾选列表之前', role.firstButtonTop !== null && role.firstSkillTop !== null && role.firstButtonTop < role.firstSkillTop],
+	['需求③ 角色编辑器：名称行没被 flex-wrap 撑成两行', role.headHeight !== null && role.headHeight < 60],
+	['需求③ 角色编辑器：名称行里就是那三个动作按钮', role.buttonsInHead === 3],
 ]
 
 console.log(`[layout] Chrome：${chromePath}`)
-console.log(`[layout] 视口 ${measured.viewport.join('×')}；改动前 ${JSON.stringify(before)}；改动后 ${JSON.stringify(after)}`)
+console.log(`[layout] 视口 ${measured.viewport.join('×')}；改动前 ${JSON.stringify(before)}；改动后 ${JSON.stringify(after)}；角色编辑器 ${JSON.stringify(role)}`)
 let failed = 0
 for (const [label, ok] of checks) {
 	console.log(`  ${ok ? '✓' : '✗'} ${label}`)
 	if (!ok) failed += 1
 }
 if (failed > 0) {
-	console.error(`[layout] ${failed} 项失败：flex 收缩问题可能又回来了。`)
+	console.error(`[layout] ${failed} 项失败：flex 收缩问题或角色编辑器的按钮位置可能又回来了。`)
 	process.exit(1)
 }
-console.log('[layout] 6/6 项通过：订阅卡片不再被压扁。')
+console.log(`[layout] ${checks.length}/${checks.length} 项通过：订阅卡片不再被压扁，角色编辑器的按钮在名称行里。`)

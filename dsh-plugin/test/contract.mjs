@@ -1499,6 +1499,10 @@ const rolesProjectSkills = join(projectDir, '.dsh', 'skills')
 placeSkill(rolesProjectSkills, 'rp-alpha', true)
 placeSkill(rolesProjectSkills, 'rp-beta', true)
 placeSkill(join(home, 'skills'), 'rp-global', true)
+// 软链技能：`toggleable` 必须由扫描器说、`readOnlyReason` 必须说清原因（造法同前面的 linked）。
+const rpLinkTarget = join(tempDir('sc-role-candidate-link'), 'rp-link')
+writeSkill(rpLinkTarget, 'name: rp-link\ndescription: Symlinked role candidate')
+symlinkSync(rpLinkTarget, join(home, 'skills', 'rp-link'))
 
 const rolesList = await call({ path: '/api/skill-console/roles', headers: roleSession })
 check('GET /roles 返回 200', rolesList.status === 200 && rolesList.json.ok === true, `${rolesList.status} ${JSON.stringify(rolesList.json).slice(0, 160)}`)
@@ -1509,7 +1513,12 @@ check('候选里的全局技能与项目技能同形状：不再有 readOnly / r
 	const reference = shape(rolesList.json.data.candidates.project[0] ?? {})
 	return rolesList.json.data.candidates.global.every((entry) => shape(entry) === reference && !('readOnly' in entry) && !('reason' in entry))
 })(), JSON.stringify(rolesList.json.data.candidates.global))
-check('可勾选性仍由 toggleable / readOnlyReason 表达（软链还要能挡住）', rolesList.json.data.candidates.global.every((entry) => 'toggleable' in entry && 'readOnlyReason' in entry))
+const linkCandidate = rolesList.json.data.candidates.global.find((entry) => entry.name === 'rp-link')
+check(
+	'可勾选性仍由 toggleable / readOnlyReason 表达（软链候选真的被挡住）',
+	linkCandidate !== undefined && linkCandidate.toggleable === false && linkCandidate.readOnlyReason === 'symlink',
+	JSON.stringify(linkCandidate),
+)
 check('候选人带齐字段', rolesList.json.data.candidates.project.every((entry) => ['name', 'path', 'enabled', 'toggleable'].every((key) => key in entry)))
 check('带回项目名与 fallback 标记', typeof rolesList.json.data.project?.name === 'string' && typeof rolesList.json.data.project?.fallback === 'boolean', JSON.stringify(rolesList.json.data.project))
 
@@ -1723,6 +1732,15 @@ const goneToggle = await call({ method: 'POST', path: '/api/skill-console/toggle
 check('POST /toggle 未知 project → 400 error.role.noProject', goneToggle.status === 400 && goneToggle.json?.code === 'error.role.noProject', `${goneToggle.status} ${JSON.stringify(goneToggle.json).slice(0, 160)}`)
 check('/toggle 未知 project：那个技能的文件没被动', existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')))
 
+// 同一个形状把另外两个写端点也钉住：它们各自也要先严格解析项目，否则会读到别的项目。
+const goneBatch = await call({ method: 'POST', path: '/api/skill-console/toggle-batch', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: 'session-gone', items: [{ path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), enabled: false }] } })
+check('POST /toggle-batch 未知 project → 400 error.role.noProject 且没动盘', goneBatch.status === 400 && goneBatch.json?.code === 'error.role.noProject' && existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')), `${goneBatch.status} ${JSON.stringify(goneBatch.json).slice(0, 160)}`)
+const goneDelete = await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), project: 'session-gone' } })
+check('POST /skills/delete 未知 project → 400 error.role.noProject 且没动盘', goneDelete.status === 400 && goneDelete.json?.code === 'error.role.noProject' && existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')), `${goneDelete.status} ${JSON.stringify(goneDelete.json).slice(0, 160)}`)
+// 解析不出项目根时的写法与 /roles/activate 那条同形：连会话头都不给。
+const headerlessBatch = await call({ method: 'POST', path: '/api/skill-console/toggle-batch', headers: { ...ROLE_WRITE }, body: { items: [{ path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), enabled: false }] } })
+check('批量写请求既无会话头也无 project → 400（不再悄悄写到最近的项目）', headerlessBatch.status === 400 && headerlessBatch.json?.code === 'error.role.noProject', `${headerlessBatch.status} ${JSON.stringify(headerlessBatch.json).slice(0, 160)}`)
+
 const crossBatch = await call({ method: 'POST', path: '/api/skill-console/toggle-batch', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: otherSession.id, items: [{ path: join(otherSkillsRoot, 'rp-flip', 'SKILL.md.disabled'), enabled: true }] } })
 check('POST /toggle-batch 带 project：逐项 ok:true（旧行为是 200 + ok:false）', crossBatch.status === 200 && crossBatch.json.data?.results?.[0]?.ok === true, `${crossBatch.status} ${JSON.stringify(crossBatch.json).slice(0, 200)}`)
 check('/toggle-batch 带 project：changed 记到那个项目', crossBatch.json.data?.changed === 1 && existsSync(join(otherSkillsRoot, 'rp-flip', 'SKILL.md')))
@@ -1739,7 +1757,16 @@ check('GET /skill 不带 project + 别的项目的路径 → 400 error.path.outs
 // 客户端接线：四处写/读调用都必须把当前项目塞进参数（把空白折叠后再比，避开换行与缩进差异）。
 if (clientSource !== '') {
 	const flat = clientSource.replace(/\s+/g, ' ')
-	check('客户端四处调用都带上当前项目', (flat.match(/withProject\(project,/g) ?? []).length >= 4, String((flat.match(/withProject\(project,/g) ?? []).length))
+	// 不看「出现几次」，看四个调用点各自的形态：`withProject(project,` 必须紧贴在那个 api 调用之后，
+	// 计数式的断言只要别处顺手多写一次就会变绿，钉不住任何一处。
+	for (const shape of [
+		["apiGet('/skill', withProject(project,", '/skill 读取'],
+		["apiPost('/toggle', withProject(project,", '/toggle 单个启停'],
+		["apiPost('/toggle-batch', withProject(project,", '/toggle-batch 批量'],
+		["apiPost('/skills/delete', withProject(project,", '/skills/delete 删除'],
+	]) {
+		check(`客户端 ${shape[1]} 的调用形态带上当前项目`, flat.includes(shape[0]), shape[0])
+	}
 	check('客户端不再有裸的 /toggle 调用', !flat.includes("apiPost('/toggle', { path: skill.path, enabled }, sessionId)"))
 	check('客户端不再有裸的 /toggle-batch 调用', !flat.includes("apiPost('/toggle-batch', { items }, sessionId)"))
 	check('客户端不再有裸的 /skills/delete 调用', !flat.includes("apiPost('/skills/delete', { path: skill.path }, sessionId)"))
@@ -1847,6 +1874,10 @@ check('新的全局分组说明讲清「复制进项目、全局不受影响」'
 const missingInEn = Object.keys(dictionaryZh).filter((key) => !(key in dictionaryEn)).sort()
 const missingInZh = Object.keys(dictionaryEn).filter((key) => !(key in dictionaryZh)).sort()
 check('zh 与 en 的键集完全一致', missingInEn.length === 0 && missingInZh.length === 0, `en 缺 ${missingInEn.join(',')} / zh 缺 ${missingInZh.join(',')}`)
+// 键集一致还不够：两份词典的键序也必须一致，否则对照译文时容易串行。
+const orderZh = Object.keys(dictionaryZh).join('\n')
+const orderEn = Object.keys(dictionaryEn).join('\n')
+check('zh 与 en 的键序一致（对照译文不会错位）', orderZh === orderEn, `首个不一致处：${orderZh.split('\n').find((key, index) => key !== orderEn.split('\n')[index]) ?? '长度不同'}`)
 check('空清单提示两种语言都有', typeof dictionaryZh['repos.detailNoSkills'] === 'string' && typeof dictionaryEn['repos.detailNoSkills'] === 'string')
 check('「没拉取过」与「拉到了但没技能」是两句不同的话', dictionaryZh['repos.detailNoSkills'] !== dictionaryZh['repos.detailEmpty'], '两句文案撞了，用户分不清是哪种空')
 check('组件是函数', typeof sectionEntry?.component === 'function')
@@ -2149,7 +2180,8 @@ const repoGroupTree = exposed.SkillRepoGroup({
 	busy: false,
 	busyPath: null,
 	onToggleRepo: (key) => groupCalls.push('toggle:' + key),
-	onBatch: (skills, enabled, label) => groupCalls.push(`${label}:${skills.length}:${enabled}`),
+	// 记下整批：标签只能说明「哪一组」，paths 才钉得住「恰好是这一组的技能」。
+	onBatch: (skills, enabled, label) => groupCalls.push({ label, enabled, count: skills.length, paths: skills.map((skill) => skill.path) }),
 	onOpen: () => {},
 	onToggle: () => {},
 	onDelete: () => {},
@@ -2162,7 +2194,9 @@ repoGroupToggles[0].props.onClick()
 check('点折叠开关回报这个组的标识（供上层记状态）', groupCalls.includes('toggle:o/r'), groupCalls.join(','))
 const repoGroupBatch = collect(repoGroupTree, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batchEnableAria'))[0]
 repoGroupBatch?.props?.onClick()
-check('按仓库批量：作用域恰好是这一组的技能', groupCalls.includes('o/r:1:true'), groupCalls.join(','))
+const lastBatchOf = (calls, label) => calls.filter((entry) => typeof entry === 'object' && entry !== null && entry.label === label).pop()
+const repoBatchCall = lastBatchOf(groupCalls, 'o/r')
+check('按仓库批量：作用域恰好是这一组的技能', repoBatchCall !== undefined && repoBatchCall.enabled === true && repoBatchCall.paths.join(',') === '/x/alpha/SKILL.md', JSON.stringify(repoBatchCall))
 
 // 规格 §1「根 → 仓库，两层都可折叠」/ §4「折叠字典的 key 也含 root.key」/ §7「点根组的收起 → 整根的仓库组全消失」。
 const rootFoldCalls = []
@@ -2176,7 +2210,7 @@ const rootFoldProps = {
 	busy: false,
 	busyPath: null,
 	onToggleRepo: (key) => rootFoldCalls.push('toggle:' + key),
-	onBatch: (skills, enabled, label) => rootFoldCalls.push(`${label}:${skills.length}:${enabled}`),
+	onBatch: (skills, enabled, label) => rootFoldCalls.push({ label, enabled, count: skills.length, paths: skills.map((skill) => skill.path) }),
 	onOpen: () => {},
 	onToggle: () => {},
 	onDelete: () => {},
@@ -2209,16 +2243,60 @@ rootDisclosure?.props?.onClick()
 check('点根组的折叠开关回报根标识（供上层记状态）', rootFoldCalls.includes('toggle:user-dsh'), rootFoldCalls.join(','))
 const rootBatchWhenCollapsed = batchButtonIn(rootCollapsedTree, 'sc-group-head', 'batchEnableAria')
 rootBatchWhenCollapsed?.props?.onClick()
-check('折叠根时根头的批量按钮仍然可用、作用仍是整根', rootFoldCalls.includes('全局 DSH:2:true'), rootFoldCalls.join(','))
+const rootBatchCall = lastBatchOf(rootFoldCalls, '全局 DSH')
+check('折叠根时根头的批量按钮仍然可用、作用仍是整根', rootBatchCall !== undefined && rootBatchCall.enabled === true && rootBatchCall.paths.join(',') === '/x/alpha/SKILL.md,/x/beta/SKILL.md', JSON.stringify(rootBatchCall))
 check('默认全展开：根未折叠时渲染出它的仓库组', repogroupsOf(expandRepoGroups(exposed.SkillGroup({ ...rootFoldProps, collapsedRepos: {} }))).length === 2)
 
+// 规格 §4「批量作用域不许越组」：同一个仓库下按包 id 分组的两个组，各自只能批量自己那一组。
+// 同名技能、同一根，只有 path 与 installed.id 不同——标签相同，所以只能靠 paths 分辨。
+const mixedScopeTree = expandRepoGroups(exposed.SkillGroup({
+	...rootFoldProps,
+	root: { key: 'user-dsh', label: '全局 DSH', path: '/r', exists: true, skills: [
+		{ name: 'alpha', path: '/r/a/SKILL.md', enabled: false, toggleable: true, installed: { id: 'o/a' } },
+		{ name: 'gamma', path: '/r/g/SKILL.md', enabled: false, toggleable: true, installed: { id: 'o/a' } },
+		{ name: 'alpha', path: '/r/b2/SKILL.md', enabled: false, toggleable: true, installed: { id: 'o/b' } },
+	] },
+	collapsedRepos: {},
+}))
+const repogroupHeadOf = (tree, label) =>
+	collect(tree, (element) => String(element.props?.className || '') === 'sc-repogroup-head' && collectTexts(element).includes(label))[0]
+const batchButtonAt = (head) =>
+	collect(head, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batchEnableAria'))[0]
+const clickBatchIn = (tree, headClass, label) => {
+	const head = headClass === 'sc-group-head' ? collect(tree, (element) => String(element.props?.className || '') === 'sc-group-head')[0] : repogroupHeadOf(tree, label)
+	batchButtonAt(head)?.props?.onClick()
+}
+clickBatchIn(mixedScopeTree, 'sc-repogroup-head', 'o/a')
+const groupACall = lastBatchOf(rootFoldCalls, 'o/a')
+check(
+	'按仓库批量不许越组：o/a 只带自己那两行，同名技能混在别的组里也不行',
+	groupACall !== undefined && [...groupACall.paths].sort().join(',') === '/r/a/SKILL.md,/r/g/SKILL.md' && !groupACall.paths.includes('/r/b2/SKILL.md'),
+	JSON.stringify(groupACall),
+)
+clickBatchIn(mixedScopeTree, 'sc-repogroup-head', 'o/b')
+const groupBCall = lastBatchOf(rootFoldCalls, 'o/b')
+check('按仓库批量不许越组：o/b 只带自己那一行', groupBCall !== undefined && groupBCall.paths.join(',') === '/r/b2/SKILL.md', JSON.stringify(groupBCall))
+clickBatchIn(mixedScopeTree, 'sc-group-head', '全局 DSH')
+const mixedRootCall = lastBatchOf(rootFoldCalls, '全局 DSH')
+check(
+	'根组头批量是全集：三行都在（跨组但同一根）',
+	mixedRootCall !== undefined && mixedRootCall.count === 3 && ['/r/a/SKILL.md', '/r/g/SKILL.md', '/r/b2/SKILL.md'].every((path) => mixedRootCall.paths.includes(path)),
+	JSON.stringify(mixedRootCall),
+)
+
 // 规格 §7「本机组也能折叠、也能批量」（installed === null 不是「没资格」）。
-const localOnlyTree = expandRepoGroups(exposed.SkillGroup({ ...rootFoldProps, root: { ...rootFoldProps.root, skills: [rootFoldSkills[1]] }, collapsedRepos: {} }))
+// 折叠字典 key 是 `${root.key}:${group.key}`，本机组的 key 是 @local。
+const localOnlyTree = expandRepoGroups(exposed.SkillGroup({ ...rootFoldProps, root: { ...rootFoldProps.root, skills: [rootFoldSkills[1]] }, collapsedRepos: { 'user-dsh:@local': true } }))
 const localDisclosure = disclosureIn(localOnlyTree, 'sc-repogroup-head')
-check('本机组也能折叠', localDisclosure !== undefined && localDisclosure.props['aria-expanded'] === 'true', collectTexts(localOnlyTree).join('|'))
+check(
+	'本机组也能折叠（折叠态真的收起来了）',
+	localDisclosure !== undefined && localDisclosure.props['aria-expanded'] === 'false' && !collectTexts(localOnlyTree).includes('beta'),
+	collectTexts(localOnlyTree).join('|'),
+)
 const localBatch = batchButtonIn(localOnlyTree, 'sc-repogroup-head', '本地（非订阅）')
 localBatch?.props?.onClick()
-check('本机组也能批量', rootFoldCalls.includes('本地（非订阅）:1:true'), rootFoldCalls.join(','))
+const localBatchCall = lastBatchOf(rootFoldCalls, '本地（非订阅）')
+check('本机组也能批量（折叠了也还能整组批量）', localBatchCall !== undefined && localBatchCall.enabled === true && localBatchCall.paths.join(',') === '/x/beta/SKILL.md', JSON.stringify(localBatchCall))
 
 // 规格 §7「空集合不请求」：整根一个技能都没有时，批量按钮点不动。
 const emptyRootTree = exposed.SkillGroup({ ...rootFoldProps, root: { ...rootFoldProps.root, skills: [] }, collapsedRepos: {} })
@@ -2228,8 +2306,27 @@ check(
 	emptyBatchButtons.length === 2 && emptyBatchButtons.every((element) => element.props.disabled === true) && collectTexts(emptyRootTree).includes('skills.empty'),
 	collectTexts(emptyRootTree).join('|'),
 )
-const batchNoopGuard = clientSource.slice(clientSource.indexOf('const batch = '), clientSource.indexOf("apiPost('/toggle-batch'"))
-check('空集合：不发 /toggle-batch 请求', batchNoopGuard.includes('items.length === 0') && batchNoopGuard.includes('return'), batchNoopGuard.slice(-80))
+// 筛选本身是纯函数，直接打在函数上；源码切片那种写法换个变量名就失效。
+const batchItemsOf = exposed.batchItems
+const noopItems = typeof batchItemsOf === 'function' ? batchItemsOf([{ path: '/p/a', enabled: true, toggleable: true }], true) : null
+check('空集合：没有要改的项 → 筛选结果为空（组件据此不发请求）', Array.isArray(noopItems) && noopItems.length === 0, JSON.stringify(noopItems))
+const mixedBatchItems = typeof batchItemsOf === 'function' ? batchItemsOf([
+	{ path: '/p/a', enabled: false, toggleable: true },
+	{ path: '/p/b', enabled: false, toggleable: false },
+	{ path: '/p/c', enabled: false, toggleable: true },
+	{ path: 123, enabled: false, toggleable: true },
+], true) : null
+check(
+	'批量筛选：不可勾的与路径不是字符串的都被剔掉',
+	Array.isArray(mixedBatchItems) && mixedBatchItems.map((item) => item.path).join(',') === '/p/a,/p/c' && mixedBatchItems.every((item) => item.enabled === true),
+	JSON.stringify(mixedBatchItems),
+)
+
+// 需求 ③「编辑器按钮上移」的样式锚点：分隔线只画在真实的相邻节点上，别留死选择器。
+check(
+	'组内首行的分隔线指向真实相邻节点（死选择器已清）',
+	!/\.sc-group \.sc-row:first-child/.test(clientSource) && !/\.sc-repogroup \.sc-row:first-child/.test(clientSource) && /\.sc-repogroup-head \+ \.sc-row/.test(clientSource) && /\.sc-role-skills > \.sc-role-skill:first-child/.test(clientSource),
+)
 
 // 折叠开关的可访问性细节与订阅卡片（RepoRow）保持一致：悬停有 title，三角对读屏隐藏。
 const disclosureA11y = (disclosure) =>
