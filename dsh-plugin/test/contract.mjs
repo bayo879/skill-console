@@ -2914,7 +2914,7 @@ check('技能页签不再自己播报「当前项目」，回落文案只剩工�
 
 section('文案：界面说「工作区」，词典与错误码跟得上')
 
-check('界面文案统一叫「工作区」，不再叫「当前项目」', dictionaryZh['skills.project'] === '工作区' && dictionaryEn['skills.project'] === 'Workspace', `${dictionaryZh['skills.project']} / ${dictionaryEn['skills.project']}`)
+check('技能页签与节顶工作区条的标签文案叫「工作区」（skills.project）', dictionaryZh['skills.project'] === '工作区' && dictionaryEn['skills.project'] === 'Workspace', `${dictionaryZh['skills.project']} / ${dictionaryEn['skills.project']}`)
 check('工作区条的回落文案讲的是工作区', dictionaryZh['skills.projectFallback'].includes('工作区') && dictionaryEn['skills.projectFallback'].toLowerCase().includes('workspace'))
 check('「还没选工作区」取代了「没有活动会话」', dictionaryZh['skills.noSessions'].includes('工作区') && !dictionaryZh['skills.noSessions'].includes('活动会话'), dictionaryZh['skills.noSessions'])
 check('安装目标那行也改叫工作区', dictionaryZh['repos.installTarget'].includes('工作区') && dictionaryEn['repos.installTarget'].toLowerCase().includes('workspace'))

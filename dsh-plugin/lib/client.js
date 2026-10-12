@@ -1736,7 +1736,8 @@ window.__ModuleLoader__.load({
 					.then((data) => {
 						const takeover = data && Array.isArray(data.takeover) ? data.takeover : []
 						if (takeover.length > 0) {
-							// 宿主在 takeover 条目里直接给了 label（与分组标题同一份文案），优先级最高。
+							// 宿主在 takeover 条目里直接给了 label（与分组标题同一份文案）。
+							// 只当兜底：rootLabel 先查词典，词典没有这个 key 才用它。
 							const names = takeover
 								.map((entry) => rootLabel(t, entry.root, entry.label || labelOfRoot(project.data, entry.root)))
 								.join('、')
