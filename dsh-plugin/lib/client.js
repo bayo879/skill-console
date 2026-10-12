@@ -2375,6 +2375,8 @@ window.__ModuleLoader__.load({
 			const detailTokens = react.useRef({})
 			// 首次拿到列表后自动展开第一个订阅；用户自己全部收起之后就不再自动展开。
 			const autoOpen = react.useRef(false)
+			// 节顶工作区条的刷新推的就是它：订阅之后，刷新才会重读订阅列表（见下面的重拉 effect）。
+			const revision = useStore(catalogRevisionStore)
 
 			const loadList = () => {
 				const run = ++listToken.current
@@ -2410,15 +2412,23 @@ window.__ModuleLoader__.load({
 			react.useEffect(() => {
 				// 会话一换，整页的身份就换了：把「自动展开过没有」和挂在各个仓库上的
 				// 展开 / 明细 / 勾选 / 结果全部复位，免得把上一个工作区的状态带过来。
+				// 这里不拉取：刷新也要重读列表，但绝不能顺手复位（见下面那条 effect）。
 				autoOpen.current = false
 				setOpen({})
 				setDetails({})
 				setPicked({})
 				setInstallResult({})
 				setEdit({ id: '', form: { ref: '', subdirectory: '' } })
-				loadList()
-				// eslint-disable-next-line react-hooks/exhaustive-deps -- 只在会话变化时重挂一次；其余刷新都由用户点击驱动。
+				// eslint-disable-next-line react-hooks/exhaustive-deps -- 只在会话变化时复位一次；拉取交给下面那条 effect。
 			}, [sessionId])
+
+			// 只负责重拉列表：会话换了要重读，节顶工作区条的刷新（revision）也要重读。
+			// 它刻意不碰任何在飞的 UI 状态——安装/恢复自己也会 bump，刚渲染出来的安装结果、
+			// 用户勾选的技能和展开的仓库必须活过一次刷新。
+			react.useEffect(() => {
+				loadList()
+				// eslint-disable-next-line react-hooks/exhaustive-deps -- 会话或节顶刷新驱动；loadList 每次渲染都是新函数，不能进依赖。
+			}, [sessionId, revision])
 
 			// 首次拿到列表后自动展开第一个订阅（否则用户不知道技能明细藏在哪里）。
 			react.useEffect(() => {

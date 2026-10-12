@@ -2857,6 +2857,21 @@ check('整节只有一个工作区下拉（只在 WorkspaceBar 里）', (clientS
 check('刷新按钮也只剩一个（在工作区条里）', (clientSource.match(/t\('common\.refresh'\)/g) ?? []).length === 1)
 check('工作区条挂在节头部（页签之上）', /h\(WorkspaceBar, \{ t, context: project \}\)/.test(clientSource.slice(clientSource.indexOf("className: 'sc-head'"), clientSource.indexOf("className: 'sc-tabs'"))))
 check('角色页签不再自己写「当前项目：…」', !clientSource.includes("t('roles.currentProject')"))
+// 节顶那条刷新只推 catalogRevisionStore（client.js:779-782），订阅它的原本只有 /state 与技能页签：
+// 仓库页签必须自己订阅，否则「整节唯一的刷新」不会重读订阅列表。react 替身跑不了 effect，只能查源码。
+check('仓库页签订阅节顶刷新，靠独立 effect 重拉列表且不碰在飞的 UI 状态', (() => {
+	const region = clientSource.slice(clientSource.indexOf('function ReposPanel'), clientSource.indexOf('function RolesPanel'))
+	if (!region.includes('useStore(catalogRevisionStore)')) return false
+	const at = region.indexOf('}, [sessionId, revision])')
+	if (at < 0) return false
+	const start = region.lastIndexOf('react.useEffect(() => {', at)
+	if (start < 0) return false
+	const reload = region.slice(start, at)
+	if (!reload.includes('loadList()')) return false
+	// 复位与拉取必须是两条 effect：重拉那条一旦顺手复位，刚渲染出来的安装结果、
+	// 用户勾选的技能和展开的仓库就被抹掉了（安装/恢复自己也会 bump）。
+	return ['setInstallResult', 'setPicked', 'setOpen', 'setDetails', 'autoOpen.current'].every((name) => !reload.includes(name))
+})())
 
 // 纯组件可以真渲染：工作区条 + 下拉必须带 aria、选中当前工作区、列出全部选项。
 check('导出 WorkspaceBar 供契约测试直接渲染', typeof exposed.WorkspaceBar === 'function')
