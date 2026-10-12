@@ -1,8 +1,16 @@
 /**
  * 「项目」维度：哪些项目可见、本次请求看的是哪个项目、这个项目能看到哪些技能根。
  *
- * DSH 的会话就是项目来源：每个活着的会话带一个 `cwd`，向上找到含 `.git` 的目录
- * 就是项目根，于是项目技能根是 `<projectRoot>/.dsh/skills`。
+ * 两个来源，各管一件事：
+ *
+ * - **列表**（`workspacesOf`）优先读 DSH 的 `workspaceRegistry` 服务：注册过的目录都在，
+ *   不管它今天有没有会话。注册表拿不到时才退回「活着的会话」，并用 `from: 'sessions'` 说明。
+ *   0.5.0 只看会话，于是没开过会话的工作区在界面上根本不存在——那正是要修的现场问题。
+ * - **解析**（`resolveProject` / `resolveWorkspaceStrict`）只认本次请求指定的那个：
+ *   目录路径（0.6.0 起的写身份）或会话 id。
+ *
+ * DSH 的会话带一个 `cwd`，向上找到含 `.git` 的目录就是项目根，于是项目技能根是
+ * `<projectRoot>/.dsh/skills`。
  *
  * 会话多、项目少：同一个工作区每开一次会话就多一条，`cwd` 却一模一样。所以
  * `listProjects()` 按**项目根**去重——界面上「项目」指的是项目，不是会话。
@@ -11,6 +19,9 @@
  * 不在了，就会回落到「最近一个会话」。这时必须把 `fallback: true` 明确回给界面——
  * 否则用户以为自己在管 A 项目，其实管的是 B 项目，而两条路径长得一模一样。
  */
+
+import { basename, isAbsolute } from 'node:path'
+import { statSync } from 'node:fs'
 
 import { findProjectRoot, resolveDshHome, resolveRoots } from './roots.js'
 import { errorText } from './http.js'
@@ -123,4 +134,75 @@ export function resolveProjectStrict(ctx, sessionId) {
 /** 本次请求可见的全部技能根（全局 + 该项目）。 */
 export function rootsFor(project) {
 	return resolveRoots({ dshHome: resolveDshHome(), projectCwd: project?.cwd })
+}
+
+/**
+ * 工作区列表：DSH 注册表里的全部工作区（含没有会话的），注册表缺席时退回活着的会话。
+ *
+ * 为什么不能只看会话：没开过会话的工作区根本不在列表里，而下拉框把它当「项目」——
+ * 用户看到的就是「工作区选项只剩当前那一个」。
+ *
+ * 读取失败**降级不改语义**：注册表抛异常时退回会话，并且 `from` 如实说 `'sessions'`，
+ * 界面据此知道自己看到的是残缺列表，而不是「世界上只有这一个工作区」。
+ *
+ * @param ctx - 宿主上下文。
+ * @returns `{from: 'registry' | 'sessions', list: [{workspaceId?, sessionId?, path, title, root, sessionIds, fromRegistry}]}`。
+ */
+export function workspacesOf(ctx) {
+	const registry = typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry', false) : undefined
+	if (registry !== undefined && registry !== null && typeof registry.list === 'function') {
+		let raw = []
+		try {
+			raw = registry.list() ?? []
+		} catch (error) {
+			ctx?.logger?.warn?.(`[dsh-skill-console] 读取工作区注册表失败：${errorText(error)}`)
+		}
+		const list = []
+		for (const item of raw) {
+			const workspacePath = typeof item?.path === 'string' ? item.path : ''
+			if (workspacePath === '') continue
+			const workspaceId = item?.id ?? item?.workspaceId
+			list.push({
+				workspaceId: workspaceId === undefined || workspaceId === null ? workspacePath : String(workspaceId),
+				path: workspacePath,
+				title: typeof item?.title === 'string' && item.title !== '' ? item.title : basename(workspacePath),
+				root: findProjectRoot(workspacePath) ?? workspacePath,
+				sessionIds: Array.isArray(item?.sessionIds) ? item.sessionIds.map((sessionId) => String(sessionId)) : [],
+				fromRegistry: true,
+			})
+		}
+		return { from: 'registry', list }
+	}
+	const list = listProjects(ctx).map((entry) => ({
+		sessionId: entry.sessionId,
+		path: entry.cwd,
+		title: basename(entry.cwd),
+		root: entry.root,
+		sessionIds: [],
+		fromRegistry: false,
+	}))
+	return { from: 'sessions', list }
+}
+
+/**
+ * 严格版：只认**给定的目录路径**，存在且是目录才算数。
+ *
+ * 写操作的 `project` 参数走这条。不要求该目录在注册表里：它今天（经会话头）本来就能用，
+ * 收紧只会让杂项目录里的会话忽然写不了；而技能根仍由 `rootsFor` 限定，能力面没有变化。
+ *
+ * @param ctx - 宿主上下文。
+ * @param dir - 工作区目录路径。
+ * @returns `{path, cwd, sessionId: null, root, fallback: false}` 或 null。
+ */
+export function resolveWorkspaceStrict(ctx, dir) {
+	if (typeof dir !== 'string' || dir === '') return null
+	if (!isAbsolute(dir)) return null
+	let stats = null
+	try {
+		stats = statSync(dir)
+	} catch {
+		return null
+	}
+	if (!stats.isDirectory()) return null
+	return { path: dir, cwd: dir, sessionId: null, root: findProjectRoot(dir) ?? dir, fallback: false }
 }

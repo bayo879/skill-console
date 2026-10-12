@@ -112,7 +112,7 @@ try {
 	check('skillsDir 与 dshHome 一致', info.skillsDir === join(info.dshHome, 'skills'), info.skillsDir)
 	check('stateDir 在 dshHome 下', info.stateDir === join(info.dshHome, 'skill-console'), info.stateDir)
 	check('token 只报存在性、不回显值', typeof info.token === 'boolean')
-	check('报告了活动会话作为项目', Array.isArray(info.projects))
+	check('报告了工作区列表（注册表或活着的会话）', Array.isArray(info.workspaces))
 	check('未指定会话时给出 fallback 选择', info.selected === null || typeof info.selected.fallback === 'boolean')
 
 	// 用本会话 id 钉住项目：能钉上时才要求项目根齐全（否则是环境问题，不是插件问题）。

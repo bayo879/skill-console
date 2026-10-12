@@ -111,11 +111,12 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 | POST | `/roles/activate` | 对齐：把项目技能根切到该角色 `{id, project?}` |
 | POST | `/roles/deactivate` | 只清本项目的激活记录 `{project?}`（不动磁盘） |
 
-角色自己的四个写端点（`save` / `remove` / `activate` / `deactivate`）都**读请求体**；其中 `project`（会话 id）只对 `/roles/activate` 与 `/roles/deactivate` 有意义，
-用来指定**要操作哪个项目**，**优先于** `x-skill-console-session` 头；`project` 省略时按请求头解析。
-两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd → 400
-`error.role.noProject`，**不会回落到「最近一个会话」**。
-`GET /roles` 与 `GET /roles/preview` 仍是读接口，保持宽松：`?project=<sessionId>` 优先于请求头，
+角色自己的四个写端点（`save` / `remove` / `activate` / `deactivate`）都**读请求体**；其中 `project`（**工作区目录路径**，0.6.0 起）只对 `/roles/activate` 与 `/roles/deactivate` 有意义，
+用来指定**要操作哪个工作区**：给了就**只认它**——不是存在的目录就 400 `error.workspace.invalid`，
+**绝不回落到请求头会话**；`project` 省略时才按 `x-skill-console-session` 头严格解析，
+会话 id 不存在 / 拿不到 cwd → 400 `error.role.noProject`，**不会回落到「最近一个会话」**。
+`GET /roles` 与 `GET /roles/preview` 是读接口：`?project=<工作区目录路径>` 优先于请求头，
+给了但无效同样是 400 `error.workspace.invalid`；**没给**时才按会话宽松解析，
 解析不出时回落最近会话并在 `project.fallback` 里置 `true`。
 
 ### `GET /roles` 响应

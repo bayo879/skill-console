@@ -11,7 +11,7 @@
 | `user-dsh` | global | `<DSH_HOME>/skills`（`$DSH_HOME`，空白视为未设置，回落 `~/.dsh`） |
 | `project-dsh` | project | `<projectRoot>/.dsh/skills` |
 
-- 项目根 = 从会话 cwd **向上找第一个含 `.git` 的目录**；一路到文件系统根都没有就退回 cwd（普通文件夹也能用，不要求 `git init`）。cwd 非法时没有项目根，只剩全局根。
+- 项目根 = 从一个目录（0.6.0 起：请求体 / 查询参数给的**工作区目录路径**，或会话头解析出的 `cwd`）**向上找第一个含 `.git` 的目录**；一路到文件系统根都没有就退回那个目录本身（普通文件夹也能用，不要求 `git init`）。目录非法时没有项目根，只剩全局根。
 - 两个根都标记 `writable: true`；根不存在时 `exists: false`，目录随写入创建。
 - `.agents`（`$DSH_AGENTS_HOME` / `~/.agents`）**不是**本插件的技能根：不扫描、不加载。
 - 本层只做三件事：解析根 → 按 DSH 的发现规则扫描 → 用**重命名 / 复制 / 删除**改变磁盘。写盘一律用 `node:fs`（宿主插件跑在宿主进程里，不走会话的 `workspace-write` 沙箱）。
@@ -82,7 +82,8 @@
 | `error.copy.exists` | 409 | `copySkillIntoRoot`：目标位置已有同名 |
 | `error.transfer.notGlobal` | 400 | `/skills/move-to-project`：只允许全局 → 项目 |
 | `error.transfer.exists` | 409 | `/skills/move-to-project`：项目里已有同名（**按技能名判**，不按目标路径） |
-| `error.role.noProject` | 400 | `/skills/move-to-project`、`target:'project'` 的安装：解析不出项目根 |
+| `error.workspace.invalid` | 400 | 写/读接口里**显式给的** `project` 解析不出（相对路径 / 不存在 / 不是目录）：写路径**绝不回落到请求头会话** |
+| `error.role.noProject` | 400 | 写接口**没给** `project`，且会话头也解析不出项目根；`/skills/move-to-project`、`target:'project'` 的安装同样落到这条 |
 | `error.delete.backup` | 500 | 删除 / 移动前的备份失败：**什么都没改** |
 
 ## 6. 「移到项目」的顺序（`routes.js` 编排）

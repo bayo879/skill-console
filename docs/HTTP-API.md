@@ -18,18 +18,23 @@ kind: 'prefix'   path: '/api/skill-console'
   - `content-type: application/json`
   - `x-skill-console: 1`（跨站表单无法伪造自定义头 + JSON content-type）
   - 否则 403 / 415。
-- 项目从两处来：`x-skill-console-session: <sessionId>` 头（浏览器半边从 `props.useSessions`
-  拿到当前会话 id 后带上），或请求里的 `project`（会话 id）。宿主把会话解析成它的 `header.cwd`。
+- **工作区身份 = 目录路径**（0.6.0 起）。工作区从两处来：请求里的 `project`（**工作区目录的绝对路径**），
+  或 `x-skill-console-session: <sessionId>` 头（浏览器半边从 `props.useSessions`
+  拿到当前会话 id 后带上）。宿主把会话解析成它的 `header.cwd`。
   **读宽松、写严格**：
-  - **读接口**（`/state`、`/catalog`、`/roles`、`/roles/preview`、`/skill`）：解析不出会话时**回落**到
-    「最近一个会话的 cwd」，并在 `data.project.fallback === true` 里说明；`/catalog`、`/roles`、
-    `/roles/preview`、`/skill` 的 `?project=<sessionId>` 优先于请求头（优先级不变）。
   - **写接口**（`/repositories/install`、`/roles/activate`、`/roles/deactivate`、`/skills/move-to-project`、
     `/toggle`、`/toggle-batch`、`/skills/delete`）：
-    请求体 `project` 优先于请求头，两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd 就是
-    400 `error.role.noProject`，**绝不回落到「最近一个会话」**（否则界面上选着项目 B、写却落到 A）。
-    七个写接口都在解析出项目之后**先判空再动手**：解析不出时**一个字节都不写**。空串
-    `"project": ""` 等同「未提供」，按请求头解析。
+    请求体 `project` 优先于请求头；给了 `project` 就**只认它**——必须是**存在的工作区目录**，
+    相对路径 / 不存在的路径 / 不是目录都是 400 `error.workspace.invalid`，**绝不回落到请求头会话**
+    （否则界面上选着工作区 B、写却落到 A）。只有 `project` **缺席**（或空串 `"project": ""`）时才按
+    请求头会话严格解析，会话 id 不存在 / 拿不到 cwd 就是 400 `error.role.noProject`，
+    **绝不回落到「最近一个会话」**。
+    七个写接口都在解析出工作区之后**先判空再动手**：解析不出时**一个字节都不写**。
+  - **读接口**（`/state`、`/catalog`、`/roles`、`/roles/preview`、`/skill`）：`?project=<目录路径>` 优先于
+    请求头，给了但无效同样是 400 `error.workspace.invalid`；**没给**时才按请求头会话宽松解析——
+    解析不出会话时**回落**到「最近一个会话的 cwd」，并在 `data.project.fallback === true` 里说明。
+  - `/state` 的工作区列表来自 DSH 的 `workspaceRegistry`：**注册过的工作区都在，不管它有没有活着的会话**；
+    注册表不可用时退回「活着的会话按项目根去重」，并把 `workspacesFrom` 置成 `'sessions'`。
 - 所有路径参数都是**绝对路径**，宿主会校验它落在已知技能根内，否则 400
   `error.path.outsideRoots`。前端不要自己拼路径去猜。
 - 技能「根」的 key 固定为两个（`.agents` 不在本插件的管理面内，面板不扫描、也不展示）：
@@ -53,7 +58,7 @@ kind: 'prefix'   path: '/api/skill-console'
 
 ## 1. `GET /state`
 
-环境与可选项目。**前端首屏调用**。
+环境与可选工作区。**前端首屏调用**。
 
 ```jsonc
 {
@@ -67,23 +72,29 @@ kind: 'prefix'   path: '/api/skill-console'
         "path": "/Users/…/harness/skills", "exists": true, "writable": true }
       // …两个根；path 只用于定位，界面不显示绝对路径
     ],
-    "projects": [
-      // 一个**项目**一条（按项目根去重，不是「一个会话一条」）；最近的在前。
-      // 带 `x-skill-console-session` 时，该会话在它所属项目里当代表——
-      // 否则下拉框的当前值落不到任何选项上。
-      // 面板侧：选项标签只显示项目名（不显示地址），用户选过的项目按 `root` 认领——
-      // 代表会话换人（同项目别的会话变新）时下拉框也不会选空。
-      { "sessionId": "session-…", "cwd": "/Users/…/proj-a",
-        "root": "/Users/…/proj-a", "updatedAt": 1789… }
+    "workspacesFrom": "registry",      // 'registry' = 来自 DSH 工作区注册表；'sessions' = 注册表不可用，退回活着的会话
+    "workspaces": [
+      // 注册表里**全部**工作区（含没有活着的会话的），**顺序与注册表一致**；
+      // 注册表缺席时退回「活着的会话按项目根去重」，那一版没有 workspaceId、只有 sessionId。
+      // 面板侧：选项标签显示 title（注册表给的名字，缺省回落目录名），用户选过的按 `path` 认领。
+      { "workspaceId": "ws-…", "path": "/Users/…/proj-a", "title": "proj-a",
+        "root": "/Users/…/proj-a", "sessionIds": ["session-…"], "fromRegistry": true }
     ],
-    "selected": { "sessionId": "session-…", "cwd": "/Users/…/proj-a", "root": "/Users/…", "fallback": false } // 无会话时 null
+    // 当前请求头会话落在哪条工作区上（按项目根匹配）：无会话时 null。
+    // workspaceId 为 null = 这条只经会话头解析出来，不在注册表里。
+    "selected": { "sessionId": "session-…", "cwd": "/Users/…/proj-a", "root": "/Users/…/proj-a",
+                  "fallback": false, "workspaceId": "ws-…" }
   }
 }
 ```
 
-## 2. `GET /catalog?scope=global|project&project=<sessionId>`
+`workspacesFrom: 'sessions'` 时界面应说明「工作区列表来自当前活着的会话，可能不完整」；
+`workspaces` 可能是空数组，此时 `selected` 仍按请求头会话给（或 `null`）。
 
-技能目录。`scope` 默认 `global`；`project` 只在 `scope=project` 时有意义。
+## 2. `GET /catalog?scope=global|project&project=<workspaceDir>`
+
+技能目录。`scope` 默认 `global`；`project` 只在 `scope=project` 时有意义（值是**工作区目录路径**，
+无效就 400 `error.workspace.invalid`，不回落）。
 
 ```jsonc
 {
@@ -125,8 +136,9 @@ kind: 'prefix'   path: '/api/skill-console'
 
 ## 3. `GET /skill?path=<abs>`
 
-读单个技能正文（**禁用状态也能读**）。`?project=<sessionId>` 优先于 `x-skill-console-session` 头，
-按**读路径宽松解析**（解析不出就回落到「最近一个会话」的项目技能根）。
+读单个技能正文（**禁用状态也能读**）。`?project=<workspaceDir>` 优先于 `x-skill-console-session` 头，
+按**读路径**处理：给了就是工作区目录路径（无效 → 400 `error.workspace.invalid`）；
+没给才按会话宽松解析（解析不出就回落到「最近一个会话」的项目技能根）。
 
 ```jsonc
 {
@@ -145,16 +157,17 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 4. `POST /toggle`
 
 ```jsonc
-// 请求（project 省略时按请求头解析的会话；两条路都严格解析）
-{ "path": "/Users/…/harness/skills/tdd/SKILL.md", "enabled": false, "project": "<sessionId>" }
+// 请求（project 省略时按请求头解析的会话；project 是工作区目录路径，给了就只认它）
+{ "path": "/Users/…/harness/skills/tdd/SKILL.md", "enabled": false, "project": "/Users/…/proj-a" }
 // 响应 data
 { "skill": { …与 /catalog 里的技能条目同形… },
   "takeover": [ { "root": "user-dsh", "label": "全局 DSH", "scope": "global", "path": "…" } ],
   "changed": true }   // 关掉后接管同名技能的其他已启用副本（enabled=true 时 takeover 恒为 []）
 ```
 语义：**只重命名发现文件**，绝不改写内容。
-- `project` 优先于 `x-skill-console-session` 头，两条路都严格解析；解析不出 → 400 `error.role.noProject`，
-  **一个字节都不写**。
+- `project` 是**工作区目录路径**，给了就只认它（不是存在的目录 → 400 `error.workspace.invalid`）；
+  没给才按 `x-skill-console-session` 头严格解析，解析不出 → 400 `error.role.noProject`。
+  两种失败都**一个字节都不写**。
 - 禁用：`SKILL.md` → `SKILL.md.disabled`；`<name>.md` → `<name>.md.disabled`
 - 启用：反向。
 - 目标已存在时 409 `error.toggle.conflict`（不覆盖任何东西）。
@@ -164,15 +177,16 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 5. `POST /toggle-batch`
 
 ```jsonc
-// 请求（project 省略时按请求头解析的会话；两条路都严格解析）
-{ "items": [ { "path": "…", "enabled": false }, … ], "project": "<sessionId>" }   // 最多只处理前 200 项：items.slice(0, 200)，其余静默丢弃（不分片、不报错）
+// 请求（project 省略时按请求头解析的会话；project 是工作区目录路径）
+{ "items": [ { "path": "…", "enabled": false }, … ], "project": "/Users/…/proj-a" }   // 最多只处理前 200 项：items.slice(0, 200)，其余静默丢弃（不分片、不报错）
 // 上限是**每次请求**的：客户端按技能根/按仓库分组各发一次请求，单个组自身超过 200 项时同样会被截断。
 // 响应 data
 { "results": [ { "path": "…", "ok": true }, { "path": "…", "ok": false, "error": "…" } ],
   "changed": 1 }
 ```
-`project` 优先于 `x-skill-console-session` 头，两条路都严格解析；解析不出 → 400 `error.role.noProject`，
-**一个字节都不写**（不会退化成「逐项 `ok:false`」的静默失败）。
+`project` 是**工作区目录路径**，给了就只认它（无效 → 400 `error.workspace.invalid`）；
+没给才按 `x-skill-console-session` 头严格解析，解析不出 → 400 `error.role.noProject`。
+两种失败都**一个字节都不写**（不会退化成「逐项 `ok:false`」的静默失败）。
 
 ## 6. `GET /repositories`
 
@@ -283,7 +297,7 @@ kind: 'prefix'   path: '/api/skill-console'
 ```jsonc
 // 请求（target 省略或非 'project' 一律按 'global' 处理；project 只在 target:'project' 时有意义）
 { "id": "obra/superpowers", "skills": ["tdd", "brainstorming"], "confirm": false,
-  "target": "project", "project": "<sessionId>" }
+  "target": "project", "project": "/Users/…/proj-a" }
 // data
 { "installed": [ { "name": "tdd", "path": "…", "updated": true,
                    "backup": "/Users/…/skill-console/backups/tdd/1789…" } ],
@@ -294,9 +308,9 @@ kind: 'prefix'   path: '/api/skill-console'
 - `global` → `<DSH_HOME>/skills/<name>`（与 0.3.0 完全一致）；`project` → `<projectRoot>/.dsh/skills/<name>`（根不存在时随写入创建）。
 - 装到 `project` 时，目标位置已有同名技能就**一律**要 `confirm:true` 才覆盖：订阅快照只描述全局那一份，不能用来证明项目这份没被改过。
 - 装到 `project` **不更新订阅快照**（台账只记全局那份），也不写别的 Agent 目录。
-- 装到**哪个项目**由请求体 `project`（会话 id）指定，**优先于** `x-skill-console-session` 头；
-  两条路都走**严格解析**，解析不出就 400 `error.role.noProject`——**不会回落到「最近一个会话」，
-  也不会静默退回全局**。
+- 装到**哪个工作区**由请求体 `project`（**工作区目录路径**）指定，给了就**只认它**（不是存在的目录 →
+  400 `error.workspace.invalid`）；没给才按 `x-skill-console-session` 头严格解析，解析不出就 400
+  `error.role.noProject`——**不会回落到「最近一个会话」，也不会静默退回全局**。
 - 一次安装的技能数 **> 200** → 400 `error.proto.tooMany`（**硬拒、一个字节不写**）。这与 `/toggle-batch`
   的静默截断**不对称**：批量启停把超出的丢掉照样 200，安装则直接报错——安装要建目录、要备份，静默少装一半更危险。
 - 覆盖前把旧目录整份复制到 `<DSH_HOME>/skill-console/backups/<name>/<ts>/content/`，
@@ -342,8 +356,8 @@ kind: 'prefix'   path: '/api/skill-console'
 角色清单 + 本项目激活角色 + 对齐状态。**只读**。
 
 ```jsonc
-// 读接口，宽松：?project=<sessionId> 优先于 x-skill-console-session 头；
-// 两者都解析不出时回落到最近一个会话，并把 project.fallback 置为 true
+// 读接口：?project=<workspaceDir>（工作区目录路径，无效即 400）优先于 x-skill-console-session 头；
+// 没给 project 且会话也解析不出时回落最近一个会话，并把 project.fallback 置为 true
 // （这是**读路径**：写路径只认请求体 project / 请求头且严格解析，见 §12、§19、§20、§22）
 {
   "ok": true,
@@ -423,8 +437,8 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 19. `POST /roles/activate`  ← 对齐（唯一破坏性的角色操作）
 
 ```jsonc
-// 请求：project（会话 id，要操作哪个项目）优先于 x-skill-console-session 头；两条路都严格解析
-{ "id": "…", "project": "<sessionId>" }
+// 请求：project（工作区目录路径，要操作哪个工作区）给了就只认它；没给才按 x-skill-console-session 头解析
+{ "id": "…", "project": "/Users/…/proj-a" }
 // data
 { "role": { "id": "…", "name": "前端" },
   "status": "matched",                       // 逐项失败时 'drifted'
@@ -439,36 +453,40 @@ kind: 'prefix'   path: '/api/skill-console'
 **只写项目技能根**，全局根在结构上不可达。逐项隔离：一项失败不影响其余项。
 `changed > 0` 时让技能注册表失效，并对每个真正改动的路径各发一次 `fs/observed` 通知。
 `takeover` 报告「停用项目副本后，全局同名技能接管生效」；`localKept` 报告「两边同名、保留项目那份」。
-写的是**哪个项目**：请求体 `project` 优先于 `x-skill-console-session` 头，两条路都严格解析；
-解析不出（会话不存在 / 拿不到 cwd）→ 400 `error.role.noProject`，**绝不回落到「最近一个会话」**。
+写的是**哪个工作区**：请求体 `project`（**工作区目录路径**）给了就只认它，不是存在的目录 →
+400 `error.workspace.invalid`；没给才按 `x-skill-console-session` 头严格解析，解析不出
+（会话不存在 / 拿不到 cwd）→ 400 `error.role.noProject`，**绝不回落到「最近一个会话」**。
 
-错误：400 `error.proto.missingId`、400 `error.role.noProject`（解析不出项目根）、
+错误：400 `error.proto.missingId`、400 `error.role.noProject`（没给 project 且解析不出会话）、
+400 `error.workspace.invalid`（给了 project 但不是存在的目录）、
 404 `error.role.unknown`、500 `error.role.state`。
 
 ## 20. `POST /roles/deactivate`
 
 ```jsonc
-{ "project": "<sessionId>" }   // 清掉本项目「激活了哪个角色」的记录；project 可省略（省略时按请求头解析）
+{ "project": "/Users/…/proj-a" }   // 清掉本项目「激活了哪个角色」的记录；project（工作区目录路径）可省略（省略时按请求头解析）
 // data: { "cleared": true }   // 本来就没记录时 false
 ```
 **只清记录，不动磁盘**：技能保持现状，不还原成切换前的样子（当前没有快照/回滚）。
-本端点**会读请求体**：`project`（会话 id，优先于 `x-skill-console-session` 头）指定要操作哪个项目，
-两条路都严格解析，解析不出 → 400 `error.role.noProject`，**不会回落到「最近一个会话」**。
-错误：400 `error.role.noProject`、500 `error.role.state`。
+本端点**会读请求体**：`project`（**工作区目录路径**）给了就只认它（无效 → 400 `error.workspace.invalid`）；
+没给才按 `x-skill-console-session` 头严格解析，解析不出 → 400 `error.role.noProject`，
+**不会回落到「最近一个会话」**。
+错误：400 `error.role.noProject`、400 `error.workspace.invalid`、500 `error.role.state`。
 
 ## 21. `POST /skills/delete`  ← 删除技能（破坏性，先备份）
 
 ```jsonc
 // 请求（发现文件的绝对路径，可能是 .disabled；project 省略时按请求头解析的会话）
-{ "path": "/Users/…/.dsh/skills/tdd/SKILL.md", "project": "<sessionId>" }
+{ "path": "/Users/…/.dsh/skills/tdd/SKILL.md", "project": "/Users/…/proj-a" }
 // data
 { "name": "tdd", "path": "…/tdd/SKILL.md", "kind": "directory", "form": "directory",
   "root": "user-dsh", "directory": "…/tdd", "backup": "…/backups/tdd/1789…",
   "removed": ["…/tdd"], "deleted": true }
 ```
 语义（顺序是硬要求）：
-- `project` 优先于 `x-skill-console-session` 头，两条路都严格解析；解析不出 → 400 `error.role.noProject`，
-  **一个字节都不写**（连备份都不会创建）。
+- `project` 是**工作区目录路径**，给了就只认它（无效 → 400 `error.workspace.invalid`）；
+  没给才按 `x-skill-console-session` 头严格解析，解析不出 → 400 `error.role.noProject`。
+  两种失败都**一个字节都不写**（连备份都不会创建）。
 - 先围栏（400 `error.path.outsideRoots`）与存在性检查（404 `error.skill.notFound`）；缺 `path` → 400 `error.proto.missingPath`。
 - **先整份备份**：目录包备份整个包目录（含内部脚本/resources），扁平文件备份那一个文件，软链接只存链接本身（`meta.json` 记 `link`）。备份抛错 → 500 `error.delete.backup`，**一个字节都不删**。
 - 再删：目录包 `rmSync(directory, {recursive:true})`；扁平删那个文件；软链接只 `unlinkSync` 链接本身，**绝不 dereference**。
@@ -479,8 +497,8 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 22. `POST /skills/move-to-project`  ← 全局技能搬到当前项目（破坏性，先备份）
 
 ```jsonc
-// 请求：必须是全局技能根里的发现文件路径；project 指定搬进哪个项目（优先于 x-skill-console-session 头）
-{ "path": "/Users/…/.dsh/skills/tdd/SKILL.md", "project": "<sessionId>" }
+// 请求：必须是全局技能根里的发现文件路径；project 指定搬进哪个工作区（工作区目录路径；没给才按请求头解析）
+{ "path": "/Users/…/.dsh/skills/tdd/SKILL.md", "project": "/Users/…/proj-a" }
 // data
 { "name": "tdd", "from": "/Users/…/.dsh/skills", "to": "/Users/…/proj/.dsh/skills",
   "kind": "directory", "backup": "…/backups/tdd/1789…", "globalRemoved": true }
@@ -488,7 +506,8 @@ kind: 'prefix'   path: '/api/skill-console'
 ```
 语义：
 - 只允许全局 → 项目：非全局来源 400 `error.transfer.notGlobal`；软链接 400 `error.transfer.symlink`；项目里已有同名技能 409 `error.transfer.exists`（**按技能名判**，不按目标路径；不覆盖、不备份、不动手）。
-- 搬进**哪个项目**由请求体 `project`（会话 id，优先于 `x-skill-console-session` 头）决定，两条路都走**严格解析**；解析不出项目根 400 `error.role.noProject`，**不会回落到「最近一个会话」**。
+- 搬进**哪个工作区**由请求体 `project`（**工作区目录路径**）决定，给了就只认它（无效 → 400 `error.workspace.invalid`）；
+  没给才按 `x-skill-console-session` 头严格解析，解析不出项目根 400 `error.role.noProject`，**不会回落到「最近一个会话」**。
 - 顺序：① 备份全局那份（失败 → 500 `error.delete.backup`，什么都不移）② 复制进项目 ③ 删全局那份。
 - **③ 失败不回滚**：项目里那份留着，响应 `globalRemoved:false` + `warning` 如实报告；再点一次「删除」即可清掉全局那份。
 - 复制失败时按复制自身的错误码上抛（`error.copy.exists` 409 / `error.transfer.symlink` 400 / `error.skill.notFound` 404），此时全局那份没动。
@@ -516,7 +535,8 @@ kind: 'prefix'   path: '/api/skill-console'
 | `error.role.tooMany` | 角色数或每角色技能数超出上限（角色 > 50 / 每角色技能 > 200） |
 | `error.proto.tooMany` | 一次安装的技能数 > 200（`/repositories/install`）：**硬 400**，与 `/toggle-batch` 的静默截断不同 |
 | `error.role.skills` | `skills` 不是字符串数组 |
-| `error.role.noProject` | 写接口里请求指定的项目解析不出（会话 id 不存在 / 拿不到 cwd，**绝不回落到最近会话**），或角色只能落在项目根上却没有项目目录：提示先打开 / 选对一个项目 |
+| `error.workspace.invalid` | 请求里**显式给的** `project`（工作区目录路径）解析不出（不存在 / 不是目录 / 相对路径）：提示这个工作区已经不在磁盘上，刷新工作区列表重新选；**绝不退回请求头会话** |
+| `error.role.noProject` | 写接口**没给** `project`，且请求头会话也解析不出（会话 id 不存在 / 拿不到 cwd，**绝不回落到最近会话**），或角色只能落在项目根上却没有项目目录：提示先打开 / 选对一个工作区 |
 | `error.delete.backup` | 删除/移动前的备份失败：**什么都没改**，提示看日志后重试 |
 | `error.copy.exists` | 复制/移动的目标位置已有同名技能，拒绝覆盖 |
 | `error.transfer.notGlobal` | 只能把**全局**技能移到项目；项目技能请用「删除」 |

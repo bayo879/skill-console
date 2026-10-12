@@ -1243,7 +1243,7 @@ const stateResponse = await call({ path: '/api/skill-console/state' })
 check('GET /state 返回 200', stateResponse.status === 200 && stateResponse.json.ok === true, JSON.stringify(stateResponse.json))
 check('/state 报告两个技能根', stateResponse.json.data.roots.length === 2, String(stateResponse.json.data.roots.length))
 check('/state 不再回显 .agents 目录', !('agentsHome' in stateResponse.json.data), JSON.stringify(Object.keys(stateResponse.json.data)))
-check('/state 报告活着的会话作为项目', stateResponse.json.data.projects[0]?.cwd === projectDir)
+check('/state 在注册表缺席时退回活着的会话作为工作区', stateResponse.json.data.workspaces?.[0]?.path === projectDir && stateResponse.json.data.workspacesFrom === 'sessions')
 check('/state 不带 session 头时标记 fallback', stateResponse.json.data.selected?.fallback === true)
 check('/state 不回显 token 值，只报存在性', typeof stateResponse.json.data.token === 'boolean')
 
@@ -1420,7 +1420,7 @@ if (clientSource !== null) {
  * 造一个**如实**模拟 cordis 守卫的 ctx：未声明 inject 的属性读直接抛，
  * 即使那个服务在兄弟 fiber 上真的存在（真实 cordis 也读不到）。
  */
-function guardedCtx({ declared = host.inject, runtime } = {}) {
+function guardedCtx({ declared = host.inject, runtime, registry } = {}) {
 	const reads = []
 	const target = {
 		logger: { info() {}, warn() {} },
@@ -1430,7 +1430,11 @@ function guardedCtx({ declared = host.inject, runtime } = {}) {
 		sessions: { list: () => [fakeSession], get: (id) => (id === fakeSession.id ? fakeSession : undefined) },
 		webServer: { register: (route) => { target.registered = route; return () => {} } },
 		// 核心能力：不需要 inject；真实 cordis 里它对未提供的服务返回 undefined 而不抛。
-		get: (serviceName) => (serviceName === 'webRuntime' ? runtime : undefined),
+		get: (serviceName) => {
+			if (serviceName === 'webRuntime') return runtime
+			if (serviceName === 'workspaceRegistry') return registry
+			return undefined
+		},
 	}
 	const allowed = new Set([...declared, ...CORE_CTX_MEMBERS])
 	const proxy = new Proxy(target, {
@@ -1677,34 +1681,34 @@ placeSkill(otherSkillsRoot, 'rp-drop', true)
 placeSkill(rolesProjectSkills, 'rp-keep', true)
 pluginCtx.sessions = twoProjectCtx.sessions
 
-const otherRoles = await call({ path: `/api/skill-console/roles?project=${otherSession.id}`, headers: roleSession })
+const otherRoles = await call({ path: `/api/skill-console/roles?project=${encodeURIComponent(secondProjectDir)}`, headers: roleSession })
 check('GET /roles?project= 读的是那个项目', otherRoles.json?.data?.project?.name === 'other' && otherRoles.json.data.project.fallback === false, JSON.stringify(otherRoles.json?.data?.project))
 check('那个项目的候选里有它自己的技能', otherRoles.json?.data?.candidates?.project?.some((entry) => entry.name === 'rp-other') === true)
 
 const otherRole = (await call({ method: 'POST', path: '/api/skill-console/roles/save', headers: { ...ROLE_WRITE, ...roleSession }, body: { name: '另一个项目的角色', skills: ['rp-other'] } })).json.data.role
-const activateOther = await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: otherRole.id, project: otherSession.id } })
+const activateOther = await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: otherRole.id, project: secondProjectDir } })
 check('activate 带 project：落点是那个项目', activateOther.status === 200 && existsSync(join(otherSkillsRoot, 'rp-drop', 'SKILL.md.disabled')))
 check('activate 带 project：当前会话的项目一个字节没动', existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')))
-check('activate 带 project：active 记在那个项目名下', (await call({ path: `/api/skill-console/roles?project=${otherSession.id}`, headers: roleSession })).json.data.active?.id === otherRole.id)
+check('activate 带 project：active 记在那个项目名下', (await call({ path: `/api/skill-console/roles?project=${encodeURIComponent(secondProjectDir)}`, headers: roleSession })).json.data.active?.id === otherRole.id)
 
-const unknownProject = await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: otherRole.id, project: 'session-gone' } })
-check('未知 project → 400 error.role.noProject', unknownProject.status === 400 && unknownProject.json.code === 'error.role.noProject')
+const unknownProject = await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: otherRole.id, project: join(secondProjectDir, 'nope') } })
+check('未知 project 目录 → 400 error.workspace.invalid', unknownProject.status === 400 && unknownProject.json.code === 'error.workspace.invalid')
 check('未知 project：当前会话的项目没被牵连（rp-keep 仍启用）', existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')))
 
 const noProject = await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE }, body: { id: otherRole.id } })
 check('角色写请求既无会话头也无 project → 400（不再悄悄写到最近的项目）', noProject.status === 400 && noProject.json.code === 'error.role.noProject')
 
-const deactivateOther = await call({ method: 'POST', path: '/api/skill-console/roles/deactivate', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: otherSession.id } })
-check('deactivate 带 project：清掉那个项目的激活记录', deactivateOther.status === 200 && (await call({ path: `/api/skill-console/roles?project=${otherSession.id}`, headers: roleSession })).json.data.active === null)
+const deactivateOther = await call({ method: 'POST', path: '/api/skill-console/roles/deactivate', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: secondProjectDir } })
+check('deactivate 带 project：清掉那个项目的激活记录', deactivateOther.status === 200 && (await call({ path: `/api/skill-console/roles?project=${encodeURIComponent(secondProjectDir)}`, headers: roleSession })).json.data.active === null)
 check('deactivate 带 project：当前会话的项目仍然没有角色', (await call({ path: '/api/skill-console/roles', headers: roleSession })).json.data.active === null)
 
-const installOther = await call({ method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['proj-only'], target: 'project', project: otherSession.id } })
+const installOther = await call({ method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['proj-only'], target: 'project', project: secondProjectDir } })
 check('install 带 project：装进那个项目', installOther.status === 200 && existsSync(join(otherSkillsRoot, 'proj-only', 'SKILL.md')), `${installOther.status} ${JSON.stringify(installOther.json).slice(0, 200)}`)
 
 placeSkill(join(home, 'skills'), 'move-other', true)
-const moveOther = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'move-other', 'SKILL.md'), project: otherSession.id } })
+const moveOther = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'move-other', 'SKILL.md'), project: secondProjectDir } })
 check('move-to-project 带 project：搬到那个项目', moveOther.status === 200 && existsSync(join(otherSkillsRoot, 'move-other', 'SKILL.md')), `${moveOther.status} ${JSON.stringify(moveOther.json).slice(0, 200)}`)
-const moveUnknown = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesProjectSkills, 'rp-keep', 'SKILL.md'), project: 'session-gone' } })
+const moveUnknown = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesProjectSkills, 'rp-keep', 'SKILL.md'), project: join(secondProjectDir, 'nope') } })
 check('move-to-project 未知 project → 400 且没搬走', moveUnknown.status === 400 && existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')), `${moveUnknown.status} ${JSON.stringify(moveUnknown.json).slice(0, 160)}`)
 
 // ── 4d. 技能写路径也跟项目走 ──────────────────────────────────────────────
@@ -1719,7 +1723,7 @@ placeSkill(otherSkillsRoot, 'rp-trash', true)
 placeSkill(otherSkillsRoot, 'rp-flip', false)
 placeSkill(otherSkillsRoot, 'rp-outside', true)
 
-const crossToggle = await call({ method: 'POST', path: '/api/skill-console/toggle', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-toggle', 'SKILL.md'), enabled: false, project: otherSession.id } })
+const crossToggle = await call({ method: 'POST', path: '/api/skill-console/toggle', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-toggle', 'SKILL.md'), enabled: false, project: secondProjectDir } })
 check('POST /toggle 带 project：关的是那个项目的技能', crossToggle.status === 200 && crossToggle.json.data?.changed === true, `${crossToggle.status} ${JSON.stringify(crossToggle.json).slice(0, 200)}`)
 check('/toggle 带 project：那个项目的文件真的重命名了', existsSync(join(otherSkillsRoot, 'rp-toggle', 'SKILL.md.disabled')))
 check('/toggle 带 project：当前会话的项目一个字节没动', existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')))
@@ -1728,28 +1732,28 @@ const noProjectToggle = await call({ method: 'POST', path: '/api/skill-console/t
 check('POST /toggle 不带 project + 别的项目的路径 → 400 error.path.outsideRoots（不静默写别的项目）', noProjectToggle.status === 400 && noProjectToggle.json?.code === 'error.path.outsideRoots', `${noProjectToggle.status} ${JSON.stringify(noProjectToggle.json).slice(0, 160)}`)
 check('/toggle 不带 project：别的项目的文件没被动', existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')))
 
-const goneToggle = await call({ method: 'POST', path: '/api/skill-console/toggle', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), enabled: false, project: 'session-gone' } })
-check('POST /toggle 未知 project → 400 error.role.noProject', goneToggle.status === 400 && goneToggle.json?.code === 'error.role.noProject', `${goneToggle.status} ${JSON.stringify(goneToggle.json).slice(0, 160)}`)
+const goneToggle = await call({ method: 'POST', path: '/api/skill-console/toggle', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), enabled: false, project: join(secondProjectDir, 'nope') } })
+check('POST /toggle 未知 project 目录 → 400 error.workspace.invalid', goneToggle.status === 400 && goneToggle.json?.code === 'error.workspace.invalid', `${goneToggle.status} ${JSON.stringify(goneToggle.json).slice(0, 160)}`)
 check('/toggle 未知 project：那个技能的文件没被动', existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')))
 
 // 同一个形状把另外两个写端点也钉住：它们各自也要先严格解析项目，否则会读到别的项目。
-const goneBatch = await call({ method: 'POST', path: '/api/skill-console/toggle-batch', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: 'session-gone', items: [{ path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), enabled: false }] } })
-check('POST /toggle-batch 未知 project → 400 error.role.noProject 且没动盘', goneBatch.status === 400 && goneBatch.json?.code === 'error.role.noProject' && existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')), `${goneBatch.status} ${JSON.stringify(goneBatch.json).slice(0, 160)}`)
-const goneDelete = await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), project: 'session-gone' } })
-check('POST /skills/delete 未知 project → 400 error.role.noProject 且没动盘', goneDelete.status === 400 && goneDelete.json?.code === 'error.role.noProject' && existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')), `${goneDelete.status} ${JSON.stringify(goneDelete.json).slice(0, 160)}`)
+const goneBatch = await call({ method: 'POST', path: '/api/skill-console/toggle-batch', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: join(secondProjectDir, 'nope'), items: [{ path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), enabled: false }] } })
+check('POST /toggle-batch 未知 project 目录 → 400 error.workspace.invalid 且没动盘', goneBatch.status === 400 && goneBatch.json?.code === 'error.workspace.invalid' && existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')), `${goneBatch.status} ${JSON.stringify(goneBatch.json).slice(0, 160)}`)
+const goneDelete = await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), project: join(secondProjectDir, 'nope') } })
+check('POST /skills/delete 未知 project 目录 → 400 error.workspace.invalid 且没动盘', goneDelete.status === 400 && goneDelete.json?.code === 'error.workspace.invalid' && existsSync(join(otherSkillsRoot, 'rp-outside', 'SKILL.md')), `${goneDelete.status} ${JSON.stringify(goneDelete.json).slice(0, 160)}`)
 // 解析不出项目根时的写法与 /roles/activate 那条同形：连会话头都不给。
 const headerlessBatch = await call({ method: 'POST', path: '/api/skill-console/toggle-batch', headers: { ...ROLE_WRITE }, body: { items: [{ path: join(otherSkillsRoot, 'rp-outside', 'SKILL.md'), enabled: false }] } })
 check('批量写请求既无会话头也无 project → 400（不再悄悄写到最近的项目）', headerlessBatch.status === 400 && headerlessBatch.json?.code === 'error.role.noProject', `${headerlessBatch.status} ${JSON.stringify(headerlessBatch.json).slice(0, 160)}`)
 
-const crossBatch = await call({ method: 'POST', path: '/api/skill-console/toggle-batch', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: otherSession.id, items: [{ path: join(otherSkillsRoot, 'rp-flip', 'SKILL.md.disabled'), enabled: true }] } })
+const crossBatch = await call({ method: 'POST', path: '/api/skill-console/toggle-batch', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: secondProjectDir, items: [{ path: join(otherSkillsRoot, 'rp-flip', 'SKILL.md.disabled'), enabled: true }] } })
 check('POST /toggle-batch 带 project：逐项 ok:true（旧行为是 200 + ok:false）', crossBatch.status === 200 && crossBatch.json.data?.results?.[0]?.ok === true, `${crossBatch.status} ${JSON.stringify(crossBatch.json).slice(0, 200)}`)
 check('/toggle-batch 带 project：changed 记到那个项目', crossBatch.json.data?.changed === 1 && existsSync(join(otherSkillsRoot, 'rp-flip', 'SKILL.md')))
 
-const crossDelete = await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-trash', 'SKILL.md'), project: otherSession.id } })
+const crossDelete = await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(otherSkillsRoot, 'rp-trash', 'SKILL.md'), project: secondProjectDir } })
 check('POST /skills/delete 带 project：删的是那个项目的技能', crossDelete.status === 200 && existsSync(join(otherSkillsRoot, 'rp-trash', 'SKILL.md')) === false, `${crossDelete.status} ${JSON.stringify(crossDelete.json).slice(0, 200)}`)
 check('/skills/delete 带 project：当前会话的项目还在', existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')))
 
-const otherDetail = await call({ path: `/api/skill-console/skill?path=${encodeURIComponent(join(otherSkillsRoot, 'rp-outside', 'SKILL.md'))}&project=${otherSession.id}` })
+const otherDetail = await call({ path: `/api/skill-console/skill?path=${encodeURIComponent(join(otherSkillsRoot, 'rp-outside', 'SKILL.md'))}&project=${encodeURIComponent(secondProjectDir)}` })
 check('GET /skill?project= 读的是那个项目的技能', otherDetail.status === 200 && otherDetail.json.data?.name === 'rp-outside', `${otherDetail.status} ${JSON.stringify(otherDetail.json).slice(0, 160)}`)
 const crossDetail = await call({ path: `/api/skill-console/skill?path=${encodeURIComponent(join(otherSkillsRoot, 'rp-outside', 'SKILL.md'))}`, headers: roleSession })
 check('GET /skill 不带 project + 别的项目的路径 → 400 error.path.outsideRoots', crossDetail.status === 400 && crossDetail.json?.code === 'error.path.outsideRoots', `${crossDetail.status} ${JSON.stringify(crossDetail.json).slice(0, 160)}`)
@@ -1772,6 +1776,68 @@ if (clientSource !== '') {
 	check('客户端不再有裸的 /skills/delete 调用', !flat.includes("apiPost('/skills/delete', { path: skill.path }, sessionId)"))
 	check('客户端不再有裸的 /skill 调用', !flat.includes("apiGet('/skill', { path: skill.path }, sessionId)"))
 }
+
+// ── 4e. 工作区身份（0.6.0）──────────────────────────────────────────────
+
+section('工作区身份：列表来自注册表、写接口按目录路径解析')
+
+// 注册表桩：第二条工作区**没有会话**——0.5.0 的「活着的会话」列表正是列不出这一条。
+const workspaceRegistryStub = {
+	list: () => [
+		{ id: 'ws-a', path: projectDir, title: 'A 工作区', sessionIds: [fakeSession.id] },
+		{ id: 'ws-b', path: secondProjectDir, title: 'B 工作区', sessionIds: [] },
+	],
+}
+const wsCtx = guardedCtx({ runtime: { trustedHosts: [] }, registry: workspaceRegistryStub })
+const wsHost = await import(join(LIB, 'index.js'))
+wsHost.apply(wsCtx.ctx)
+const wsRoute = wsCtx.routeOf()
+
+const wsState = await callRouteOrReport(wsRoute, { path: '/api/skill-console/state' })
+check('/state.workspaces 把没有会话的工作区也列出来', wsState.status === 200 && wsState.json.data?.workspaces?.length === 2 && wsState.json.data.workspaces[1].path === secondProjectDir && wsState.json.data.workspaces[1].sessionIds.length === 0, `${wsState.status} ${JSON.stringify(wsState.json).slice(0, 240)}`)
+check('/state.workspaces 顺序与注册表一致、title 原样带回', wsState.json.data?.workspaces?.[0]?.title === 'A 工作区' && wsState.json.data?.workspacesFrom === 'registry')
+check('/state.selected 认出当前会话所在的工作区', wsState.json.data?.selected?.workspaceId === 'ws-a', JSON.stringify(wsState.json.data?.selected))
+check('注册表缺席时退回活着的会话（旧行为不丢）', stateResponse.json.data?.workspacesFrom === 'sessions' && stateResponse.json.data?.workspaces?.[0]?.path === projectDir && stateResponse.json.data?.workspaces?.[0]?.fromRegistry === false && !('projects' in (stateResponse.json.data ?? {})), JSON.stringify(Object.keys(stateResponse.json.data ?? {})))
+
+// 目录路径解析：存在的目录就行，**不要求注册**；相对路径 / 空串 / 不存在的路径一律 null。
+const wsPlainDir = tempDir('sc-ws-plain')
+const wsNoGitDir = tempDir('sc-ws-nogit')
+check('resolveWorkspaceStrict 认任意存在的目录（不要求注册）', projectsModule.resolveWorkspaceStrict?.(wsCtx.ctx, secondProjectDir)?.root === secondProjectDir)
+check('resolveWorkspaceStrict 认没有 .git 的目录，根就是它自己', projectsModule.resolveWorkspaceStrict?.(wsCtx.ctx, wsNoGitDir)?.root === wsNoGitDir)
+check('resolveWorkspaceStrict 拒相对路径 / 空串 / 不存在的路径', projectsModule.resolveWorkspaceStrict?.(wsCtx.ctx, 'relative/dir') === null && projectsModule.resolveWorkspaceStrict?.(wsCtx.ctx, '') === null && projectsModule.resolveWorkspaceStrict?.(wsCtx.ctx, join(wsPlainDir, 'nope')) === null)
+const noGitRoots = roots.resolveRoots({ dshHome: home, projectCwd: wsNoGitDir })
+check('没有 .git 的目录也拿得到项目技能根', noGitRoots.some((root) => root.key === 'project-dsh' && root.path === join(wsNoGitDir, '.dsh', 'skills')), JSON.stringify(noGitRoots.map((root) => root.path)))
+
+// 写接口：project 是**工作区目录路径**，那条工作区不需要有会话。
+const wsSkillsRoot = join(secondProjectDir, '.dsh', 'skills')
+placeSkill(wsSkillsRoot, 'ws-alpha', true)
+const wsToggle = await callRouteOrReport(wsRoute, {
+	method: 'POST',
+	path: '/api/skill-console/toggle',
+	headers: { ...ROLE_WRITE, ...roleSession },
+	body: { path: join(wsSkillsRoot, 'ws-alpha', 'SKILL.md'), enabled: false, project: secondProjectDir },
+})
+check('写接口按目录路径落到那条工作区（它没有会话也能写）', wsToggle.status === 200 && existsSync(join(wsSkillsRoot, 'ws-alpha', 'SKILL.md.disabled')), `${wsToggle.status} ${JSON.stringify(wsToggle.json).slice(0, 200)}`)
+check('按目录路径写入时，会话头指的那个工作区没被动', existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')))
+
+const badPathToggle = await callRouteOrReport(wsRoute, {
+	method: 'POST',
+	path: '/api/skill-console/toggle',
+	headers: { ...ROLE_WRITE, ...roleSession },
+	body: { path: join(wsSkillsRoot, 'ws-alpha', 'SKILL.md.disabled'), enabled: true, project: join(wsPlainDir, 'nope') },
+})
+check('project 指向不存在的目录 → 400 error.workspace.invalid 且一个字节不改', badPathToggle.status === 400 && badPathToggle.json?.code === 'error.workspace.invalid' && existsSync(join(wsSkillsRoot, 'ws-alpha', 'SKILL.md.disabled')), `${badPathToggle.status} ${JSON.stringify(badPathToggle.json).slice(0, 200)}`)
+
+// 回落用例自带一份**启用态**的 fixture：`rp-alpha` 在本节之前（约 1552 行）已经被停用，
+// 拿它来测「空串回落」会先撞上 404，测不到回落本身。
+placeSkill(rolesProjectSkills, 'ws-fallback', true)
+const fallbackToggle = await callRouteOrReport(wsRoute, {
+	method: 'POST',
+	path: '/api/skill-console/toggle',
+	headers: { ...ROLE_WRITE, ...roleSession },
+	body: { path: join(rolesProjectSkills, 'ws-fallback', 'SKILL.md'), enabled: false, project: '' },
+})
+check('project 为空串 → 退回请求头会话（写的仍是会话那个工作区）', fallbackToggle.status === 200 && existsSync(join(rolesProjectSkills, 'ws-fallback', 'SKILL.md.disabled')), `${fallbackToggle.status} ${JSON.stringify(fallbackToggle.json).slice(0, 200)}`)
 
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
