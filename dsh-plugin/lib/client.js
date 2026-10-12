@@ -96,7 +96,7 @@ window.__ModuleLoader__.load({
 				'roles.remove': '删除',
 				'roles.removeConfirm': '删除角色「{name}」？磁盘上的技能文件一个都不会动。',
 				'roles.activate': '切换到此角色',
-				'roles.activateConfirm': '切换会把当前项目的技能对齐到这个角色：复制 {copy} 个、启用 {enable} 个、停用 {disable} 个。全局技能不受影响（复制只从全局读一份到项目，全局那份不会被改）。确定吗？',
+				'roles.activateConfirm': '切换会把「{project}」的技能对齐到这个角色：复制 {copy} 个、启用 {enable} 个、停用 {disable} 个。全局技能不受影响（复制只从全局读一份到项目，全局那份不会被改）。确定吗？',
 				'roles.deactivate': '取消角色',
 				'roles.deactivateConfirm': '取消角色的激活记录？磁盘上的技能保持现状，不会还原。',
 				'roles.save': '保存',
@@ -320,7 +320,7 @@ window.__ModuleLoader__.load({
 				'roles.remove': 'Delete',
 				'roles.removeConfirm': 'Delete the role "{name}"? No skill file on disk will be touched.',
 				'roles.activate': 'Switch to this role',
-				'roles.activateConfirm': 'Switching aligns this project\'s skills to the role: copy {copy}, enable {enable}, disable {disable}. Global skills are unaffected (copying only reads one from the global root into the project; the global copy is never changed). Continue?',
+				'roles.activateConfirm': 'Switching aligns "{project}" to this role: copy {copy} / enable {enable} / disable {disable}. Global skills are untouched (copying only reads one global copy into the project). Continue?',
 				'roles.deactivate': 'Clear role',
 				'roles.deactivateConfirm': 'Clear this project\'s active-role record? Skills on disk stay as they are — nothing is restored.',
 				'roles.save': 'Save',
@@ -1117,6 +1117,10 @@ window.__ModuleLoader__.load({
 		 *
 		 * 依赖里只放真正会变的值（`sessionId`、目录版本号）；`apiGet` 每次渲染都是新引用，
 		 * 放进依赖会变成无限重拉，effect 拿到的闭包属于它那一帧，语义正确。
+		 *
+		 * 返回的对象**每次渲染都是新引用**：所有消费方（三个页签）的 `useEffect` 依赖数组里
+		 * 只能放 `project.active` / `project.options` 这类派生标量，**绝不能放整个 `project` 对象**
+		 * （否则每帧都判定依赖变化，变成无限重拉）。
 		 */
 		function useProjectContext(sessionId) {
 			const [state, setState] = react.useState({ loading: true, data: null, error: null })
@@ -1165,6 +1169,16 @@ window.__ModuleLoader__.load({
 				},
 				context.options.map((option) => h('option', { key: option.value, value: option.value }, option.label)),
 			)
+		}
+
+		/**
+		 * 写请求的请求体：项目必须显式带上。
+		 *
+		 * 宿主那边「请求里没指定项目」会直接 400（不再回落到最近一个会话），
+		 * 所以角色切换 / 取消、仓库装到项目都从这里过，谁也别漏。
+		 */
+		function withProject(context, extra) {
+			return { ...extra, project: context.active }
 		}
 
 		/** 停止冒泡：行本身可点开详情，行内控件必须先掐断。 */
@@ -1840,6 +1854,7 @@ window.__ModuleLoader__.load({
 							installResult: props.installResult,
 							emptyDetailKey: props.emptyDetailKey,
 							installTarget: props.installTarget,
+							project: props.project,
 							onInstallTarget: props.onInstallTarget,
 							onTogglePick: props.onTogglePick,
 							onSelectAll: props.onSelectAll,
@@ -1887,6 +1902,7 @@ window.__ModuleLoader__.load({
 					h(UiPill, { active: props.installTarget !== 'project', onClick: () => props.onInstallTarget('global'), children: t('repos.targetGlobal') }),
 					h(UiPill, { active: props.installTarget === 'project', onClick: () => props.onInstallTarget('project'), children: t('repos.targetProject') }),
 					props.installTarget === 'project' ? h('span', { className: 'sc-hint' }, t('repos.targetProjectHint')) : null,
+					props.installTarget === 'project' ? h(ProjectSelect, { t, context: props.project }) : null,
 				),
 				detail.error ? h('div', { className: 'sc-err', role: 'alert' }, detail.error) : null,
 				detail.loading ? h('div', { className: 'sc-hint' }, t('repos.detailLoading')) : null,
@@ -2093,10 +2109,17 @@ window.__ModuleLoader__.load({
 			return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 		}
 
-		/** 技能仓库标签页：订阅列表 + 详情 + 手动拉取/安装/恢复。 */
+		/**
+		 * 技能仓库标签页：订阅列表 + 详情 + 手动拉取/安装/恢复。
+		 *
+		 * @param props - `{t, sessionId, project}`。`project` 只在「装到项目」时用：
+		 *   安装落点就是它选中的项目，所以那一行要就地给出「当前项目」。
+		 */
 		function ReposPanel(props) {
 			const t = props.t
 			const sessionId = props.sessionId
+			// 「装到项目」的落点：项目来自 section 的共享上下文，安装行要就地显示它。
+			const project = props.project
 			const [list, setList] = react.useState({ loading: true, data: null, error: null })
 			// 展开状态 `id -> true`：每个订阅各自独立，可以同时展开好几个。
 			const [open, setOpen] = react.useState({})
@@ -2357,7 +2380,7 @@ window.__ModuleLoader__.load({
 					confirm = true
 				}
 				return run(() =>
-					apiPost('/repositories/install', { id, skills: names, confirm, target: installTarget }, sessionId).then((data) => {
+					apiPost('/repositories/install', withProject(project, { id, skills: names, confirm, target: installTarget }), sessionId).then((data) => {
 						setInstallResult((previous) => ({
 							...previous,
 							[id]: {
@@ -2445,6 +2468,7 @@ window.__ModuleLoader__.load({
 									installResult: installResult[repo.id],
 									emptyDetailKey: emptyDetailKeyFor(repo),
 									installTarget,
+									project,
 									onInstallTarget: setInstallTarget,
 									onToggle: toggleRepo,
 									onFetch: fetchLatest,
@@ -2663,10 +2687,13 @@ window.__ModuleLoader__.load({
 		 *   - 编辑只改草稿，`保存` 只写 roles.json，不碰技能文件；
 		 *   - 只有 `切换到此角色` 才落盘，而且先弹一次带数量的确认。
 		 *
-		 * @param props - `{t, sessionId}`。
+		 * @param props - `{t, sessionId, project}`。`project` 是 section 的共享项目上下文，
+		 *   角色的读取与切换 / 取消都作用于它选中的项目。
 		 */
 		function RolesPanel(props) {
 			const t = props.t
+			// 角色是「一个项目的目标态」：项目来自 section 的共享上下文，切换/取消都作用于它。
+			const project = props.project
 			const [data, setData] = react.useState(null)
 			const [draft, setDraft] = react.useState(null)
 			const [busy, setBusy] = react.useState(false)
@@ -2675,14 +2702,15 @@ window.__ModuleLoader__.load({
 
 			const load = react.useCallback(() => {
 				setBusy(true)
-				apiGet('/roles', null, props.sessionId)
+				// 空字符串会被 apiGet 丢掉（见 client.js:862-866）：没有活动会话时退回会话头语义。
+				apiGet('/roles', { project: project.active }, props.sessionId)
 					.then((payload) => {
 						setData(payload)
 						setError(null)
 					})
 					.catch((failure) => setError(actionError(t, failure)))
 					.then(() => setBusy(false))
-			}, [props.sessionId, t])
+			}, [props.sessionId, project.active, t])
 
 			react.useEffect(() => {
 				load()
@@ -2720,13 +2748,13 @@ window.__ModuleLoader__.load({
 				const copy = wanted.filter((name) => !known.has(name) && globalNames.has(name)).length
 				const enable = projectSkills.filter((skill) => picked.has(skill.name) && skill.enabled !== true).length
 				const disable = projectSkills.filter((skill) => !picked.has(skill.name) && skill.enabled === true).length
-				return t('roles.activateConfirm', { copy, enable, disable })
+				return t('roles.activateConfirm', { copy, enable, disable, project: project.activeName })
 			}
 
 			const runActivate = (roleId, skills) => {
 				if (!askConfirm(confirmText(skills))) return
 				setBusy(true)
-				apiPost('/roles/activate', { id: roleId }, props.sessionId)
+				apiPost('/roles/activate', withProject(project, { id: roleId }), props.sessionId)
 					.then((result) => {
 						const failed = (result.results ?? []).filter((entry) => entry.ok !== true)
 						const takeover = result.takeover ?? []
@@ -2772,7 +2800,7 @@ window.__ModuleLoader__.load({
 			const runDeactivate = () => {
 				if (!askConfirm(t('roles.deactivateConfirm'))) return
 				setBusy(true)
-				apiPost('/roles/deactivate', {}, props.sessionId)
+				apiPost('/roles/deactivate', withProject(project, {}), props.sessionId)
 					.then(() => {
 						setDraft(null)
 						load()
@@ -2794,6 +2822,7 @@ window.__ModuleLoader__.load({
 				h(
 					'div',
 					{ className: 'sc-bar' },
+					h(ProjectSelect, { t, context: project }),
 					h('span', null, `${t('roles.currentProject')}：${projectName}`),
 					h(UiTag, { tone: roleToneOf(status) }, t(roleStatusKey(status))),
 					data.active === null || data.active === undefined ? null : h(UiTag, { tone: 'quiet' }, data.active.name),
@@ -2999,6 +3028,8 @@ window.__ModuleLoader__.load({
 		exports.projectOptionsOf = projectOptionsOf
 		exports.projectOptionOfPick = projectOptionOfPick
 		exports.projectContextOf = projectContextOf
+		exports.ProjectSelect = ProjectSelect
+		exports.withProject = withProject
 		return module.exports
 	},
 })

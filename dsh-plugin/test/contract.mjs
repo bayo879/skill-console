@@ -2245,6 +2245,9 @@ check('没选过 / 选项缺失时不抛', exposed.projectOptionOfPick(null, pic
 // 选择状态认项目根而不是会话 id：源码里不能再出现旧的一次性会话 id 状态。
 check('面板不再按会话 id 记项目选择', !/setProjectId\b/.test(clientSource) && !/\[projectId,/.test(clientSource))
 
+// 反向守住「共享上下文」这个结构：多一处 /state 就说明有页签自己在拉，三个页签会看到分叉的项目。
+check('整个控制台只在一处拉 /state（项目上下文单点）', (clientSource.match(/apiGet\('\/state'/g) ?? []).length === 1)
+
 // 项目上下文（纯函数）：下拉、写请求、三个页签读的是同一份。
 const ctxFor = (state, pick, sessionId) => (typeof exposed.projectContextOf === 'function' ? exposed.projectContextOf(state, pick, sessionId) : {})
 const twoProjects = {
@@ -2266,6 +2269,25 @@ check('项目整个没了就落回当前会话', ctxFor(twoProjects, { value: 's
 check('版本号来自同一份 /state（不再单独再拉一次）', ctxFor(twoProjects, null, 's-1').version === '0.5.0')
 const emptyContext = ctxFor({ loading: true, data: null, error: null }, null, 's-1')
 check('拉不到 /state 时 active 退化成会话 id、projects 为空、不抛', emptyContext.active === 's-1' && emptyContext.projects.length === 0 && emptyContext.loading === true)
+
+// 项目下拉与写请求的项目字段：角色页签 / 仓库页签（「装到项目」）消费的就是这一份。
+check('导出 ProjectSelect 供契约测试直接渲染', typeof exposed.ProjectSelect === 'function')
+const pickedOptions = []
+const selectTree = exposed.ProjectSelect({
+	t: tStub,
+	context: { options: [{ value: 's-1', label: 'proj-a', root: '/Users/x/code/proj-a' }], active: 's-1', setPick: (option) => pickedOptions.push(option) },
+})
+check('项目下拉列出全部项目、选中当前项目', selectTree !== null && selectTree.props.value === 's-1' && selectTree.children[0][0].children[0] === 'proj-a', JSON.stringify(selectTree))
+const selectElement = collect(selectTree, (element) => element.props !== undefined && element.props['aria-label'] === 'skills.project')[0]
+selectElement.props.onChange({ target: { value: 's-1' } })
+check('选中后回传完整 option（按项目根认领，不是裸会话 id）', pickedOptions[0]?.root === '/Users/x/code/proj-a', JSON.stringify(pickedOptions))
+check('没有可选项目时不渲染下拉', exposed.ProjectSelect({ t: tStub, context: { options: [], active: '', setPick: () => {} } }) === null)
+check('导出 withProject：写请求体一定显式带上选中项目', typeof exposed.withProject === 'function' && exposed.withProject({ active: 's-2' }, { id: 'r1' }).project === 's-2')
+const installWiring = clientSource.indexOf("installTarget === 'project'")
+check('仓库页签在「装到项目」时就地给出项目下拉', installWiring >= 0 && clientSource.slice(installWiring, installWiring + 400).includes('ProjectSelect'))
+
+// 切换是破坏性的：确认框必须点名「对齐的是哪个项目」，不然用户不知道动的是哪儿。
+check('切换确认文案带上项目名', typeof dictionaryZh['roles.activateConfirm'] === 'string' && dictionaryZh['roles.activateConfirm'].includes('{project}') && dictionaryEn['roles.activateConfirm'].includes('{project}'))
 
 // primitives / locale 缺失时不能崩
 const quietWarn = console.warn
