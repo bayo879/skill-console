@@ -92,6 +92,8 @@ kind: 'prefix'   path: '/api/skill-console'
 `workspacesFrom: 'sessions'` 时界面应说明「工作区列表来自当前活着的会话，可能不完整」；
 `workspaces` 可能是空数组，此时 `selected` 仍按请求头会话给（或 `null`）。
 
+> **叫法**：界面与文档把 `project` 统一叫「工作区」，但**契约字段名不变**——请求体 / 查询参数一律还是 `project`，错误码也照旧。
+
 ## 2. `GET /catalog?scope=all|global|project&project=<workspaceDir>`
 
 技能目录。`scope` 取值 `all` / `global` / `project`，**缺省即 `all`**——一次回来「当前工作区的全貌」：
@@ -502,7 +504,7 @@ kind: 'prefix'   path: '/api/skill-console'
 - **技能根本身永远不会被删**（删除目标只可能来自扫描到的发现文件）。
 - 成功 200；恢复走 `GET /backups` + `POST /restore`。
 
-## 22. `POST /skills/move-to-project`  ← 全局技能搬到当前项目（破坏性，先备份）
+## 22. `POST /skills/move-to-project`  ← 全局技能搬到当前工作区（破坏性，先备份）
 
 ```jsonc
 // 请求：必须是全局技能根里的发现文件路径；project 指定搬进哪个工作区（工作区目录路径；没给才按请求头解析）
@@ -519,7 +521,7 @@ kind: 'prefix'   path: '/api/skill-console'
 - 顺序：① 备份全局那份（失败 → 500 `error.delete.backup`，什么都不移）② 复制进项目 ③ 删全局那份。
 - **③ 失败不回滚**：项目里那份留着，响应 `globalRemoved:false` + `warning` 如实报告；再点一次「删除」即可清掉全局那份。
 - 复制失败时按复制自身的错误码上抛（`error.copy.exists` 409 / `error.transfer.symlink` 400 / `error.skill.notFound` 404），此时全局那份没动。
-- `from` 是全局技能根、`to` 是当前项目技能根；`kind` 是源技能形态（`directory` / `flat`）。
+- `from` 是全局技能根、`to` 是当前工作区的项目技能根；`kind` 是源技能形态（`directory` / `flat`）。
 
 ---
 
@@ -583,12 +585,12 @@ kind: 'prefix'   path: '/api/skill-console'
 
 1. 技能根里的**发现文件重命名**（`SKILL.md` ↔ `SKILL.md.disabled`、`*.md` ↔ `*.md.disabled`）：
    两个技能根（项目根、全局根）都能做，但 `/roles/activate` **只写项目根**——全局根在角色链路上结构不可达
-2. 仓库安装/更新的目标：缺省 `<DSH_HOME>/skills/<name>/`；`target:'project'` 时是当前项目根下的 `.dsh/skills/<name>/`（根不存在会随写入创建）
+2. 仓库安装/更新的目标：缺省 `<DSH_HOME>/skills/<name>/`；`target:'project'` 时是当前工作区的项目根下的 `.dsh/skills/<name>/`（根不存在会随写入创建）
 3. `<DSH_HOME>/skill-console/repositories.json`（订阅与安装快照）
 4. `<DSH_HOME>/skill-console/roles.json`（角色定义 + 每个项目激活了哪个角色；`/roles/save`、`/roles/remove`、`/roles/deactivate` **只写这一个文件**，不动任何技能）
 5. `<DSH_HOME>/skill-console/repository-cache/` 与 `backups/`
 6. `POST /skills/delete`：先整份备份，再删发现文件所在的整包（目录包）／那个文件（扁平）／链接本身（软链接）；技能根本身永远不删
 7. `POST /skills/move-to-project`：先备份全局那份 → 复制进项目根 → 删全局那份；删全局失败不回滚（项目里那份留着，如实报 `warning`）
-8. `POST /repositories/install` 的 `target:'project'`：只写当前项目技能根 `<projectRoot>/.dsh/skills/`，不更新订阅快照
+8. `POST /repositories/install` 的 `target:'project'`：只写当前工作区的项目技能根 `<projectRoot>/.dsh/skills/`，不更新订阅快照
 
 除此之外不写任何文件；不会自动删技能——删除／移动只在你显式调用时发生，且删前必先备份。

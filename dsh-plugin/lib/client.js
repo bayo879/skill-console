@@ -87,7 +87,6 @@ window.__ModuleLoader__.load({
 				'tab.repos': '技能仓库',
 				'tab.roles': '角色',
 				'roles.subtitle': '把一组技能存成角色；切换角色即成套改变当前项目的技能。只写项目技能根，不动全局。',
-				'roles.currentProject': '当前项目',
 				'roles.noProject': '解析不出项目根（当前会话的目录不在任何项目里）',
 				'roles.fallback': '没带上会话，正在用最近一个会话的项目——请确认这是你要管的项目。',
 				'roles.empty': '还没有角色。新建一个，勾选这个项目要用的技能。',
@@ -141,15 +140,12 @@ window.__ModuleLoader__.load({
 				'md.copy': '复制',
 				'md.copied': '已复制',
 				'md.footnotes': '脚注',
-				'skills.scope': '范围',
-				'skills.scope.global': '全局',
-				'skills.scope.project': '项目',
-				'skills.project': '当前项目',
-				'skills.projectFallback': '没拿到当前会话，宿主回落到「{name}」——这不是当前会话的项目。',
-				'skills.projectFallbackUnknown': '没拿到当前会话，宿主回落到它自己的默认项目。',
+				'skills.project': '工作区',
+				'skills.projectFallback': '选的工作区解析不到，宿主回落到「{name}」——这不一定是你选的那个。',
+				'skills.projectFallbackUnknown': '选的工作区解析不到，宿主回落到它自己的默认工作区。',
 				'workspace.session': '这个目录不在工作区列表里，按它的目录用：{name}',
-				'skills.projectName': '当前项目：{name}',
-				'skills.noSessions': '当前没有活动会话，列不出项目技能。请在某个工作区里打开一个会话，再刷新。',
+				'skills.projectName': '当前工作区：{name}',
+				'skills.noSessions': '还没选工作区，列不出项目技能。请在节顶选一个工作区，再刷新。',
 				'skills.empty': '这个范围里没有发现技能。',
 				'skills.noDescription': '未提供简介',
 				'skills.nameFromDirectory': 'frontmatter 没写 name，这里显示的是目录/文件名',
@@ -223,6 +219,7 @@ window.__ModuleLoader__.load({
 				'error.repoState': '订阅状态文件损坏了，为避免覆盖你的数据，这次操作被拒绝。可以检查 DSH_HOME 下的 skill-console/repositories.json。',
 				'error.backupNotFound': '没有可恢复的备份。',
 				'error.roleNoProject': '解析不出要操作哪个项目：请先在面板上选一个项目，再重试。',
+				'error.workspaceInvalid': '这个工作区目录不存在或不是目录：请在节顶重新选一个工作区。',
 				'error.tooMany': '一次提交的条目太多，请分批操作。',
 				'error.endpointMissing': '后端接口没挂上（HTTP {status}）。通常是插件没被加载，或装好后还没重启 DSH。',
 				'error.internal': '后端处理这次请求时抛了异常，没有改动任何文件。可以看 DSH 日志里的 web-server 警告。',
@@ -304,9 +301,9 @@ window.__ModuleLoader__.load({
 				'repos.selectAll': '全选可更新',
 				'repos.selectNone': '全不选',
 				'repos.selected': '已选 {count} 个',
-				'repos.installTarget': '安装到',
+				'repos.installTarget': '安装到工作区',
 				'repos.targetGlobal': '全局技能根',
-				'repos.targetProject': '当前项目技能根',
+				'repos.targetProject': '项目技能根',
 				'repos.targetProjectHint': '装到当前项目时，全局技能根不会被动；项目里已有同名技能需要确认才覆盖。',
 			},
 			en: {
@@ -318,7 +315,6 @@ window.__ModuleLoader__.load({
 				'tab.repos': 'Repositories',
 				'tab.roles': 'Roles',
 				'roles.subtitle': 'Save a set of skills as a role; switching roles swaps the current project\'s skills in one go. Only the project skill root is written — never the global one.',
-				'roles.currentProject': 'Current project',
 				'roles.noProject': 'No project root could be resolved (this session\'s directory is not inside a project).',
 				'roles.fallback': 'No session was sent, so the most recent session\'s project is in use — please confirm this is the project you mean.',
 				'roles.empty': 'No roles yet. Create one and tick the skills this project should use.',
@@ -372,15 +368,12 @@ window.__ModuleLoader__.load({
 				'md.copy': 'Copy',
 				'md.copied': 'Copied',
 				'md.footnotes': 'Footnotes',
-				'skills.scope': 'Scope',
-				'skills.scope.global': 'Global',
-				'skills.scope.project': 'Project',
-				'skills.project': 'Project',
-				'skills.projectFallback': 'No current session was available, so the host fell back to "{name}" — this is not the current session\'s project.',
-				'skills.projectFallbackUnknown': 'No current session was available, so the host fell back to its own default project.',
+				'skills.project': 'Workspace',
+				'skills.projectFallback': 'The selected workspace could not be resolved; the host fell back to "{name}" — that may not be the one you picked.',
+				'skills.projectFallbackUnknown': 'The selected workspace could not be resolved; the host fell back to its own default workspace.',
 				'workspace.session': 'This directory is not in the workspace list; using it as one: {name}',
-				'skills.projectName': 'Current project: {name}',
-				'skills.noSessions': 'There is no live session, so project skills cannot be listed. Open a session in a workspace, then refresh.',
+				'skills.projectName': 'Current workspace: {name}',
+				'skills.noSessions': 'No workspace is selected, so project skills cannot be listed. Pick one in the workspace bar, then refresh.',
 				'skills.empty': 'No skills were found in this scope.',
 				'skills.noDescription': 'No description provided',
 				'skills.nameFromDirectory': 'Frontmatter has no name; the folder/file name is shown instead',
@@ -453,6 +446,7 @@ window.__ModuleLoader__.load({
 				'error.repoState': 'The subscription state file is corrupted, so this operation was refused to avoid overwriting your data. Check skill-console/repositories.json under DSH_HOME.',
 				'error.backupNotFound': 'There is no backup to restore.',
 				'error.roleNoProject': 'Could not resolve which project this applies to. Pick a project in the panel and try again.',
+				'error.workspaceInvalid': 'That workspace path does not exist or is not a directory. Pick a workspace in the bar and try again.',
 				'error.tooMany': 'Too many items in one request; please split it into smaller batches.',
 				'error.endpointMissing': 'The backend endpoint is not mounted (HTTP {status}). Usually the plugin was not loaded, or DSH has not been restarted since installing it.',
 				'error.internal': 'The backend threw while handling this request; nothing was changed on disk. Check the web-server warnings in the DSH log.',
@@ -534,9 +528,9 @@ window.__ModuleLoader__.load({
 				'repos.selectAll': 'Select installable',
 				'repos.selectNone': 'Select none',
 				'repos.selected': '{count} selected',
-				'repos.installTarget': 'Install to',
+				'repos.installTarget': 'Install into workspace',
 				'repos.targetGlobal': 'Global skill root',
-				'repos.targetProject': 'Current project skill root',
+				'repos.targetProject': 'Project skill root',
 				'repos.targetProjectHint': 'Installing into the current project never writes the global skill root; an existing same-named project skill needs confirmation to overwrite.',
 			},
 		}
@@ -922,6 +916,7 @@ window.__ModuleLoader__.load({
 			'error.repo.state': 'error.repoState',
 			'error.backup.notFound': 'error.backupNotFound',
 			'error.role.noProject': 'error.roleNoProject',
+			'error.workspace.invalid': 'error.workspaceInvalid',
 			'error.proto.tooMany': 'error.tooMany',
 		}
 
@@ -1001,10 +996,18 @@ window.__ModuleLoader__.load({
 			return t('skills.moveConfirm', { name: (skill && skill.name) || '', project: projectName || '' })
 		}
 
-		/** 服务器给的根 key → 显示名：优先用宿主 label，没有就用本地化根名。 */
+		/**
+		 * 服务器给的根 key → 显示名：**先查词典**，词典没有才退回宿主给的 label。
+		 *
+		 * 反过来的顺序会让英文界面显示中文：宿主那两个 label 是硬编码的
+		 * （`lib/roots.js` 的「全局 DSH」/「项目 DSH」），词典里的 `roots.*` 就成了死键。
+		 */
 		function rootLabel(t, key, fallbackLabel) {
+			if (typeof key === 'string' && key !== '') {
+				const translated = t('roots.' + key)
+				if (typeof translated === 'string' && translated !== 'roots.' + key) return translated
+			}
 			if (typeof fallbackLabel === 'string' && fallbackLabel !== '') return fallbackLabel
-			if (typeof key === 'string' && key !== '') return t('roots.' + key)
 			return t('diagnostic.unknown')
 		}
 
@@ -3267,6 +3270,7 @@ window.__ModuleLoader__.load({
 		exports.ProjectSelect = ProjectSelect
 		exports.WorkspaceBar = WorkspaceBar
 		exports.withProject = withProject
+		exports.rootLabel = rootLabel
 		exports.missingSkillsOf = missingSkillsOf
 		exports.batchItems = batchItems
 		return module.exports

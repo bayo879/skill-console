@@ -2833,7 +2833,7 @@ for (const key of [
 	'skills.expand', 'skills.collapse', 'skills.batchEnableAria', 'skills.batchDisableAria',
 	'repos.installTarget', 'repos.targetGlobal', 'repos.targetProject', 'repos.targetProjectHint',
 	'error.roleNoProject', 'error.tooMany',
-	'workspace.session',
+	'workspace.session', 'error.workspaceInvalid',
 ]) {
 	check(`词典 zh / en 都有 ${key}`, typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string', `zh=${typeof dictionaryZh[key]} en=${typeof dictionaryEn[key]}`)
 }
@@ -2911,6 +2911,27 @@ const fallbackUses = (clientSource.match(/t\([^)]*?'skills\.projectFallback/g) ?
 // 正则按「t( 紧接 'skills.projectName'」判，才真的在断言「没有人再调用这条文案」。
 const projectNameCalls = /t\('skills\.projectName'/.test(clientSource)
 check('技能页签不再自己播报「当前项目」，回落文案只剩工作区条那一处', !clientSource.includes("t('skills.projectName')") && !projectNameCalls && fallbackUses === 1, `projectName=${projectNameCalls} fallbackUses=${fallbackUses}`)
+
+section('文案：界面说「工作区」，词典与错误码跟得上')
+
+check('界面文案统一叫「工作区」，不再叫「当前项目」', dictionaryZh['skills.project'] === '工作区' && dictionaryEn['skills.project'] === 'Workspace', `${dictionaryZh['skills.project']} / ${dictionaryEn['skills.project']}`)
+check('工作区条的回落文案讲的是工作区', dictionaryZh['skills.projectFallback'].includes('工作区') && dictionaryEn['skills.projectFallback'].toLowerCase().includes('workspace'))
+check('「还没选工作区」取代了「没有活动会话」', dictionaryZh['skills.noSessions'].includes('工作区') && !dictionaryZh['skills.noSessions'].includes('活动会话'), dictionaryZh['skills.noSessions'])
+check('安装目标那行也改叫工作区', dictionaryZh['repos.installTarget'].includes('工作区') && dictionaryEn['repos.installTarget'].toLowerCase().includes('workspace'))
+check('「范围」开关的键随 UI 一起删了', !('skills.scope' in dictionaryZh) && !('skills.scope' in dictionaryEn) && !('skills.scope.global' in dictionaryZh) && !('skills.scope.project' in dictionaryZh))
+check('角色页签的「当前项目」键随那一行删了', !('roles.currentProject' in dictionaryZh) && !('roles.currentProject' in dictionaryEn))
+check('新错误码两种语言都有文案', typeof dictionaryZh['error.workspaceInvalid'] === 'string' && typeof dictionaryEn['error.workspaceInvalid'] === 'string')
+check('新错误码接到了前端翻译表上', clientSource.includes("'error.workspace.invalid': 'error.workspaceInvalid'"))
+
+// i18n 死键：宿主给的 label 是硬编码中文，英文界面不能因此掉回中文。
+const tEn = (key) => (key in dictionaryEn ? dictionaryEn[key] : key)
+const tFallbackOnly = (key) => key
+// rootLabel 还没导出时不能让下面的调用以 TypeError 打断整轮——RED 必须跑到结果行。
+const rootLabelOf = typeof exposed.rootLabel === 'function' ? exposed.rootLabel : () => '«rootLabel 未导出»'
+check('导出 rootLabel 供契约测试直接打', typeof exposed.rootLabel === 'function')
+check('根标签优先走词典（英文界面不再显示中文）', rootLabelOf(tEn, 'user-dsh', '全局 DSH') === 'Global DSH' && rootLabelOf(tEn, 'project-dsh', '项目 DSH') === 'Project DSH')
+check('词典里没有这个 key 时才退回宿主 label', rootLabelOf(tFallbackOnly, 'user-dsh', '全局 DSH') === '全局 DSH')
+check('两者都没有时给一个可读的兜底', rootLabelOf(tFallbackOnly, '', '') === 'diagnostic.unknown')
 
 // ── 结果 ──────────────────────────────────────────────────────────────────
 
