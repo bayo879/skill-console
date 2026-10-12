@@ -1978,6 +1978,14 @@ check('勾选全局技能回报的是「技能名 + 是否选中」', (() => {
 	return toggles.length === 1 && toggles[0][0] === 'rp-global' && toggles[0][1] === true
 })())
 check('RoleEditor 把可勾选的项目技能渲染出来', collectTexts(roleEditorTree).some((text) => text.includes('rp-alpha')), collectTexts(roleEditorTree).join('|').slice(0, 160))
+const editorHeadOf = (tree) => collect(tree, (element) => element.props !== undefined && element.props.className === 'sc-role-editor-head')[0]
+check('保存 / 取消 / 切换三个按钮都在名称行里', (() => {
+	const head = editorHeadOf(roleEditorTree)
+	if (head === undefined) return false
+	const hasChildText = (text) => collect(head, (element) => element.props !== undefined && Array.isArray(element.children) && element.children.includes(text)).length > 0
+	return hasChildText('roles.save') && hasChildText('roles.cancel') && hasChildText('roles.activate')
+})(), JSON.stringify(roleEditorTree).slice(0, 200))
+check('编辑器底部不再留动作行', collect(roleEditorTree, (element) => element.props !== undefined && element.props.className === 'sc-row-actions').length === 0)
 check('RoleEditor 列出角色里缺失的技能', collectTexts(RoleEditorExport({ t: tStub, draft: { id: 'r', name: 'x', skills: ['gone'] }, candidates: { project: [], global: [] }, missing: ['gone'], busy: false, onName: () => {}, onToggle: () => {}, onSave: () => {}, onCancel: () => {}, onActivate: () => {} })).some((text) => text.includes('gone')))
 
 // 角色名输入框：`onChange` 收到的是**原生 DOM 事件**，不是字符串。

@@ -679,7 +679,7 @@ window.__ModuleLoader__.load({
 .sc-role-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .sc-role-name { font-weight: 600; }
 .sc-role-editor { display: flex; flex-direction: column; gap: 10px; }
-.sc-role-editor-head { display: flex; align-items: center; gap: 8px; }
+.sc-role-editor-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sc-role-skills { display: flex; flex-direction: column; }
 .sc-role-skill { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 .sc-role-skill-name { font-family: var(--dsw-font-mono, monospace); font-size: 12px; }
@@ -2663,6 +2663,14 @@ window.__ModuleLoader__.load({
 					{ className: 'sc-role-editor-head' },
 					h('span', { className: 'sc-sub' }, t('roles.name')),
 					nameInput,
+					// 三个动作放在名称行右侧：编辑器再长也不用滚到底（需求 ③）。
+					h('span', { className: 'sc-spacer' }),
+					h(UiButton, { disabled: props.busy, onClick: props.onSave }, t('roles.save')),
+					h(UiButton, { disabled: props.busy, onClick: props.onCancel }, t('roles.cancel')),
+					// 还没保存的角色没有可切换的身份：先保存。别让它拿空 id 去打宿主。
+					props.onActivate === null
+						? h('span', { className: 'sc-sub' }, t('roles.saveFirst'))
+						: h(UiButton, { disabled: props.busy, onClick: props.onActivate }, t('roles.activate')),
 				),
 				h(
 					'div',
@@ -2688,16 +2696,6 @@ window.__ModuleLoader__.load({
 						h('div', { className: 'sc-role-global-note' }, t('roles.globalHint')),
 						globalList,
 					),
-				h(
-					'div',
-					{ className: 'sc-row-actions' },
-					h(UiButton, { disabled: props.busy, onClick: props.onSave }, t('roles.save')),
-					h(UiButton, { disabled: props.busy, onClick: props.onCancel }, t('roles.cancel')),
-					// 还没保存的角色没有可切换的身份：先保存。别让它拿空 id 去打宿主。
-					props.onActivate === null
-						? h('span', { className: 'sc-sub' }, t('roles.saveFirst'))
-						: h(UiButton, { disabled: props.busy, onClick: props.onActivate }, t('roles.activate')),
-				),
 			)
 		}
 
