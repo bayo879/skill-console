@@ -131,6 +131,11 @@ node skill-console/dsh-plugin/test/contract.mjs
 复刻成「改动前 / 改动后」两份 HTML，用 headless Chrome 量 `.sc-group` 的实际高度：
 改动前只剩 2px（两条边框，里面的仓库行还是 79.88px，内容在、盒子被压扁），
 改动后恢复 81.88px，溢出交给 `.sc-body` 自己滚。没装 Chrome 就跳过并以 0 退出，不进 `npm test`。
+0.5.0 又加了 4 条，量的是需求③「动作按钮在名称行右侧」：`contract.mjs` 能断按钮在 `.sc-role-editor-head`
+里、也能断这块 head 排在勾选列表之前，但断不了「按钮和输入框在同一行」——那只有真浏览器能量。
+其中「名称行没被 `flex-wrap` 撑成两行」这条**不量高度**（真折行整行只有 59px，而单行 26px，
+用高度阈值会放过折行），改成数 head 的直接子元素落在几个横向带上（按**中线**分带：空 `sc-spacer`
+高度为 0、它的 `top` 落在行的中线上，拿 `top` 比会把单行误判成两行）。
 
 ### 现场冒烟测试（需要装好并重启过的 DSH）
 
