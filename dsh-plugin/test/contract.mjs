@@ -1978,6 +1978,7 @@ check('勾选全局技能回报的是「技能名 + 是否选中」', (() => {
 	return toggles.length === 1 && toggles[0][0] === 'rp-global' && toggles[0][1] === true
 })())
 check('RoleEditor 把可勾选的项目技能渲染出来', collectTexts(roleEditorTree).some((text) => text.includes('rp-alpha')), collectTexts(roleEditorTree).join('|').slice(0, 160))
+check('角色编辑器渲染了全局技能的说明文案', collectTexts(roleEditorTree).some((text) => text.includes('roles.globalHint')))
 const editorHeadOf = (tree) => collect(tree, (element) => element.props !== undefined && element.props.className === 'sc-role-editor-head')[0]
 check('保存 / 取消 / 切换三个按钮都在名称行里', (() => {
 	const head = editorHeadOf(roleEditorTree)
@@ -2077,6 +2078,46 @@ const groupTree = exposed.SkillGroup({
 const groupTexts = collectTexts(groupTree)
 check('技能分组头不显示技能根路径', !groupTexts.some((text) => text.includes('/Users/someone')), JSON.stringify(groupTexts))
 check('技能分组头仍然显示根名', groupTexts.includes('全局 DSH'), JSON.stringify(groupTexts))
+
+// 需求 ④：相同仓库的技能收进同一个可折叠列表，组头可按仓库批量操作。
+check('导出 groupSkillsByRepo / SkillRepoGroup 供契约测试直接打', typeof exposed.groupSkillsByRepo === 'function' && typeof exposed.SkillRepoGroup === 'function')
+const groupedSkills = exposed.groupSkillsByRepo([
+	{ name: 'b', installed: { id: 'o/z', owner: 'o', name: 'z' } },
+	{ name: 'a', installed: null },
+	{ name: 'c', installed: { id: 'o/a', owner: 'o', name: 'a' } },
+	{ name: 'd', installed: { id: 'o/a', owner: 'o', name: 'a' } },
+])
+check('按仓库分组：仓库名有序、组内保持宿主顺序', groupedSkills.map((group) => group.key).join(',') === 'o/a,o/z,@local', groupedSkills.map((group) => group.key).join(','))
+check('同仓库的技能归进同一组', groupedSkills[0].skills.map((skill) => skill.name).join(',') === 'c,d', groupedSkills[0].skills.map((skill) => skill.name).join(','))
+check('没有仓库归属的技能单列一组、固定排最后', groupedSkills[2].label === null && groupedSkills[2].skills.map((skill) => skill.name).join(',') === 'a')
+
+const groupCalls = []
+const repoGroupTree = exposed.SkillRepoGroup({
+	t: tStub,
+	root: { key: 'user-dsh', label: '全局 DSH', path: '/Users/someone/.dsh/skills', exists: true },
+	group: { key: 'o/r', label: 'o/r', skills: [{ name: 'alpha', path: '/x/alpha/SKILL.md', enabled: true, toggleable: true, installed: { id: 'o/r' } }] },
+	collapsed: true,
+	busy: false,
+	busyPath: null,
+	onToggleRepo: (key) => groupCalls.push('toggle:' + key),
+	onBatch: (skills, enabled, label) => groupCalls.push(`${label}:${skills.length}:${enabled}`),
+	onOpen: () => {},
+	onToggle: () => {},
+	onDelete: () => {},
+	onMove: () => {},
+})
+check('仓库组折叠后不渲染技能行', !collectTexts(repoGroupTree).includes('alpha'), collectTexts(repoGroupTree).join('|'))
+const repoGroupToggles = collect(repoGroupTree, (element) => element.props !== undefined && element.props['aria-expanded'] === 'false')
+check('仓库组头带可访问的折叠开关', repoGroupToggles.length === 1, collectTexts(repoGroupTree).join('|'))
+repoGroupToggles[0].props.onClick()
+check('点折叠开关回报这个组的标识（供上层记状态）', groupCalls.includes('toggle:o/r'), groupCalls.join(','))
+const repoGroupBatch = collect(repoGroupTree, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batchEnableAria'))[0]
+repoGroupBatch?.props?.onClick()
+check('按仓库批量：作用域恰好是这一组的技能', groupCalls.includes('o/r:1:true'), groupCalls.join(','))
+
+// 「移到项目」必须带上界面选中的项目：不带项目时宿主按会话头解析，落点会是别的项目。
+const moveWiring = clientSource.indexOf("apiPost('/skills/move-to-project'")
+check('「移到项目」也带上选中项目', moveWiring >= 0 && clientSource.slice(moveWiring, moveWiring + 120).includes('withProject(project'))
 
 const repoRowCalls = []
 const repoStub = (key, params) => {
@@ -2406,6 +2447,7 @@ for (const key of [
 	'skills.deleteDone', 'skills.deleteFailed', 'skills.move', 'skills.moveConfirm', 'skills.moveDone',
 	'skills.movePartial', 'skills.moveFailed', 'skills.formFlat', 'skills.formDirectory', 'skills.formSymlink',
 	'roles.copyCount', 'roles.localKept', 'roles.localKeptHint', 'roles.globalHint',
+	'skills.expand', 'skills.collapse', 'skills.batchEnableAria', 'skills.batchDisableAria',
 	'repos.installTarget', 'repos.targetGlobal', 'repos.targetProject', 'repos.targetProjectHint',
 ]) {
 	check(`词典 zh / en 都有 ${key}`, typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string', `zh=${typeof dictionaryZh[key]} en=${typeof dictionaryEn[key]}`)

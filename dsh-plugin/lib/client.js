@@ -112,7 +112,7 @@ window.__ModuleLoader__.load({
 				'roles.projectSkills': '项目技能·角色可控制',
 				'roles.globalSkills': '全局技能·可复制到项目',
 				'roles.globalHint': '勾选 = 切换时把全局这份复制进项目（全局那份不动、仍然生效）；不勾 = 什么都不做。',
-				'roles.missingSkills': '角色里包含、但本项目没有的技能',
+				'roles.missingSkills': '角色里包含、但项目根与全局根都没有的技能',
 				'roles.missingHint': '这些名字在别的项目里可能有；在本项目里切换时会被跳过。',
 				'roles.noProjectRoot': '这个项目还没有技能根（<项目根>/.dsh/skills 不存在）。',
 				'roles.noCandidates': '项目技能根里还没有技能。',
@@ -172,6 +172,10 @@ window.__ModuleLoader__.load({
 				'skills.batchDisable': '全部停用',
 				'skills.batchResult': '已更新 {changed} 项。',
 				'skills.batchFailed': '{failed} 项失败',
+				'skills.expand': '展开',
+				'skills.collapse': '收起',
+				'skills.batchEnableAria': '全部启用「{label}」里的技能',
+				'skills.batchDisableAria': '全部停用「{label}」里的技能',
 				'skills.delete': '删除',
 				'skills.deleteConfirm': '删除{form}技能「{name}」（{root}）？会先整份备份，之后可以从备份恢复。',
 				'skills.deleteSymlinkHint': '这是一个软链接：只删这个链接，不动它指向的技能。',
@@ -336,7 +340,7 @@ window.__ModuleLoader__.load({
 				'roles.projectSkills': 'Project skills · controlled by the role',
 				'roles.globalSkills': 'Global skills · can be copied into the project',
 				'roles.globalHint': 'Checked = the global copy is copied into the project when switching (it stays active globally). Unchecked = nothing happens.',
-				'roles.missingSkills': 'In the role but missing from this project',
+				'roles.missingSkills': 'In the role but in neither the project nor the global skill root',
 				'roles.missingHint': 'These names may exist in other projects; switching here skips them.',
 				'roles.noProjectRoot': 'This project has no skill root yet (<projectRoot>/.dsh/skills does not exist).',
 				'roles.noCandidates': 'The project skill root has no skills yet.',
@@ -396,6 +400,10 @@ window.__ModuleLoader__.load({
 				'skills.batchDisable': 'Disable all',
 				'skills.batchResult': '{changed} updated.',
 				'skills.batchFailed': '{failed} failed',
+				'skills.expand': 'expand',
+				'skills.collapse': 'collapse',
+				'skills.batchEnableAria': 'Enable every skill in "{label}"',
+				'skills.batchDisableAria': 'Disable every skill in "{label}"',
 				'skills.delete': 'Delete',
 				'skills.deleteConfirm': 'Delete the {form} skill "{name}" ({root})? It is backed up in full first and can be restored from the backup.',
 				'skills.deleteSymlinkHint': 'This is a symlink: only the link is deleted, the skill it points to is untouched.',
@@ -618,6 +626,14 @@ window.__ModuleLoader__.load({
 .sc-group-title { font-weight: 600; }
 .sc-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 .sc-group .sc-row:first-child { border-top: 0; }
+/* 一个技能根下面按仓库分组：两级都能折叠（需求 ④）。组内第一行不要再画分隔线——
+   .sc-group 那条 :first-child 规则够不到现在这一层。 */
+.sc-repogroup { border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
+.sc-repogroup:first-child { border-top: 0; }
+.sc-repogroup-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.03)); }
+.sc-repogroup.is-open > .sc-repogroup-head { border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
+.sc-repogroup-title { font-weight: 600; font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace); }
+.sc-repogroup .sc-row:first-child { border-top: 0; }
 .sc-row.is-clickable { cursor: pointer; }
 .sc-row.is-clickable:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.1)); }
 .sc-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 3px; min-width: 0; }
@@ -1174,8 +1190,8 @@ window.__ModuleLoader__.load({
 		/**
 		 * 写请求的请求体：项目必须显式带上。
 		 *
-		 * 宿主那边「请求里没指定项目」会直接 400（不再回落到最近一个会话），
-		 * 所以角色切换 / 取消、仓库装到项目都从这里过，谁也别漏。
+		 * 请求体里没有 `project` 时，宿主按请求头的会话解析（`apiPost` 总是带 `x-skill-console-session`），
+		 * 于是会写进会话所在的项目，而不是界面上选中的项目。所以凡是写项目文件的动作都必须走这里。
 		 */
 		function withProject(context, extra) {
 			return { ...extra, project: context.active }
@@ -1333,42 +1349,96 @@ window.__ModuleLoader__.load({
 			)
 		}
 
-		/** 一个技能根（分组）：标题 + 根路径 + 组内批量启停 + 行列表。 */
-		function SkillGroup(props) {
+		/** 没有仓库归属（没装过）的技能所在的组：它不是仓库，永远排在最后。 */
+		const LOCAL_REPO_KEY = '@local'
+
+		/**
+		 * 把一个根里的技能按**所属仓库**分组。
+		 *
+		 * 技能来源是用户理解「这堆东西哪来的」的第一维度；组内保持宿主给的原顺序（宿主已按名字排，
+		 * 见 `lib/rows.js`），组之间按仓库名排序。「本地（非订阅）」不是仓库，固定排最后——
+		 * 混在中间会让人以为它也是个来源。
+		 *
+		 * @param skills - 一个技能根的 `skills`。
+		 * @returns `[{key, label, skills}]`；`label === null` 表示本地组，文案由界面翻。
+		 */
+		function groupSkillsByRepo(skills) {
+			const groups = []
+			const byKey = new Map()
+			for (const skill of Array.isArray(skills) ? skills : []) {
+				const repo = sourceRepoOf(skill)
+				const key = repo === null ? LOCAL_REPO_KEY : repo
+				let group = byKey.get(key)
+				if (group === undefined) {
+					group = { key, label: repo, skills: [] }
+					byKey.set(key, group)
+					groups.push(group)
+				}
+				group.skills.push(skill)
+			}
+			const repos = groups
+				.filter((group) => group.key !== LOCAL_REPO_KEY)
+				.sort((left, right) => left.key.localeCompare(right.key))
+			const local = groups.find((group) => group.key === LOCAL_REPO_KEY)
+			return local === undefined ? repos : [...repos, local]
+		}
+
+		/**
+		 * 一个根下面的一个仓库组：组头可折叠，组头自带「按仓库批量启停」。
+		 *
+		 * 批量范围**恰好是这一组**。今天组头按钮动的是整根，用户点的是「这个仓库」——
+		 * 范围说大不大、说小不小，这才是意外操作的来源。
+		 */
+		function SkillRepoGroup(props) {
 			const t = props.t
 			const root = props.root || {}
-			const skills = Array.isArray(root.skills) ? root.skills : []
+			const group = props.group
+			const skills = Array.isArray(group.skills) ? group.skills : []
+			const label = group.label === null ? t('skills.sourceLocal') : group.label
 			const existing = skills.filter((skill) => skill.toggleable !== false)
 			const canEnable = existing.some((skill) => skill.enabled !== true)
 			const canDisable = existing.some((skill) => skill.enabled === true)
+			const collapsed = props.collapsed === true
 			return h(
 				'div',
-				{ className: 'sc-group' },
+				{ className: 'sc-repogroup' + (collapsed ? '' : ' is-open') },
 				h(
 					'div',
-					{ className: 'sc-group-head' },
-					h(UiStateDot, { state: root.exists === false ? 'error' : 'done', size: 8 }),
-					h('span', { className: 'sc-group-title' }, rootLabel(t, root.key, root.label)),
-					root.exists === false ? h(UiTag, { tone: 'warning' }, t('skills.groupMissing')) : null,
-					h('span', { className: 'sc-spacer' }),
+					{ className: 'sc-repogroup-head' },
+					// 折叠沿用仓库页签那套：原生 button + CSS 三角，不依赖 shell 有没有 chevron 图标。
+					h(
+						'button',
+						{
+							type: 'button',
+							className: 'sc-disclosure',
+							'aria-expanded': collapsed ? 'false' : 'true',
+							'aria-label': t(collapsed ? 'skills.expand' : 'skills.collapse'),
+							onClick: () => props.onToggleRepo(group.key),
+						},
+						h('span', { className: 'sc-caret', 'data-open': collapsed ? 'false' : 'true' }),
+					),
+					h('span', { className: 'sc-repogroup-title' }, label),
 					h('span', { className: 'sc-hint' }, t('skills.groupCount', { count: skills.length })),
+					h('span', { className: 'sc-spacer' }),
 					h(UiButton, {
 						variant: 'ghost',
 						size: 'sm',
+						'aria-label': t('skills.batchEnableAria', { label }),
 						disabled: props.busy || !canEnable,
-						onClick: () => props.onBatch(root, true),
+						onClick: () => props.onBatch(skills, true, label),
 						children: t('skills.batchEnable'),
 					}),
 					h(UiButton, {
 						variant: 'ghost',
 						size: 'sm',
+						'aria-label': t('skills.batchDisableAria', { label }),
 						disabled: props.busy || !canDisable,
-						onClick: () => props.onBatch(root, false),
+						onClick: () => props.onBatch(skills, false, label),
 						children: t('skills.batchDisable'),
 					}),
 				),
-				skills.length === 0
-					? h('div', { className: 'sc-empty' }, t('skills.empty'))
+				collapsed
+					? null
 					: skills.map((skill) =>
 							h(SkillRow, {
 								key: (root.key || '') + ':' + (skill.path || skill.name || ''),
@@ -1384,6 +1454,68 @@ window.__ModuleLoader__.load({
 								onToggle: props.onToggle,
 							}),
 						),
+			)
+		}
+
+		/** 一个技能根（分组）：标题 + 根名 + 根内按仓库分组（可折叠） + 整根批量启停。 */
+		function SkillGroup(props) {
+			const t = props.t
+			const root = props.root || {}
+			const skills = Array.isArray(root.skills) ? root.skills : []
+			const groups = groupSkillsByRepo(skills)
+			const label = rootLabel(t, root.key, root.label)
+			const existing = skills.filter((skill) => skill.toggleable !== false)
+			const canEnable = existing.some((skill) => skill.enabled !== true)
+			const canDisable = existing.some((skill) => skill.enabled === true)
+			const collapsedRepos = props.collapsedRepos ?? {}
+			return h(
+				'div',
+				{ className: 'sc-group' },
+				h(
+					'div',
+					{ className: 'sc-group-head' },
+					h(UiStateDot, { state: root.exists === false ? 'error' : 'done', size: 8 }),
+					h('span', { className: 'sc-group-title' }, label),
+					root.exists === false ? h(UiTag, { tone: 'warning' }, t('skills.groupMissing')) : null,
+					h('span', { className: 'sc-spacer' }),
+					h('span', { className: 'sc-hint' }, t('skills.groupCount', { count: skills.length })),
+					// 根头这一对仍然作用于**整根**：这是「一键处理这个技能根」的入口。
+					h(UiButton, {
+						variant: 'ghost',
+						size: 'sm',
+						disabled: props.busy || !canEnable,
+						onClick: () => props.onBatch(skills, true, label),
+						children: t('skills.batchEnable'),
+					}),
+					h(UiButton, {
+						variant: 'ghost',
+						size: 'sm',
+						disabled: props.busy || !canDisable,
+						onClick: () => props.onBatch(skills, false, label),
+						children: t('skills.batchDisable'),
+					}),
+				),
+				skills.length === 0
+					? h('div', { className: 'sc-empty' }, t('skills.empty'))
+					: groups.map((group) => {
+							// 折叠键带上根：两个根里可能有同名仓库。
+							const collapseKey = (root.key || '') + ':' + group.key
+							return h(SkillRepoGroup, {
+								key: group.key,
+								t,
+								root,
+								group,
+								busy: props.busy,
+								busyPath: props.busyPath,
+								collapsed: collapsedRepos[collapseKey] === true,
+								onToggleRepo: () => props.onToggleRepo(collapseKey),
+								onBatch: props.onBatch,
+								onOpen: props.onOpen,
+								onToggle: props.onToggle,
+								onDelete: props.onDelete,
+								onMove: props.onMove,
+							})
+						}),
 			)
 		}
 
@@ -1447,6 +1579,9 @@ window.__ModuleLoader__.load({
 			const [actionFail, setActionFail] = react.useState(null)
 			const [busyPath, setBusyPath] = react.useState(null)
 			const [batchBusy, setBatchBusy] = react.useState(false)
+			// 折叠状态只活在这次挂载里（与仓库页签同口径）：刷新目录不重置，切页签会重置。
+			const [collapsedRepos, setCollapsedRepos] = react.useState({})
+			const toggleRepo = (key) => setCollapsedRepos((previous) => ({ ...previous, [key]: previous[key] !== true }))
 			const revision = useStore(catalogRevisionStore)
 			// 快速切换范围时旧响应可能后到：用递增令牌丢弃过期结果，避免目录闪回上一个 scope。
 			const catalogToken = react.useRef(0)
@@ -1512,13 +1647,13 @@ window.__ModuleLoader__.load({
 					.finally(() => setBusyPath(null))
 			}
 
-			/** 一整组的批量启停：只发需要变的项（宿主上限 200）。 */
-			const batch = (root, enabled) => {
-				const items = (Array.isArray(root.skills) ? root.skills : [])
+			/** 一组（一个技能根，或一个根里的一个仓库）的批量启停：只发需要变的项（宿主上限 200）。 */
+			const batch = (skills, enabled, label) => {
+				const items = (Array.isArray(skills) ? skills : [])
 					.filter((skill) => skill.toggleable !== false && skill.enabled !== enabled && typeof skill.path === 'string')
 					.map((skill) => ({ path: skill.path, enabled }))
 				if (items.length === 0) {
-					setNotice(t('skills.toggled', { name: rootLabel(t, root.key, root.label), state: t(enabled ? 'skills.stateOn' : 'skills.stateOff') }))
+					setNotice(t('skills.toggled', { name: label, state: t(enabled ? 'skills.stateOn' : 'skills.stateOff') }))
 					return
 				}
 				setBatchBusy(true)
@@ -1564,7 +1699,7 @@ window.__ModuleLoader__.load({
 				setBusyPath(skill.path)
 				setNotice(null)
 				setActionFail(null)
-				apiPost('/skills/move-to-project', { path: skill.path }, sessionId)
+				apiPost('/skills/move-to-project', withProject(project, { path: skill.path }), sessionId)
 					.then((data) => {
 						if (data.globalRemoved === false) setNotice(t('skills.movePartial', { warning: data.warning ?? '' }))
 						else setNotice(t('skills.moveDone', { name: data.name || skill.name || '' }))
@@ -1656,7 +1791,10 @@ window.__ModuleLoader__.load({
 						key: root.key || root.path || '',
 						t,
 						root,
+						busy: batchBusy,
 						busyPath,
+						collapsedRepos,
+						onToggleRepo: toggleRepo,
 						onOpen: loadDetail,
 						onToggle: toggle,
 						onBatch: batch,
@@ -2767,7 +2905,7 @@ window.__ModuleLoader__.load({
 				const copy = wanted.filter((name) => !known.has(name) && globalNames.has(name)).length
 				const enable = projectSkills.filter((skill) => picked.has(skill.name) && skill.enabled !== true).length
 				const disable = projectSkills.filter((skill) => !picked.has(skill.name) && skill.enabled === true).length
-				return t('roles.activateConfirm', { copy, enable, disable, project: project.activeName })
+				return t('roles.activateConfirm', { copy, enable, disable, project: project.activeName || projectName })
 			}
 
 			const runActivate = (roleId, skills) => {
@@ -3040,6 +3178,8 @@ window.__ModuleLoader__.load({
 		exports.sourceRepoOf = sourceRepoOf
 		exports.SkillRow = SkillRow
 		exports.SkillGroup = SkillGroup
+		exports.groupSkillsByRepo = groupSkillsByRepo
+		exports.SkillRepoGroup = SkillRepoGroup
 		exports.RepoRow = RepoRow
 		exports.RepoSkills = RepoSkills
 		exports.RepoEditForm = RepoEditForm
