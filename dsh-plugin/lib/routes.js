@@ -181,7 +181,7 @@ export function createRouteHandlers(deps) {
 			const { project, roots } = readProjectOfRequest(req, url)
 			const installed = repositories.installedIndex()
 			const warnings = []
-			// 扫全部四个根（不只是当前筛选的那个）：覆盖关系要在全集上算，
+			// 扫全部技能根（两个：全局 + 项目，不只是当前筛选的那个）：覆盖关系要在全集上算，
 			// 否则「项目副本压住全局副本」这件最该讲清楚的事会被筛选藏掉。
 			const scanned = roots.map((root) => {
 				const { skills, warning } = scanRoot(root)

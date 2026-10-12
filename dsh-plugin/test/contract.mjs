@@ -1917,7 +1917,9 @@ const catalogBadPath = await callRouteOrReport(wsRoute, { path: `/api/skill-cons
 check('/catalog 显式路径无效 → 400 error.workspace.invalid', catalogBadPath.status === 400 && catalogBadPath.json?.code === 'error.workspace.invalid', `${catalogBadPath.status} ${JSON.stringify(catalogBadPath.json).slice(0, 160)}`)
 
 const catalogGlobalOnly = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog?scope=global' })
-check('scope=global 仍然只回全局（文档/老调用方不破）', catalogGlobalOnly.status === 200 && catalogGlobalOnly.json.data.roots.every((root) => root.scope === 'global'), JSON.stringify(catalogGlobalOnly.json.data?.roots?.map((root) => root.key)))
+// 先钉死条数与 key，再判 scope：只写 `every(scope === 'global')` 的话，roots 为空时整条**空真通过**，
+// 「一个根都没回来」这种最该炸的回归会被判成绿。全局根由 `resolveRoots` 无条件给出，所以这里是 1 条。
+check('scope=global 仍然只回全局（文档/老调用方不破）', catalogGlobalOnly.status === 200 && catalogGlobalOnly.json.data.roots.length === 1 && catalogGlobalOnly.json.data.roots[0].key === 'user-dsh' && catalogGlobalOnly.json.data.roots.every((root) => root.scope === 'global'), JSON.stringify(catalogGlobalOnly.json.data?.roots?.map((root) => root.key)))
 
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 

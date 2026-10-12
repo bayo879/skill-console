@@ -95,9 +95,11 @@ kind: 'prefix'   path: '/api/skill-console'
 ## 2. `GET /catalog?scope=all|global|project&project=<workspaceDir>`
 
 技能目录。`scope` 取值 `all` / `global` / `project`，**缺省即 `all`**——一次回来「当前工作区的全貌」：
-全局技能根 + 项目技能根两条；只有显式 `?scope=global` / `?scope=project` 才收窄到一个源。
+解析出工作区时是全局技能根 + 项目技能根两条（工作区解析不出时只有全局根）；只有显式
+`?scope=global` / `?scope=project` 才收窄到一个源。
 `project` 只在 `scope` 不是 `global` 时有意义（`scope=global` 时恒为 `null`）；值是**工作区目录路径**
-（`?project=` 显式给了但解析不出 → 400 `error.workspace.invalid`，不回落；没给才退回请求头会话）。
+（`?project=` 显式给了但解析不出 → 400 `error.workspace.invalid`，不回落；
+没给才按会话宽松解析——解析不出就回落到「最近一个会话」）。
 
 ```jsonc
 {
@@ -108,7 +110,7 @@ kind: 'prefix'   path: '/api/skill-console'
     // 按请求头会话解析时则是会话形态（有 `sessionId`、没有 `path`）。`scope=global` 时为 null。
     "project": { "path": "/Users/…/proj-a", "cwd": "/Users/…/proj-a", "sessionId": null,
                  "root": "/Users/…/proj-a", "fallback": false },
-    "roots": [                // scope=all 时这里是两条：先全局根、后项目根
+    "roots": [                // scope=all 且解析出工作区时这里是两条：先全局根、后项目根
       { "key": "user-dsh", "scope": "global", "label": "全局 DSH",
         "path": "…", "exists": true,
         "skills": [
