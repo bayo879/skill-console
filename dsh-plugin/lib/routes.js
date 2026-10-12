@@ -19,7 +19,7 @@ import { basename } from 'node:path'
 import { copySkillIntoRoot, findCollisions, planRemoval, readSkill, removeSkill, scanRoot, toggleSkill } from './roots.js'
 import { applyRole, planRole } from './roles.js'
 import { CLIENT_HEADER, errorText, httpError, readJsonBody, trustedHostsOf, validateMutation, validateRequestOrigin, writeJson } from './http.js'
-import { listProjects, resolveProject, rootsFor } from './projects.js'
+import { listProjects, resolveProject, resolveProjectStrict, rootsFor } from './projects.js'
 
 /** 批量启停 / 批量安装的上限（一次请求别把界面卡死）。 */
 export const MAX_BATCH = 200
@@ -59,19 +59,35 @@ export function createRouteHandlers(deps) {
 	}
 
 	/**
-	 * 本次请求的项目 + 项目技能根 + 全局技能根。
+	 * 写请求的项目：`body.project` 优先，其次请求头；两条路都走**严格**解析。
 	 *
-	 * 角色这条线上**只有这里**能同时看见两个根：全局根只用来「展示 + 报告接管」，
-	 * 绝不会被传进 `applyRole`（它只接受单个根）。
+	 * 给了名字却解析不出来时绝不退回另一条路——宁可 400，也不能写到别的项目去。
 	 */
+	const projectOfRequest = (req, body) => {
+		const explicit = body !== null && body !== undefined && typeof body.project === 'string' ? body.project : ''
+		const header = req.headers['x-skill-console-session']
+		const project = resolveProjectStrict(ctx, explicit !== '' ? explicit : header)
+		return { project, roots: project === null ? [] : rootsFor(project) }
+	}
+
+	/** 项目 + 三个根的收口：读路径宽松、写路径严格，最后都落到这里。 */
+	const rolePartsFor = (project, roots) => ({
+		project,
+		projectRoot: roots.find((root) => root.key === 'project-dsh') ?? null,
+		globalRoot: roots.find((root) => root.key === 'user-dsh') ?? null,
+		roots,
+	})
+
+	/** 读路径：按今天的语义回落（sessionId 认不出时用最近一个会话）。 */
 	const roleContextOf = (sessionId) => {
 		const { project, roots } = contextOf(sessionId)
-		return {
-			project,
-			projectRoot: roots.find((root) => root.key === 'project-dsh') ?? null,
-			globalRoot: roots.find((root) => root.key === 'user-dsh') ?? null,
-			roots,
-		}
+		return rolePartsFor(project, roots)
+	}
+
+	/** 写路径：项目只认请求里指定的那个。 */
+	const roleContextOfRequest = (req, body) => {
+		const { project, roots } = projectOfRequest(req, body)
+		return rolePartsFor(project, roots)
 	}
 
 	/** 项目根当前扫描到的技能（项目根不存在时是空表）。 */
@@ -242,7 +258,7 @@ export function createRouteHandlers(deps) {
 			const target = body.target === 'project' ? 'project' : 'global'
 			let targetSkillsDir
 			if (target === 'project') {
-				const { project, projectRoot } = roleContextOf(req.headers['x-skill-console-session'])
+				const { project, projectRoot } = roleContextOfRequest(req, body)
 				if (project === null || projectRoot === null) throw httpError(400, 'error.role.noProject', '解析不出项目技能根，无法装到项目')
 				targetSkillsDir = projectRoot.path
 			}
@@ -309,7 +325,7 @@ export function createRouteHandlers(deps) {
 			if (id === '') throw httpError(400, 'error.proto.missingId', '缺少 id')
 			const role = roleStore.get(id)
 			if (role === null) throw httpError(404, 'error.role.unknown', `没有这个角色：${id}`)
-			const { project, projectRoot, globalRoot, roots } = roleContextOf(req.headers['x-skill-console-session'])
+			const { project, projectRoot, globalRoot, roots } = roleContextOfRequest(req, body)
 			if (project === null || projectRoot === null) throw httpError(400, 'error.role.noProject', '解析不出项目根，无法切换角色')
 			// 全局扫描结果只当复制来源；它不会进 applyRole（那边只收 projectRoot）。
 			const plan = planRole({ role, skills: projectSkillsOf(projectRoot), sources: globalRoot === null ? [] : scanRoot(globalRoot).skills })
@@ -340,7 +356,8 @@ export function createRouteHandlers(deps) {
 		},
 
 		async rolesDeactivate(req) {
-			const { project } = roleContextOf(req.headers['x-skill-console-session'])
+			const body = await readJsonBody(req)
+			const { project } = roleContextOfRequest(req, body)
 			if (project === null) throw httpError(400, 'error.role.noProject', '解析不出项目根，无法取消角色')
 			return { cleared: roleStore.clearActive(project.root) }
 		},
@@ -394,7 +411,7 @@ export function createRouteHandlers(deps) {
 			const body = await readJsonBody(req)
 			const filePath = String(body.path ?? '')
 			if (filePath === '') throw httpError(400, 'error.proto.missingPath', '缺少 path')
-			const { project, projectRoot, globalRoot, roots: visibleRoots } = roleContextOf(req.headers['x-skill-console-session'])
+			const { project, projectRoot, globalRoot, roots: visibleRoots } = roleContextOfRequest(req, body)
 			if (project === null || projectRoot === null) throw httpError(400, 'error.role.noProject', '解析不出项目技能根，无法移动')
 			const removal = planRemoval(visibleRoots, filePath)
 			// `planRemoval` 的 `root` 是根的 **key 字符串**（见 roots.js 的 readSkill），不是根对象。

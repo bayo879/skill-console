@@ -103,6 +103,23 @@ export function resolveProject(ctx, sessionId) {
 	return { sessionId: first.sessionId, cwd: first.cwd, root: findProjectRoot(first.cwd), fallback: true }
 }
 
+/**
+ * 严格版：只认给定的会话，解析不出来就 null。
+ *
+ * 写操作必须走这条——`resolveProject` 找不到会话时会回落到「最近一个会话」，
+ * 那意味着界面选着项目 B、写却落到项目 A，而且没有任何提示。
+ *
+ * @param ctx - 宿主上下文。
+ * @param sessionId - 请求里指定的会话 id（body.project 或请求头）。
+ * @returns `{sessionId, cwd, root, fallback:false}` 或 null。
+ */
+export function resolveProjectStrict(ctx, sessionId) {
+	if (typeof sessionId !== 'string' || sessionId === '') return null
+	const cwd = sessionCwd(ctx, sessionId)
+	if (cwd === undefined) return null
+	return { sessionId, cwd, root: findProjectRoot(cwd), fallback: false }
+}
+
 /** 本次请求可见的全部技能根（全局 + 该项目）。 */
 export function rootsFor(project) {
 	return resolveRoots({ dshHome: resolveDshHome(), projectCwd: project?.cwd })

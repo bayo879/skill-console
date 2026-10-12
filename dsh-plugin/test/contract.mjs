@@ -1642,6 +1642,56 @@ host.apply({
 const installNoProject = await callRoute(noProjectRoute, { method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['proj-only'], target: 'project' } })
 check('解析不出项目根 + target=project → 400 error.role.noProject（不退化成全局）', installNoProject.status === 400 && installNoProject.json?.code === 'error.role.noProject', `${installNoProject.status} ${JSON.stringify(installNoProject.json).slice(0, 200)}`)
 
+// ── 4c. 项目上下文：写操作只认请求里指定的项目 ────────────────────────────
+//
+// 现场背景：`resolveProject` 在会话未知时会回落到「最近一个会话」——界面选着项目 B、
+// 写却落到项目 A，且没有任何提示。写接口必须严格：给了解析不出来就 400，一个字节不写。
+
+const otherSession = sessionAt('session-test-2', secondProjectDir, 50)
+const twoProjectCtx = { sessions: { list: () => [fakeSession, otherSession], get: (id) => [fakeSession, otherSession].find((session) => session.id === id) } }
+
+check('projects.js 导出 resolveProjectStrict', typeof projectsModule.resolveProjectStrict === 'function')
+check('resolveProjectStrict 认得第二个项目的会话', projectsModule.resolveProjectStrict?.(twoProjectCtx, otherSession.id)?.root === secondProjectDir)
+check('resolveProjectStrict 对未知会话返回 null（绝不回落）', projectsModule.resolveProjectStrict?.(twoProjectCtx, 'session-gone') === null)
+check('resolveProjectStrict 对空 / 缺失会话 id 返回 null', projectsModule.resolveProjectStrict?.(twoProjectCtx, '') === null && projectsModule.resolveProjectStrict?.(twoProjectCtx, undefined) === null)
+
+// 把两个会话接进已注册路由的 ctx：后面的写请求才有「另一个项目」可切。
+const otherSkillsRoot = join(secondProjectDir, '.dsh', 'skills')
+placeSkill(otherSkillsRoot, 'rp-other', true)
+placeSkill(otherSkillsRoot, 'rp-drop', true)
+placeSkill(rolesProjectSkills, 'rp-keep', true)
+pluginCtx.sessions = twoProjectCtx.sessions
+
+const otherRoles = await call({ path: `/api/skill-console/roles?project=${otherSession.id}`, headers: roleSession })
+check('GET /roles?project= 读的是那个项目', otherRoles.json?.data?.project?.name === 'other' && otherRoles.json.data.project.fallback === false, JSON.stringify(otherRoles.json?.data?.project))
+check('那个项目的候选里有它自己的技能', otherRoles.json?.data?.candidates?.project?.some((entry) => entry.name === 'rp-other') === true)
+
+const otherRole = (await call({ method: 'POST', path: '/api/skill-console/roles/save', headers: { ...ROLE_WRITE, ...roleSession }, body: { name: '另一个项目的角色', skills: ['rp-other'] } })).json.data.role
+const activateOther = await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: otherRole.id, project: otherSession.id } })
+check('activate 带 project：落点是那个项目', activateOther.status === 200 && existsSync(join(otherSkillsRoot, 'rp-drop', 'SKILL.md.disabled')))
+check('activate 带 project：当前会话的项目一个字节没动', existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')))
+check('activate 带 project：active 记在那个项目名下', (await call({ path: `/api/skill-console/roles?project=${otherSession.id}`, headers: roleSession })).json.data.active?.id === otherRole.id)
+
+const unknownProject = await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: otherRole.id, project: 'session-gone' } })
+check('未知 project → 400 error.role.noProject', unknownProject.status === 400 && unknownProject.json.code === 'error.role.noProject')
+check('未知 project：当前会话的项目没被牵连（rp-keep 仍启用）', existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')))
+
+const noProject = await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE }, body: { id: otherRole.id } })
+check('角色写请求既无会话头也无 project → 400（不再悄悄写到最近的项目）', noProject.status === 400 && noProject.json.code === 'error.role.noProject')
+
+const deactivateOther = await call({ method: 'POST', path: '/api/skill-console/roles/deactivate', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: otherSession.id } })
+check('deactivate 带 project：清掉那个项目的激活记录', deactivateOther.status === 200 && (await call({ path: `/api/skill-console/roles?project=${otherSession.id}`, headers: roleSession })).json.data.active === null)
+check('deactivate 带 project：当前会话的项目仍然没有角色', (await call({ path: '/api/skill-console/roles', headers: roleSession })).json.data.active === null)
+
+const installOther = await call({ method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['proj-only'], target: 'project', project: otherSession.id } })
+check('install 带 project：装进那个项目', installOther.status === 200 && existsSync(join(otherSkillsRoot, 'proj-only', 'SKILL.md')), `${installOther.status} ${JSON.stringify(installOther.json).slice(0, 200)}`)
+
+placeSkill(join(home, 'skills'), 'move-other', true)
+const moveOther = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'move-other', 'SKILL.md'), project: otherSession.id } })
+check('move-to-project 带 project：搬到那个项目', moveOther.status === 200 && existsSync(join(otherSkillsRoot, 'move-other', 'SKILL.md')), `${moveOther.status} ${JSON.stringify(moveOther.json).slice(0, 200)}`)
+const moveUnknown = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesProjectSkills, 'rp-keep', 'SKILL.md'), project: 'session-gone' } })
+check('move-to-project 未知 project → 400 且没搬走', moveUnknown.status === 400 && existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')), `${moveUnknown.status} ${JSON.stringify(moveUnknown.json).slice(0, 160)}`)
+
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
 section('浏览器半边（模块表 / slot 契约 / 降级）')
