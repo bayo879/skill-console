@@ -1898,6 +1898,27 @@ host.apply({
 const nonArrayRegistryState = await callRouteOrReport(nonArrayRegistryRoute, { path: '/api/skill-console/state' })
 check('注册表 list() 返回非数组 → /state 200 且退回活着的会话', nonArrayRegistryState.status === 200 && nonArrayRegistryState.json.data?.workspacesFrom === 'sessions', `${nonArrayRegistryState.status} ${nonArrayRegistryState.threw ?? JSON.stringify(nonArrayRegistryState.json?.data?.workspacesFrom)}`)
 
+// ── 4g. 技能目录缺省就是全貌（0.6.0）────────────────────────────────────
+
+section('技能目录：缺省就是一个工作区的全貌（全局 + 项目两个源）')
+
+// 这一条**必须带会话头**：`readProjectOfRequest` 只在请求里显式给了 `?project=` 时才认路径，
+// 没给就回落到请求头会话。不带头的请求解析不出工作区（`project` 为 null），
+// 那是「没指定工作区」的诚实答案，不是这里要断言的缺省语义。
+const catalogAll = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog', headers: { 'x-skill-console-session': fakeSession.id } })
+check('/catalog 缺省返回两条根（全局 + 项目）', catalogAll.status === 200 && catalogAll.json.data?.scope === 'all' && catalogAll.json.data.roots.length === 2 && catalogAll.json.data.roots.some((root) => root.key === 'user-dsh') && catalogAll.json.data.roots.some((root) => root.key === 'project-dsh'), `${catalogAll.status} ${JSON.stringify(catalogAll.json.data?.roots?.map((root) => root.key))}`)
+check('/catalog 缺省（带会话头）时 project 是那个工作区', catalogAll.json.data?.project?.root === projectDir, JSON.stringify(catalogAll.json.data?.project))
+
+// `secondProjectDir` 自带 `.git`，项目根就是它自己——断言「按目录路径解析出的项目根」落在它上面。
+const catalogByPath = await callRouteOrReport(wsRoute, { path: `/api/skill-console/catalog?project=${encodeURIComponent(secondProjectDir)}` })
+check('/catalog?project=<目录> 的项目根落在那条工作区', catalogByPath.status === 200 && catalogByPath.json.data.project?.root === secondProjectDir && catalogByPath.json.data.roots.some((root) => root.key === 'project-dsh' && root.path === join(secondProjectDir, '.dsh', 'skills')), `${catalogByPath.status} ${JSON.stringify(catalogByPath.json.data?.project)} ${JSON.stringify(catalogByPath.json.data?.roots?.map((root) => root.path))}`)
+
+const catalogBadPath = await callRouteOrReport(wsRoute, { path: `/api/skill-console/catalog?project=${encodeURIComponent(join(wsPlainDir, 'nope'))}` })
+check('/catalog 显式路径无效 → 400 error.workspace.invalid', catalogBadPath.status === 400 && catalogBadPath.json?.code === 'error.workspace.invalid', `${catalogBadPath.status} ${JSON.stringify(catalogBadPath.json).slice(0, 160)}`)
+
+const catalogGlobalOnly = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog?scope=global' })
+check('scope=global 仍然只回全局（文档/老调用方不破）', catalogGlobalOnly.status === 200 && catalogGlobalOnly.json.data.roots.every((root) => root.scope === 'global'), JSON.stringify(catalogGlobalOnly.json.data?.roots?.map((root) => root.key)))
+
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
 section('浏览器半边（模块表 / slot 契约 / 降级）')

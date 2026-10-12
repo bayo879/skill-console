@@ -92,21 +92,23 @@ kind: 'prefix'   path: '/api/skill-console'
 `workspacesFrom: 'sessions'` 时界面应说明「工作区列表来自当前活着的会话，可能不完整」；
 `workspaces` 可能是空数组，此时 `selected` 仍按请求头会话给（或 `null`）。
 
-## 2. `GET /catalog?scope=global|project&project=<workspaceDir>`
+## 2. `GET /catalog?scope=all|global|project&project=<workspaceDir>`
 
-技能目录。`scope` 默认 `global`；`project` 只在 `scope=project` 时有意义（值是**工作区目录路径**，
-无效就 400 `error.workspace.invalid`，不回落）。
+技能目录。`scope` 取值 `all` / `global` / `project`，**缺省即 `all`**——一次回来「当前工作区的全貌」：
+全局技能根 + 项目技能根两条；只有显式 `?scope=global` / `?scope=project` 才收窄到一个源。
+`project` 只在 `scope` 不是 `global` 时有意义（`scope=global` 时恒为 `null`）；值是**工作区目录路径**
+（`?project=` 显式给了但解析不出 → 400 `error.workspace.invalid`，不回落；没给才退回请求头会话）。
 
 ```jsonc
 {
   "ok": true,
   "data": {
-    "scope": "global",
+    "scope": "all",           // 缺省；显式收窄时是 'global' | 'project'
     // 给了 `?project=<目录路径>` 时是工作区形态：`sessionId` 为 null、多一个 `path`、`cwd` 就是那个目录；
-    // 按请求头会话解析时则是会话形态（有 `sessionId`、没有 `path`）。global 时为 null。
+    // 按请求头会话解析时则是会话形态（有 `sessionId`、没有 `path`）。`scope=global` 时为 null。
     "project": { "path": "/Users/…/proj-a", "cwd": "/Users/…/proj-a", "sessionId": null,
                  "root": "/Users/…/proj-a", "fallback": false },
-    "roots": [
+    "roots": [                // scope=all 时这里是两条：先全局根、后项目根
       { "key": "user-dsh", "scope": "global", "label": "全局 DSH",
         "path": "…", "exists": true,
         "skills": [

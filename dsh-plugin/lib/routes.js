@@ -174,7 +174,10 @@ export function createRouteHandlers(deps) {
 		},
 
 		async catalog(req, url) {
-			const scope = url.searchParams.get('scope') === 'project' ? 'project' : 'global'
+			// 缺省不是「只给全局」，而是「这一屏就是当前工作区的全貌」：两条根全回。
+			// 只有显式 `?scope=global` / `?scope=project` 才收窄——老调用方的行为一字不改。
+			const requested = url.searchParams.get('scope')
+			const scope = requested === 'project' || requested === 'global' ? requested : 'all'
 			const { project, roots } = readProjectOfRequest(req, url)
 			const installed = repositories.installedIndex()
 			const warnings = []
@@ -186,12 +189,12 @@ export function createRouteHandlers(deps) {
 				return { ...root, skills }
 			})
 			const rows = scanned
-				.filter((root) => root.scope === scope)
+				.filter((root) => scope === 'all' || root.scope === scope)
 				.map((root) => ({
 					...publicRoot(root),
 					skills: root.skills.map((skill) => ({ ...skill, installed: installed.get(skill.name) ?? null })),
 				}))
-			return { scope, project: scope === 'project' ? project : null, roots: rows, collisions: findCollisions(scanned), warnings }
+			return { scope, project: scope === 'global' ? null : project, roots: rows, collisions: findCollisions(scanned), warnings }
 		},
 
 		async skill(req, url) {
