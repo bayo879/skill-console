@@ -2115,6 +2115,88 @@ const repoGroupBatch = collect(repoGroupTree, (element) => element.props !== und
 repoGroupBatch?.props?.onClick()
 check('按仓库批量：作用域恰好是这一组的技能', groupCalls.includes('o/r:1:true'), groupCalls.join(','))
 
+// 规格 §1「根 → 仓库，两层都可折叠」/ §4「折叠字典的 key 也含 root.key」/ §7「点根组的收起 → 整根的仓库组全消失」。
+const rootFoldCalls = []
+const rootFoldSkills = [
+	{ name: 'alpha', path: '/x/alpha/SKILL.md', enabled: true, toggleable: true, installed: { id: 'o/r' } },
+	{ name: 'beta', path: '/x/beta/SKILL.md', enabled: false, toggleable: true, installed: null },
+]
+const rootFoldProps = {
+	t: tStub,
+	root: { key: 'user-dsh', label: '全局 DSH', path: '/Users/someone/.dsh/skills', exists: true, skills: rootFoldSkills },
+	busy: false,
+	busyPath: null,
+	onToggleRepo: (key) => rootFoldCalls.push('toggle:' + key),
+	onBatch: (skills, enabled, label) => rootFoldCalls.push(`${label}:${skills.length}:${enabled}`),
+	onOpen: () => {},
+	onToggle: () => {},
+	onDelete: () => {},
+	onMove: () => {},
+}
+// 组头是唯一入口：断言必须在**那个组头里面**找控件，否则会命中别的组的同名按钮。
+const inHead = (tree, headClass, predicate) =>
+	collect(collect(tree, (element) => String(element.props?.className || '').includes(headClass))[0], predicate)[0]
+const disclosureIn = (tree, headClass) => inHead(tree, headClass, (element) => String(element.props?.className || '').includes('sc-disclosure'))
+const batchButtonIn = (tree, headClass, kind) =>
+	inHead(tree, headClass, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes(kind))
+// 测试环境的 createElement 不展开函数组件：SkillGroup 里的 SkillRepoGroup 要手动求值才看得到组内结构。
+const isRepogroup = (element) => {
+	const className = String(element.props?.className || '')
+	return className === 'sc-repogroup' || className.startsWith('sc-repogroup ')
+}
+function expandRepoGroups(node) {
+	if (!node || typeof node !== 'object') return node
+	if (Array.isArray(node)) return node.map(expandRepoGroups)
+	if (node.type === exposed.SkillRepoGroup) return expandRepoGroups(exposed.SkillRepoGroup(node.props))
+	return { ...node, children: (node.children || []).map(expandRepoGroups) }
+}
+const repogroupsOf = (tree) => collect(tree, (element) => element.type !== exposed.SkillRepoGroup && isRepogroup(element))
+
+const rootCollapsedTree = expandRepoGroups(exposed.SkillGroup({ ...rootFoldProps, collapsedRepos: { 'user-dsh': true } }))
+const rootDisclosure = disclosureIn(rootCollapsedTree, 'sc-group-head')
+check('根组头带可访问的折叠开关', rootDisclosure !== undefined && rootDisclosure.props['aria-expanded'] === 'false', collectTexts(rootCollapsedTree).join('|'))
+check('折叠根时整根的仓库组都不渲染', repogroupsOf(rootCollapsedTree).length === 0, collectTexts(rootCollapsedTree).join('|'))
+rootDisclosure?.props?.onClick()
+check('点根组的折叠开关回报根标识（供上层记状态）', rootFoldCalls.includes('toggle:user-dsh'), rootFoldCalls.join(','))
+const rootBatchWhenCollapsed = batchButtonIn(rootCollapsedTree, 'sc-group-head', 'batchEnableAria')
+rootBatchWhenCollapsed?.props?.onClick()
+check('折叠根时根头的批量按钮仍然可用、作用仍是整根', rootFoldCalls.includes('全局 DSH:2:true'), rootFoldCalls.join(','))
+check('默认全展开：根未折叠时渲染出它的仓库组', repogroupsOf(expandRepoGroups(exposed.SkillGroup({ ...rootFoldProps, collapsedRepos: {} }))).length === 2)
+
+// 规格 §7「本机组也能折叠、也能批量」（installed === null 不是「没资格」）。
+const localOnlyTree = expandRepoGroups(exposed.SkillGroup({ ...rootFoldProps, root: { ...rootFoldProps.root, skills: [rootFoldSkills[1]] }, collapsedRepos: {} }))
+const localDisclosure = disclosureIn(localOnlyTree, 'sc-repogroup-head')
+check('本机组也能折叠', localDisclosure !== undefined && localDisclosure.props['aria-expanded'] === 'true', collectTexts(localOnlyTree).join('|'))
+const localBatch = batchButtonIn(localOnlyTree, 'sc-repogroup-head', '本地（非订阅）')
+localBatch?.props?.onClick()
+check('本机组也能批量', rootFoldCalls.includes('本地（非订阅）:1:true'), rootFoldCalls.join(','))
+
+// 规格 §7「空集合不请求」：整根一个技能都没有时，批量按钮点不动。
+const emptyRootTree = exposed.SkillGroup({ ...rootFoldProps, root: { ...rootFoldProps.root, skills: [] }, collapsedRepos: {} })
+const emptyBatchButtons = collect(emptyRootTree, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batch'))
+check(
+	'空集合：批量按钮禁用、只出提示',
+	emptyBatchButtons.length === 2 && emptyBatchButtons.every((element) => element.props.disabled === true) && collectTexts(emptyRootTree).includes('skills.empty'),
+	collectTexts(emptyRootTree).join('|'),
+)
+const batchNoopGuard = clientSource.slice(clientSource.indexOf('const batch = '), clientSource.indexOf("apiPost('/toggle-batch'"))
+check('空集合：不发 /toggle-batch 请求', batchNoopGuard.includes('items.length === 0') && batchNoopGuard.includes('return'), batchNoopGuard.slice(-80))
+
+// 折叠开关的可访问性细节与订阅卡片（RepoRow）保持一致：悬停有 title，三角对读屏隐藏。
+const disclosureA11y = (disclosure) =>
+	disclosure !== undefined && typeof disclosure.props.title === 'string' && disclosure.children?.[0]?.props['aria-hidden'] === 'true'
+check(
+	'折叠开关带 title、折叠三角对读屏隐藏（两级都是）',
+	disclosureA11y(disclosureIn(rootCollapsedTree, 'sc-group-head')) && disclosureA11y(disclosureIn(repoGroupTree, 'sc-repogroup-head')),
+	JSON.stringify([disclosureIn(rootCollapsedTree, 'sc-group-head')?.props, disclosureIn(repoGroupTree, 'sc-repogroup-head')?.props]),
+)
+
+// 「（{project}）」在文案里是无条件拼上去的：项目名解析不出来时必须兜底，否则渲染成空的「（）」。
+// 取调用点（`askConfirm(moveConfirmText(`）——直接找 `moveConfirmText(t, skill,` 会命中函数定义。
+const moveConfirmCallAt = clientSource.indexOf('askConfirm(moveConfirmText(t, skill,')
+const moveConfirmCall = clientSource.slice(moveConfirmCallAt, moveConfirmCallAt + 140)
+check('「移到项目」的确认文案在项目名解析不出来时有兜底', moveConfirmCallAt >= 0 && /moveConfirmText\(t, skill, project\.activeName \|\| /.test(moveConfirmCall), moveConfirmCall)
+
 // 「移到项目」必须带上界面选中的项目：不带项目时宿主按会话头解析，落点会是别的项目。
 const moveWiring = clientSource.indexOf("apiPost('/skills/move-to-project'")
 check('「移到项目」也带上选中项目', moveWiring >= 0 && clientSource.slice(moveWiring, moveWiring + 120).includes('withProject(project'))

@@ -629,11 +629,17 @@ window.__ModuleLoader__.load({
 /* 一个技能根下面按仓库分组：两级都能折叠（需求 ④）。组内第一行不要再画分隔线——
    .sc-group 那条 :first-child 规则够不到现在这一层。 */
 .sc-repogroup { border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
-.sc-repogroup:first-child { border-top: 0; }
+/* 首个仓库组紧跟在根组头下面：根组头自己已有 border-bottom，再画一条就是双线。 */
+.sc-group-head + .sc-repogroup { border-top: 0; }
 .sc-repogroup-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.03)); }
 .sc-repogroup.is-open > .sc-repogroup-head { border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 .sc-repogroup-title { font-weight: 600; font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace); }
+/* 仓库组相对根缩进一级，层级一眼看得出来（规格 §4）。 */
+.sc-repogroup .sc-row { padding-left: 22px; }
 .sc-repogroup .sc-row:first-child { border-top: 0; }
+/* 技能根收起后卡片只剩组头：组头那条分隔线会和卡片下边框叠成双线。
+   只对技能根生效（.sc-skillroot），角色页签那几个 .sc-group 的分隔线要留着。 */
+.sc-skillroot:not(.is-open) > .sc-group-head { border-bottom: 0; }
 .sc-row.is-clickable { cursor: pointer; }
 .sc-row.is-clickable:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.1)); }
 .sc-row-main { display: flex; flex: 1 1 auto; flex-direction: column; gap: 3px; min-width: 0; }
@@ -1411,11 +1417,12 @@ window.__ModuleLoader__.load({
 						{
 							type: 'button',
 							className: 'sc-disclosure',
+							title: t(collapsed ? 'skills.expand' : 'skills.collapse'),
 							'aria-expanded': collapsed ? 'false' : 'true',
 							'aria-label': t(collapsed ? 'skills.expand' : 'skills.collapse'),
 							onClick: () => props.onToggleRepo(group.key),
 						},
-						h('span', { className: 'sc-caret', 'data-open': collapsed ? 'false' : 'true' }),
+						h('span', { className: 'sc-caret', 'aria-hidden': 'true', 'data-open': collapsed ? 'false' : 'true' }),
 					),
 					h('span', { className: 'sc-repogroup-title' }, label),
 					h('span', { className: 'sc-hint' }, t('skills.groupCount', { count: skills.length })),
@@ -1457,7 +1464,7 @@ window.__ModuleLoader__.load({
 			)
 		}
 
-		/** 一个技能根（分组）：标题 + 根名 + 根内按仓库分组（可折叠） + 整根批量启停。 */
+		/** 一个技能根（分组）：标题 + 根名 + 根内按仓库分组（两级都可折叠） + 整根批量启停。 */
 		function SkillGroup(props) {
 			const t = props.t
 			const root = props.root || {}
@@ -1468,21 +1475,38 @@ window.__ModuleLoader__.load({
 			const canEnable = existing.some((skill) => skill.enabled !== true)
 			const canDisable = existing.some((skill) => skill.enabled === true)
 			const collapsedRepos = props.collapsedRepos ?? {}
+			// 两层折叠共用一个字典：根用 root.key，仓库用 root.key + ':' + repoKey（规格 §4）。
+			const collapsed = collapsedRepos[root.key] === true
 			return h(
 				'div',
-				{ className: 'sc-group' },
+				{ className: 'sc-group sc-skillroot' + (collapsed ? '' : ' is-open') },
 				h(
 					'div',
 					{ className: 'sc-group-head' },
+					// 与仓库组同构的折叠开关：原生 button + CSS 三角。
+					h(
+						'button',
+						{
+							type: 'button',
+							className: 'sc-disclosure',
+							title: t(collapsed ? 'skills.expand' : 'skills.collapse'),
+							'aria-expanded': collapsed ? 'false' : 'true',
+							'aria-label': t(collapsed ? 'skills.expand' : 'skills.collapse'),
+							onClick: () => props.onToggleRepo(root.key),
+						},
+						h('span', { className: 'sc-caret', 'aria-hidden': 'true', 'data-open': collapsed ? 'false' : 'true' }),
+					),
 					h(UiStateDot, { state: root.exists === false ? 'error' : 'done', size: 8 }),
 					h('span', { className: 'sc-group-title' }, label),
 					root.exists === false ? h(UiTag, { tone: 'warning' }, t('skills.groupMissing')) : null,
 					h('span', { className: 'sc-spacer' }),
 					h('span', { className: 'sc-hint' }, t('skills.groupCount', { count: skills.length })),
 					// 根头这一对仍然作用于**整根**：这是「一键处理这个技能根」的入口。
+					// 折叠根不影响它们（用户不必先展开再批量）。
 					h(UiButton, {
 						variant: 'ghost',
 						size: 'sm',
+						'aria-label': t('skills.batchEnableAria', { label }),
 						disabled: props.busy || !canEnable,
 						onClick: () => props.onBatch(skills, true, label),
 						children: t('skills.batchEnable'),
@@ -1490,32 +1514,35 @@ window.__ModuleLoader__.load({
 					h(UiButton, {
 						variant: 'ghost',
 						size: 'sm',
+						'aria-label': t('skills.batchDisableAria', { label }),
 						disabled: props.busy || !canDisable,
 						onClick: () => props.onBatch(skills, false, label),
 						children: t('skills.batchDisable'),
 					}),
 				),
-				skills.length === 0
-					? h('div', { className: 'sc-empty' }, t('skills.empty'))
-					: groups.map((group) => {
-							// 折叠键带上根：两个根里可能有同名仓库。
-							const collapseKey = (root.key || '') + ':' + group.key
-							return h(SkillRepoGroup, {
-								key: group.key,
-								t,
-								root,
-								group,
-								busy: props.busy,
-								busyPath: props.busyPath,
-								collapsed: collapsedRepos[collapseKey] === true,
-								onToggleRepo: () => props.onToggleRepo(collapseKey),
-								onBatch: props.onBatch,
-								onOpen: props.onOpen,
-								onToggle: props.onToggle,
-								onDelete: props.onDelete,
-								onMove: props.onMove,
-							})
-						}),
+				collapsed
+					? null
+					: skills.length === 0
+						? h('div', { className: 'sc-empty' }, t('skills.empty'))
+						: groups.map((group) => {
+								// 折叠键带上根：两个根里可能有同名仓库。
+								const collapseKey = (root.key || '') + ':' + group.key
+								return h(SkillRepoGroup, {
+									key: group.key,
+									t,
+									root,
+									group,
+									busy: props.busy,
+									busyPath: props.busyPath,
+									collapsed: collapsedRepos[collapseKey] === true,
+									onToggleRepo: () => props.onToggleRepo(collapseKey),
+									onBatch: props.onBatch,
+									onOpen: props.onOpen,
+									onToggle: props.onToggle,
+									onDelete: props.onDelete,
+									onMove: props.onMove,
+								})
+							}),
 			)
 		}
 
@@ -1693,9 +1720,15 @@ window.__ModuleLoader__.load({
 					.then(() => setBusyPath(null))
 			}
 
+			// 宿主为这次 /catalog 实际解析出来的项目。与共享上下文里的「当前项目」是两个东西：
+			// 这一份带 `fallback`，用来暴露「宿主悄悄回落到了别的项目」；名字必须区分开。
+			const catalogProject = catalog.data && catalog.data.project ? catalog.data.project : null
+
 			const moveSkillToProject = (skill) => {
 				if (busyPath !== null) return
-				if (!askConfirm(moveConfirmText(t, skill, project.activeName))) return
+				// 项目名兜底：`activeName` 在项目上下文还没解析出来时是空串，而文案里的（{project}）
+				// 是无条件拼上去的——空串会渲染成一个空的「（）」。用 /catalog 解析出的项目名兜底。
+				if (!askConfirm(moveConfirmText(t, skill, project.activeName || projectNameOf(catalogProject)))) return
 				setBusyPath(skill.path)
 				setNotice(null)
 				setActionFail(null)
@@ -1709,9 +1742,6 @@ window.__ModuleLoader__.load({
 					.then(() => setBusyPath(null))
 			}
 
-			// 宿主为这次 /catalog 实际解析出来的项目。与共享上下文里的「当前项目」是两个东西：
-			// 这一份带 `fallback`，用来暴露「宿主悄悄回落到了别的项目」；名字必须区分开。
-			const catalogProject = catalog.data && catalog.data.project ? catalog.data.project : null
 			const collisions = catalog.data && Array.isArray(catalog.data.collisions) ? catalog.data.collisions : []
 			const warnings = catalog.data && Array.isArray(catalog.data.warnings) ? catalog.data.warnings : []
 			const roots = catalog.data && Array.isArray(catalog.data.roots) ? catalog.data.roots : []
