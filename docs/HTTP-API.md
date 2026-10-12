@@ -27,6 +27,8 @@ kind: 'prefix'   path: '/api/skill-console'
   - **写接口**（`/repositories/install`、`/roles/activate`、`/roles/deactivate`、`/skills/move-to-project`）：
     请求体 `project` 优先于请求头，两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd 就是
     400 `error.role.noProject`，**绝不回落到「最近一个会话」**（否则界面上选着项目 B、写却落到 A）。
+    四个写接口都在解析出项目之后**先判空再动手**：解析不出时**一个字节都不写**。空串
+    `"project": ""` 等同「未提供」，按请求头解析。
 - 所有路径参数都是**绝对路径**，宿主会校验它落在已知技能根内，否则 400
   `error.path.outsideRoots`。前端不要自己拼路径去猜。
 - 技能「根」的 key 固定为两个（`.agents` 不在本插件的管理面内，面板不扫描、也不展示）：
@@ -159,7 +161,7 @@ kind: 'prefix'   path: '/api/skill-console'
 
 ```jsonc
 // 请求
-{ "items": [ { "path": "…", "enabled": false }, … ] }   // 上限 200 项
+{ "items": [ { "path": "…", "enabled": false }, … ] }   // 最多只处理前 200 项：items.slice(0, 200)，其余静默丢弃（不分片、不报错）
 // 响应 data
 { "results": [ { "path": "…", "ok": true }, { "path": "…", "ok": false, "error": "…" } ],
   "changed": 1 }
@@ -333,7 +335,7 @@ kind: 'prefix'   path: '/api/skill-console'
 ```jsonc
 // 读接口，宽松：?project=<sessionId> 优先于 x-skill-console-session 头；
 // 两者都解析不出时回落到最近一个会话，并把 project.fallback 置为 true
-// （这是**读路径**：写路径只认请求体 project / 请求头且严格解析，见 §19、§20）
+// （这是**读路径**：写路径只认请求体 project / 请求头且严格解析，见 §12、§19、§20、§22）
 {
   "ok": true,
   "data": {

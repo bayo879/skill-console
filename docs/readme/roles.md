@@ -29,7 +29,7 @@ DSH 把技能从「全局根 + 项目根」两份叠加加载，**没有任何�
 
 - 角色编辑器里**列出全局技能，并且可以勾选**：勾选 = 切换时把全局那份**复制进项目**（`copy`），不勾 = 什么都不做——全局那份照样生效，角色**不能**停用全局技能。软链接技能（`toggleable !== true`）不可勾。全局那份文件本身不会被改。
 - 切换后如果发生同名接管，**逐条报告**，复用现有 `/toggle` 的 `takeover` 口径（`../../dsh-plugin/lib/routes.js` 的 `takeoverFor`，定义在文件头部的辅助函数区）。
-- README「已知边界」新增一条，把这件事写明。
+- README「已知边界」里有一条讲明这件事（角色排除不掉全局技能）。
 
 ## 4. 数据模型与存储
 
@@ -111,8 +111,9 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 | POST | `/roles/activate` | 对齐：把项目技能根切到该角色 `{id, project?}` |
 | POST | `/roles/deactivate` | 只清本项目的激活记录 `{project?}`（不动磁盘） |
 
-两个写端点都**读请求体**：`project`（会话 id）指定**要操作哪个项目**，**优先于** `x-skill-console-session` 头；
-`project` 省略时按请求头解析。两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd → 400
+四个写端点都**读请求体**；其中 `project`（会话 id）只对 `/roles/activate` 与 `/roles/deactivate` 有意义，
+用来指定**要操作哪个项目**，**优先于** `x-skill-console-session` 头；`project` 省略时按请求头解析。
+两条路都走**严格解析**——会话 id 不存在 / 拿不到 cwd → 400
 `error.role.noProject`，**不会回落到「最近一个会话」**。
 `GET /roles` 与 `GET /roles/preview` 仍是读接口，保持宽松：`?project=<sessionId>` 优先于请求头，
 解析不出时回落最近会话并在 `project.fallback` 里置 `true`。
