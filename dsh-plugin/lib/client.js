@@ -108,17 +108,16 @@ window.__ModuleLoader__.load({
 				'roles.statusMatched': '已对齐角色',
 				'roles.statusDrifted': '已偏离角色',
 				'roles.statusDriftedHint': '项目技能与角色不一致（可能手工改过开关）。不会自动纠正，再切一次即可对齐。',
-				'roles.projectSkills': '项目技能·角色可控制',
-				'roles.globalSkills': '全局技能·可复制到项目',
-				'roles.globalHint': '勾选 = 切换时把全局这份复制进项目（全局那份不动、仍然生效）；不勾 = 什么都不做。',
-				'roles.missingSkills': '角色里包含、但项目根与全局根都没有的技能',
+				'roles.librarySkills': '可用仓库·角色从这里挑选',
+				'roles.libraryHint': '勾选 = 切换时把它复制进当前工作区；项目里已有的同名技能不会被覆盖。',
+				'roles.missingSkills': '角色里包含、但可用仓库与本项目都没有的技能',
 				'roles.missingHint': '这些名字在别的项目里可能有；在本项目里切换时会被跳过。',
 				'roles.noProjectRoot': '这个项目还没有技能根（<项目根>/.dsh/skills 不存在）。',
-				'roles.noCandidates': '项目技能根里还没有技能。',
+				'roles.libraryEmpty': '可用仓库里还没有技能。去「技能仓库」页签把订阅同步过来。',
 				'roles.activateSummary': '复制 {copy} 个 / 启用 {enable} 个 / 停用 {disable} 个 / 跳过 {skipped} 个',
 				'roles.copyCount': '复制 {count} 个',
 				'roles.localKept': '项目里已有同名，保留本地副本',
-				'roles.localKeptHint': '这些技能在这个项目里已经有一份，角色不会用全局那份覆盖它们。',
+				'roles.localKeptHint': '这些技能在这个项目里已经有一份，角色不会用可用仓库那份覆盖它们。',
 				'roles.takeover': '「{name}」停用后有同名技能接管生效',
 				'roles.resultOk': '完成',
 				'roles.resultSkipped': '跳过',
@@ -240,6 +239,13 @@ window.__ModuleLoader__.load({
 				'repos.fetchTitle': '手动操作：只刷新远端清单，不会改动本地已安装技能',
 				'repos.fetchHint': '「拉取最新」永远是你手动点的：它只把远端清单缓存到 DSH_HOME/skill-console/repository-cache，不碰本地技能文件。装什么、什么时候装，都由你逐项确认。',
 				'repos.fetchDone': '已刷新「{id}」的远端清单。',
+				'repos.sync': '同步到可用仓库',
+				'repos.syncTitle': '手动操作：把这份清单里能用的技能全部同步到「可用仓库」；不改任何技能根，覆盖前一律备份',
+				'repos.syncHint': '「可用仓库」是角色挑选技能的地方（DSH_HOME/skill-console/library），DSH 不会加载它。同步只动这个目录：已存在且没被本地改过的不动，本地改过的默认跳过，确认覆盖前先备份。',
+				'repos.syncDone': '已同步到可用仓库：更新 {updated} 个、无变化 {unchanged} 个、跳过 {skipped} 个。',
+				'repos.syncFailed': '同步到可用仓库失败',
+				'repos.libraryLine': '可用仓库：{count} 个',
+				'repos.libraryOutdated': '，其中 {count} 个与最新清单不一致',
 				'repos.remove': '移除订阅',
 				'repos.removeConfirm': '移除订阅 {id}？已安装到本地的技能会原样保留（卸载订阅 ≠ 删除技能）。继续？',
 				'repos.removed': '已移除订阅 {id}，本地保留 {count} 个技能。',
@@ -336,17 +342,16 @@ window.__ModuleLoader__.load({
 				'roles.statusMatched': 'Aligned to role',
 				'roles.statusDrifted': 'Drifted from role',
 				'roles.statusDriftedHint': 'Project skills no longer match the role (toggles were changed by hand). Nothing is corrected automatically — switch again to realign.',
-				'roles.projectSkills': 'Project skills · controlled by the role',
-				'roles.globalSkills': 'Global skills · can be copied into the project',
-				'roles.globalHint': 'Checked = the global copy is copied into the project when switching (it stays active globally). Unchecked = nothing happens.',
-				'roles.missingSkills': 'In the role but in neither the project nor the global skill root',
+				'roles.librarySkills': 'Available library · pick from here',
+				'roles.libraryHint': 'Checked = it is copied into the current workspace when switching; a same-named skill already in the project is never overwritten.',
+				'roles.missingSkills': 'In the role but in neither the available library nor this project',
 				'roles.missingHint': 'These names may exist in other projects; switching here skips them.',
 				'roles.noProjectRoot': 'This project has no skill root yet (<projectRoot>/.dsh/skills does not exist).',
-				'roles.noCandidates': 'The project skill root has no skills yet.',
+				'roles.libraryEmpty': 'The available library has no skills yet. Sync a subscription from the "Skill repositories" tab.',
 				'roles.activateSummary': 'copy {copy} / enable {enable} / disable {disable} / skipped {skipped}',
 				'roles.copyCount': 'copy {count}',
 				'roles.localKept': 'A local copy already exists — keeping it',
-				'roles.localKeptHint': 'These skills already exist in this project; the role will not overwrite them with the global copies.',
+				'roles.localKeptHint': 'These skills already exist in this project; the role will not overwrite them with the library copies.',
 				'roles.takeover': 'After disabling "{name}", a same-named skill takes over',
 				'roles.resultOk': 'done',
 				'roles.resultSkipped': 'skipped',
@@ -467,6 +472,13 @@ window.__ModuleLoader__.load({
 				'repos.fetchTitle': 'Manual action: only refreshes the remote manifest, never touches installed skills',
 				'repos.fetchHint': '"Fetch latest" only ever runs when you click it: it caches the remote manifest under DSH_HOME/skill-console/repository-cache and never touches local skill files. What to install, and when, stays your per-skill decision.',
 				'repos.fetchDone': 'Refreshed the remote manifest of "{id}".',
+				'repos.sync': 'Sync to library',
+				'repos.syncTitle': 'Manual action: sync every usable skill in this manifest into the available library; no skill root is touched, and every overwrite is backed up first',
+				'repos.syncHint': 'The available library is where roles pick skills from (DSH_HOME/skill-console/library); DSH never loads it. Sync only writes that directory: existing untouched copies stay as they are, locally modified ones are skipped unless you confirm, and anything overwritten is backed up first.',
+				'repos.syncDone': 'Synced to the available library: {updated} updated, {unchanged} unchanged, {skipped} skipped.',
+				'repos.syncFailed': 'Syncing to the available library failed',
+				'repos.libraryLine': 'Available library: {count}',
+				'repos.libraryOutdated': ' ({count} behind the latest manifest)',
 				'repos.remove': 'Remove subscription',
 				'repos.removeConfirm': 'Remove the subscription {id}? Skills already installed locally are kept (removing a subscription is not deleting skills). Continue?',
 				'repos.removed': 'Removed the subscription {id}; {count} skills stay installed locally.',
@@ -709,7 +721,7 @@ window.__ModuleLoader__.load({
 .sc-role-skills > .sc-role-skill:first-child { border-top: 0; }
 .sc-role-skill-name { font-family: var(--dsw-font-mono, monospace); font-size: 12px; }
 .sc-role-skill-readonly { opacity: 0.6; }
-.sc-role-global-note { padding: 6px 10px; font-size: 12px; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
+.sc-role-library-note { padding: 6px 10px; font-size: 12px; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
 .sc-role-missing { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; }
 .sc-role-missing-title { font-weight: 600; font-size: 12px; }
 .sc-role-missing-list { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -2160,6 +2172,13 @@ window.__ModuleLoader__.load({
 				updateAvailable: numberOr(status.updateAvailable, 0),
 				upstreamDeleted: numberOr(status.upstreamDeleted, 0),
 			})
+			// 可用仓库里这份订阅的存量：`repo.library` 是后端 list() 按库目录现算的，
+			// 不是安装快照（`status` 那行说的是技能根）。没有这个字段就不显示这行。
+			const library = repo.library && typeof repo.library === 'object' ? repo.library : null
+			const libraryLine = library === null
+				? null
+				: t('repos.libraryLine', { count: numberOr(library.count, 0) })
+					+ (numberOr(library.outdated, 0) > 0 ? t('repos.libraryOutdated', { count: numberOr(library.outdated, 0) }) : '')
 			return h(
 				'div',
 				{ className: 'sc-repo' + (expanded ? ' is-open' : '') },
@@ -2197,8 +2216,11 @@ window.__ModuleLoader__.load({
 						numberOr(status.invalid, 0) + numberOr(status.conflict, 0) > 0
 							? h('span', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, t('repos.statusExtra', { invalid: numberOr(status.invalid, 0), conflict: numberOr(status.conflict, 0) })))
 							: null,
+						// 这一行说的是「可用仓库」里这份订阅的存量：它是角色候选的唯一来源，
+						// 与上面「技能根里装了几个」是两回事。
+						libraryLine === null ? null : h('span', { className: 'sc-hint' }, libraryLine),
 					),
-					// 三个管理动作并列：编辑设置 / 更新（拉取最新）/ 删除订阅。
+					// 四个管理动作并列：编辑设置 / 更新（拉取最新）/ 同步到可用仓库 / 删除订阅。
 					h(
 						'div',
 						{ className: 'sc-row-actions' },
@@ -2220,6 +2242,17 @@ window.__ModuleLoader__.load({
 								disabled: props.busy,
 								onClick: stop(() => props.onFetch(repo)),
 								children: t('repos.fetch'),
+							}),
+						}),
+						h(UiTooltip, {
+							label: t('repos.syncTitle'),
+							side: 'top',
+							children: h(UiButton, {
+								variant: 'outline',
+								size: 'sm',
+								disabled: props.busy,
+								onClick: stop(() => props.onSync(repo)),
+								children: t('repos.sync'),
 							}),
 						}),
 						h(UiButton, { variant: 'danger', size: 'sm', icon: UiIcon('IconTrashOutline16', 14), disabled: props.busy, onClick: stop(() => props.onRemove(repo)), children: t('repos.remove') }),
@@ -2686,6 +2719,31 @@ window.__ModuleLoader__.load({
 					}),
 				)
 
+			/**
+			 * 「同步到可用仓库」——手动批量：把这份清单里能用的技能整份同步进
+			 * `<DSH_HOME>/skill-console/library`，也就是角色挑选技能的池子。
+			 *
+			 * 不带 `withProject`：可用仓库是全局的，一个库服务所有工作区。
+			 * 不做二次确认弹窗（批量动作要一次点完）；本地被改过的项默认跳过，
+			 * 宿主在回执里逐名说明原因。
+			 */
+			const syncLibrary = (repo) =>
+				run(() =>
+					apiPost('/repositories/sync', { id: repo.id }, sessionId).then((data) => {
+						const updated = Array.isArray(data.synced) ? data.synced.length : 0
+						const unchanged = Array.isArray(data.unchanged) ? data.unchanged.length : 0
+						const skipped = Array.isArray(data.skipped) ? data.skipped.length : 0
+						setNotice(t('repos.syncDone', { updated, unchanged, skipped }))
+						return loadList().then((dataAfter) => {
+							// 有跳过项时把原因摊开（多半是「本地改过」或「清单里没有」）。
+							if (skipped === 0) return dataAfter
+							const reasons = data.skipped.map((item) => `${item.name}：${item.reason}`).join('\n')
+							setActionFail(t('repos.syncFailed') + '\n' + reasons)
+							return dataAfter
+						})
+					}),
+				)
+
 			const removeRepo = (repo) => {
 				if (!askConfirm(t('repos.removeConfirm', { id: repo.id }))) return undefined
 				return run(() =>
@@ -2864,6 +2922,7 @@ window.__ModuleLoader__.load({
 									onInstallTarget: setInstallTarget,
 									onToggle: toggleRepo,
 									onFetch: fetchLatest,
+									onSync: syncLibrary,
 									onRemove: removeRepo,
 									onEdit: startEdit,
 									onEditField: (key, value) => setEdit((previous) => ({ ...previous, form: { ...previous.form, [key]: value } })),
@@ -2954,31 +3013,33 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 角色里有、但本机两个根都找不到的技能名。
+		 * 角色里有、但**可用仓库**与本项目技能根都找不到的技能名。
 		 *
-		 * 全局候选也能勾（切换时会复制进项目），所以「项目里没有」**不再**等于「缺」——
-		 * 三个根都找不到才算真的缺。
+		 * 候选只来自可用仓库，所以「缺」的判据也只有两处：库里有没有、
+		 * 本项目技能根里有没有（项目那份是切换时复制进来的结果，或用户手工放的）。
 		 */
-		function missingSkillsOf(skills, candidates) {
-			const known = new Set([...(candidates?.project ?? []), ...(candidates?.global ?? [])].map((skill) => skill.name))
+		function missingSkillsOf(skills, candidates, projectSkills) {
+			const library = Array.isArray(candidates) ? candidates : []
+			const known = new Set([...library, ...(Array.isArray(projectSkills) ? projectSkills : [])].map((skill) => skill.name))
 			return (Array.isArray(skills) ? skills : []).filter((name) => !known.has(name))
 		}
 
 		/**
 		 * 角色编辑器。
 		 *
-		 * 左栏是「项目技能」——角色真正能控制的部分，可勾选；
-		 * 右栏是「全局技能」——同样可勾选：勾上只表示「切换时复制一份进项目」，
-		 * 全局那份不受影响（不勾也不会被停用）。
+		 * 只有**一栏**候选：可用仓库里的技能（角色从这里挑）。技能根里的东西不是候选——
+		 * 它们是角色切换的结果。勾上 = 切换时把它复制进当前工作区的项目技能根；
+		 * `●` / `○` 说的是「它现在在**本项目**里是否已启用」，供用户对照，不参与勾选。
 		 *
-		 * @param props - `{t, draft, candidates, missing, busy, onName, onToggle, onSave, onCancel, onActivate}`。
+		 * @param props - `{t, draft, candidates, projectSkills, missing, busy, onName, onToggle, onSave, onCancel, onActivate}`。
 		 */
 		function RoleEditor(props) {
 			const t = props.t
 			const draft = props.draft
 			const picked = new Set(Array.isArray(draft.skills) ? draft.skills : [])
-			const projectSkills = props.candidates?.project ?? []
-			const globalSkills = props.candidates?.global ?? []
+			const librarySkills = Array.isArray(props.candidates) ? props.candidates : []
+			const projectSkills = Array.isArray(props.projectSkills) ? props.projectSkills : []
+			const enabledInProject = new Set(projectSkills.filter((skill) => skill.enabled === true).map((skill) => skill.name))
 			const missing = props.missing ?? []
 
 			// UiInput 把 rest 直接铺在原生 `<input>` 上（primitives.Input 与退化实现都是），
@@ -2991,36 +3052,12 @@ window.__ModuleLoader__.load({
 				onChange: (event) => props.onName(event.target.value),
 			})
 
-			const projectList = projectSkills.length === 0
-				? h('span', { className: 'sc-sub' }, t('roles.noCandidates'))
+			const libraryList = librarySkills.length === 0
+				? h('span', { className: 'sc-sub' }, t('roles.libraryEmpty'))
 				: h(
 					'div',
 					{ className: 'sc-role-skills' },
-					projectSkills.map((skill) =>
-						h(
-							'label',
-							{ key: skill.name, className: 'sc-role-skill', 'data-skill': skill.name },
-							h(UiSwitch, {
-								checked: picked.has(skill.name),
-								disabled: props.busy || skill.toggleable !== true,
-								label: skill.name,
-								onChange: (next) => props.onToggle(skill.name, next),
-							}),
-							h('span', { className: 'sc-role-skill-name' }, skill.name),
-							h('span', { className: 'sc-sub' }, skill.enabled ? '●' : '○'),
-							skill.toggleable === true ? null : h(UiTag, { tone: 'quiet' }, readOnlyText(t, skill)),
-						),
-					),
-				)
-
-			// 全局候选和项目候选用同一套勾选行：勾上 = 切换时把全局这份复制进项目，
-			// 不勾 = 什么都不做（全局那份照样生效）。软链（toggleable !== true）照旧挡在开关外面。
-			const globalList = globalSkills.length === 0
-				? null
-				: h(
-					'div',
-					{ className: 'sc-role-skills' },
-					globalSkills.map((skill) =>
+					librarySkills.map((skill) =>
 						h(
 							'label',
 							{ key: skill.name, className: 'sc-role-skill' + (skill.toggleable === true ? '' : ' sc-role-skill-readonly'), 'data-skill': skill.name },
@@ -3031,7 +3068,7 @@ window.__ModuleLoader__.load({
 								onChange: (next) => props.onToggle(skill.name, next),
 							}),
 							h('span', { className: 'sc-role-skill-name' }, skill.name),
-							h('span', { className: 'sc-sub' }, skill.enabled ? '●' : '○'),
+							h('span', { className: 'sc-sub' }, enabledInProject.has(skill.name) ? '●' : '○'),
 							skill.toggleable === true ? null : h(UiTag, { tone: 'quiet' }, readOnlyText(t, skill)),
 						),
 					),
@@ -3070,24 +3107,12 @@ window.__ModuleLoader__.load({
 					h(
 						'div',
 						{ className: 'sc-group-head' },
-						h('span', { className: 'sc-group-title' }, t('roles.projectSkills')),
+						h('span', { className: 'sc-group-title' }, t('roles.librarySkills')),
 					),
-					projectList,
+					h('div', { className: 'sc-role-library-note' }, t('roles.libraryHint')),
+					libraryList,
 					missingBlock,
 				),
-				globalList === null
-					? null
-					: h(
-						'div',
-						{ className: 'sc-group' },
-						h(
-							'div',
-							{ className: 'sc-group-head' },
-							h('span', { className: 'sc-group-title' }, t('roles.globalSkills')),
-						),
-						h('div', { className: 'sc-role-global-note' }, t('roles.globalHint')),
-						globalList,
-					),
 			)
 		}
 
@@ -3146,7 +3171,9 @@ window.__ModuleLoader__.load({
 			const draftOf = (role) => ({ id: role.id, name: role.name, skills: [...(role.skills ?? [])] })
 
 			const current = draft ?? { id: null, name: '', skills: [] }
-			const missingInDraft = missingSkillsOf(current.skills, data.candidates)
+			const libraryCandidates = Array.isArray(data.candidates) ? data.candidates : []
+			const projectSkillRows = Array.isArray(data.projectSkills) ? data.projectSkills : []
+			const missingInDraft = missingSkillsOf(current.skills, libraryCandidates, projectSkillRows)
 
 			/**
 			 * 准备一份「将复制 A / 启用 M / 停用 N」的确认文案（本地算，不为了弹窗再打一次接口）。
@@ -3156,13 +3183,12 @@ window.__ModuleLoader__.load({
 			const confirmText = (skills) => {
 				const wanted = skills ?? []
 				const picked = new Set(wanted)
-				const projectSkills = data.candidates?.project ?? []
-				const globalNames = new Set((data.candidates?.global ?? []).map((skill) => skill.name))
-				const known = new Set(projectSkills.map((skill) => skill.name))
-				// copy：角色里有、项目里没有、全局根里有 → 对齐时会从全局复制一份进项目
-				const copy = wanted.filter((name) => !known.has(name) && globalNames.has(name)).length
-				const enable = projectSkills.filter((skill) => picked.has(skill.name) && skill.enabled !== true).length
-				const disable = projectSkills.filter((skill) => !picked.has(skill.name) && skill.enabled === true).length
+				// copy 的来源是可用仓库；enable/disable 说的是本项目技能根的现状。
+				const libraryNames = new Set(libraryCandidates.map((skill) => skill.name))
+				const known = new Set(projectSkillRows.map((skill) => skill.name))
+				const copy = wanted.filter((name) => !known.has(name) && libraryNames.has(name)).length
+				const enable = projectSkillRows.filter((skill) => picked.has(skill.name) && skill.enabled !== true).length
+				const disable = projectSkillRows.filter((skill) => !picked.has(skill.name) && skill.enabled === true).length
 				return t('roles.activateConfirm', { copy, enable, disable, project: project.activeName || projectName })
 			}
 
@@ -3261,7 +3287,8 @@ window.__ModuleLoader__.load({
 					? h(RoleEditor, {
 						t,
 						draft: current,
-						candidates: data.candidates ?? { project: [], global: [] },
+						candidates: libraryCandidates,
+						projectSkills: projectSkillRows,
 						missing: missingInDraft,
 						busy,
 						onName: (value) => setDraft({ ...current, name: value }),

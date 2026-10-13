@@ -499,7 +499,7 @@ section('角色计划 0.4.0：copy / localKept / skipped / stats.total')
 	check('copy 步骤的目标路径留给 applyRole 算（planRole 里是 null）', plan.steps.filter((step) => step.action === 'copy').every((step) => step.path === null))
 	check('项目里停用、角色内 → enable', plan.steps.some((step) => step.action === 'enable' && step.name === 'local-off'))
 	check('项目里启用、角色内 → noop', plan.noop.some((entry) => entry.name === 'local-copy'))
-	check('两边同名 → localKept，指向项目那份与全局那份', plan.localKept.some((entry) => entry.name === 'local-copy' && entry.projectPath === join(projectRecord.path, 'local-copy', 'SKILL.md') && entry.globalPath === join(globalRecord.path, 'local-copy', 'SKILL.md')), JSON.stringify(plan.localKept))
+	check('两边同名 → localKept，指向项目那份与可用仓库那份', plan.localKept.some((entry) => entry.name === 'local-copy' && entry.projectPath === join(projectRecord.path, 'local-copy', 'SKILL.md') && entry.libraryPath === join(globalRecord.path, 'local-copy', 'SKILL.md')), JSON.stringify(plan.localKept))
 	check('全局软链接 → skipped reason=symlink', plan.skipped.some((entry) => entry.name === 'global-link' && entry.reason === 'symlink'), JSON.stringify(plan.skipped))
 	check('两处都没有 → missing', plan.missing.includes('nowhere'), JSON.stringify(plan.missing))
 	check('stats.copy 数得对（2 个）', plan.stats.copy === 2, String(plan.stats.copy))
@@ -934,6 +934,65 @@ try {
 check('非法地址被拒绝（400）', badUrl?.statusCode === 400 && badUrl.code === 'error.repo.url')
 
 // 编辑订阅：改分支/子目录 → 丢旧清单 + 立刻重拉；没改 → 不动缓存也不重拉。
+section('可用仓库：手动同步（幂等 / 保护本地改动 / 覆盖前必背）')
+// 可用仓库是角色候选的唯一出处，也是「技能仓库 → 可用仓库 → 角色 → 项目」这条链路的中转站。
+// 它独立于任何技能根：同步只写 <stateDir>/library，**一个字节都不碰技能根**。
+const libHome = tempDir('sc-library-home')
+const libStateDir = join(libHome, 'skill-console')
+const libDir = join(libStateDir, 'library')
+const libSkillsDir = join(libHome, 'skills')
+const libManager = reposModule.createRepositoryManager({
+	stateDir: libStateDir,
+	skillsDir: libSkillsDir,
+	libraryDir: libDir,
+	log: () => {},
+	fetchImpl: stubGithub(repoSources).fetchImpl,
+	now: () => 1789000000000,
+})
+await libManager.add({ url: 'https://github.com/o/r', ref: '', subdirectory: 'skills' })
+const firstSync = await libManager.sync({ id: 'o/r' })
+check('同步把清单里的技能全部落进可用仓库', firstSync.synced.length === 3 && existsSync(join(libDir, 'alpha', 'SKILL.md')) && existsSync(join(libDir, 'alpha', 'reference.md')) && existsSync(join(libDir, 'gamma.md')), JSON.stringify(firstSync))
+check('同步一个字节都不碰技能根', !existsSync(join(libSkillsDir, 'alpha')) && (!existsSync(libSkillsDir) || readdirSync(libSkillsDir).length === 0))
+check('首次同步没有备份（库文件本来就不存在）', firstSync.synced.every((entry) => entry.backup === null), JSON.stringify(firstSync.synced))
+check('卡片能报出可用仓库存量', libManager.list().repositories[0].library.count === 3 && libManager.list().repositories[0].library.synced === 3, JSON.stringify(libManager.list().repositories[0].library))
+
+// 幂等：台账与清单一致时既不下载也不写盘（连 mtime 都不该动）
+const libAlpha = join(libDir, 'alpha', 'SKILL.md')
+const libAlphaMtime = statSync(libAlpha).mtimeMs
+const secondSync = await libManager.sync({ id: 'o/r' })
+check('再同步一次是幂等的（updated 空、unchanged 全覆盖）', secondSync.synced.length === 0 && secondSync.unchanged.length === 3, JSON.stringify(secondSync))
+check('幂等时连 mtime 都没变', statSync(libAlpha).mtimeMs === libAlphaMtime)
+
+// 本地改动保护：默认跳过，confirm 才覆盖，覆盖前一律备份
+writeFileSync(libAlpha, `${readFileSync(libAlpha, 'utf8')}\n本地手改的行\n`)
+const guardedSync = await libManager.sync({ id: 'o/r' })
+check('库文件被本地改过时默认跳过', guardedSync.synced.length === 0 && guardedSync.skipped.some((entry) => entry.name === 'alpha'), JSON.stringify(guardedSync))
+check('跳过原因说清了要 confirm', /confirm/.test(guardedSync.skipped.find((entry) => entry.name === 'alpha')?.reason ?? ''), guardedSync.skipped[0]?.reason)
+check('跳过之后本地内容原样', readFileSync(libAlpha, 'utf8').includes('本地手改的行'))
+const forcedSync = await libManager.sync({ id: 'o/r', confirm: true })
+check('confirm 后只覆盖被改过的那一个（其余仍是幂等）', forcedSync.synced.length === 1 && forcedSync.unchanged.length === 2, JSON.stringify(forcedSync))
+check('覆盖前留了备份', forcedSync.synced.find((entry) => entry.name === 'alpha')?.backup !== null)
+check('覆盖后本地改动没了', !readFileSync(libAlpha, 'utf8').includes('本地手改的行'))
+
+// 上游前进：库里的旧副本不算「本地改动」，跟着清单走（同样先备份）
+const libUpstream = stubGithub({ ...repoSources, 'skills/alpha/SKILL.md': '---\nname: alpha\ndescription: Alpha from repo v2\n---\n\n# alpha v2\n' }, { commit: 'feedface9999' })
+const libManager2 = reposModule.createRepositoryManager({ stateDir: libStateDir, skillsDir: libSkillsDir, libraryDir: libDir, log: () => {}, fetchImpl: libUpstream.fetchImpl, now: () => 1789000001000 })
+await libManager2.fetch('o/r')
+const aheadSync = await libManager2.sync({ id: 'o/r' })
+check('上游前进时三个技能都同步', aheadSync.synced.length === 3, JSON.stringify(aheadSync))
+check('库内容跟上了新版本', readFileSync(libAlpha, 'utf8').includes('alpha v2'))
+const libSummary = libManager2.list().repositories[0].library
+check('可用仓库存量只用台账说话（synced 是 3）', libSummary.synced === 3 && libSummary.outdated === 0, JSON.stringify(libSummary))
+
+// 没拉过就同步：清单缓存丢了也要能用（先自动拉一次）
+const noFetchHome = tempDir('sc-library-nofetch')
+const noFetchState = join(noFetchHome, 'skill-console')
+const noFetchManager = reposModule.createRepositoryManager({ stateDir: noFetchState, skillsDir: join(noFetchHome, 'skills'), libraryDir: join(noFetchState, 'library'), log: () => {}, fetchImpl: stubGithub(repoSources).fetchImpl, now: () => 1789000000000 })
+await noFetchManager.add({ url: 'https://github.com/o/r', ref: '', subdirectory: 'skills' })
+for (const cached of readdirSync(join(noFetchState, 'repository-cache'))) rmSync(join(noFetchState, 'repository-cache', cached))
+const coldSync = await noFetchManager.sync({ id: 'o/r' })
+check('清单缓存没了也能同步（自动重拉一次）', coldSync.synced.length === 3, JSON.stringify(coldSync))
+
 section('仓库订阅：仓库根下的文档不算技能（monorepo 根不被当成技能根）')
 // 现场事故：订阅 juliusbrussee/caveman 的仓库根，11 个根级 .md（README / CLAUDE /
 // CONTRIBUTING…）被当成扁平技能，全判 invalid，界面刷出 11 行「frontmatter 不合法」
@@ -1246,6 +1305,7 @@ check('/state 不再回显 .agents 目录', !('agentsHome' in stateResponse.json
 check('/state 在注册表缺席时退回活着的会话作为工作区', stateResponse.json.data.workspaces?.[0]?.path === projectDir && stateResponse.json.data.workspacesFrom === 'sessions')
 check('/state 不带 session 头时标记 fallback', stateResponse.json.data.selected?.fallback === true)
 check('/state 不回显 token 值，只报存在性', typeof stateResponse.json.data.token === 'boolean')
+check('/state 报出可用仓库路径（面板用它说明技能住哪）', typeof stateResponse.json.data.libraryDir === 'string' && stateResponse.json.data.libraryDir.endsWith(join('skill-console', 'library')), String(stateResponse.json.data.libraryDir))
 
 const withHeader = await call({ path: '/api/skill-console/state', headers: { 'x-skill-console-session': fakeSession.id } })
 check('带 session 头时不算 fallback', withHeader.json.data.selected.fallback === false)
@@ -1498,33 +1558,56 @@ section('角色路由：列表 / 预览 / 保存 / 切换 / 取消 / 删除')
 const ROLE_WRITE = { 'x-skill-console': '1', 'content-type': 'application/json' }
 const roleSession = { 'x-skill-console-session': fakeSession.id }
 const rolesProjectSkills = join(projectDir, '.dsh', 'skills')
+// 「可用仓库」= 角色候选与复制来源的唯一出处，DSH 不加载它。
+const rolesLibrary = join(home, 'skill-console', 'library')
 
 // 专供本节的名字，避免与前面的用例互相污染
 placeSkill(rolesProjectSkills, 'rp-alpha', true)
 placeSkill(rolesProjectSkills, 'rp-beta', true)
-placeSkill(join(home, 'skills'), 'rp-global', true)
+placeSkill(rolesLibrary, 'rp-global', true)
+// 反例：只住在全局技能根里的技能，不能成为候选（角色的范围与技能根彻底解耦）。
+placeSkill(join(home, 'skills'), 'rp-only-global', true)
 // 软链技能：`toggleable` 必须由扫描器说、`readOnlyReason` 必须说清原因（造法同前面的 linked）。
 const rpLinkTarget = join(tempDir('sc-role-candidate-link'), 'rp-link')
 writeSkill(rpLinkTarget, 'name: rp-link\ndescription: Symlinked role candidate')
-symlinkSync(rpLinkTarget, join(home, 'skills', 'rp-link'))
+symlinkSync(rpLinkTarget, join(rolesLibrary, 'rp-link'))
+// 记下库文件的原始内容：整节跑完必须一个字节没变（角色只读库，不写库）。
+const rolesLibrarySource = readFileSync(join(rolesLibrary, 'rp-global', 'SKILL.md'), 'utf8')
 
 const rolesList = await call({ path: '/api/skill-console/roles', headers: roleSession })
 check('GET /roles 返回 200', rolesList.status === 200 && rolesList.json.ok === true, `${rolesList.status} ${JSON.stringify(rolesList.json).slice(0, 160)}`)
 check('未激活角色时 status 是 unassigned', rolesList.json.data.status === 'unassigned', String(rolesList.json.data.status))
-check('候选里能拿到项目技能', rolesList.json.data.candidates.project.some((entry) => entry.name === 'rp-alpha'), JSON.stringify(rolesList.json.data.candidates.project.map((entry) => entry.name)))
-check('候选里的全局技能与项目技能同形状：不再有 readOnly / reason', (() => {
+const roleCandidates = Array.isArray(rolesList.json.data.candidates) ? rolesList.json.data.candidates : []
+check(
+	'候选只来自可用仓库（项目技能与全局根技能都不算候选）',
+	roleCandidates.some((entry) => entry.name === 'rp-global') && !roleCandidates.some((entry) => entry.name === 'rp-alpha') && !roleCandidates.some((entry) => entry.name === 'rp-only-global'),
+	JSON.stringify(roleCandidates.map((entry) => entry.name)),
+)
+check('候选人同形状：不再有 readOnly / reason', (() => {
 	const shape = (entry) => Object.keys(entry).sort().join(',')
-	const reference = shape(rolesList.json.data.candidates.project[0] ?? {})
-	return rolesList.json.data.candidates.global.every((entry) => shape(entry) === reference && !('readOnly' in entry) && !('reason' in entry))
-})(), JSON.stringify(rolesList.json.data.candidates.global))
-const linkCandidate = rolesList.json.data.candidates.global.find((entry) => entry.name === 'rp-link')
+	const reference = shape(roleCandidates[0] ?? {})
+	return roleCandidates.length > 0 && roleCandidates.every((entry) => shape(entry) === reference && !('readOnly' in entry) && !('reason' in entry))
+})(), JSON.stringify(roleCandidates))
+const linkCandidate = roleCandidates.find((entry) => entry.name === 'rp-link')
 check(
 	'可勾选性仍由 toggleable / readOnlyReason 表达（软链候选真的被挡住）',
 	linkCandidate !== undefined && linkCandidate.toggleable === false && linkCandidate.readOnlyReason === 'symlink',
 	JSON.stringify(linkCandidate),
 )
-check('候选人带齐字段', rolesList.json.data.candidates.project.every((entry) => ['name', 'path', 'enabled', 'toggleable'].every((key) => key in entry)))
+check('候选人带齐字段', roleCandidates.every((entry) => ['name', 'path', 'enabled', 'toggleable'].every((key) => key in entry)))
+check('候选人路径落在可用仓库目录里', roleCandidates.every((entry) => entry.path.startsWith(rolesLibrary + '/')), JSON.stringify(roleCandidates.map((entry) => entry.path)))
+check('本项目现状单独回（projectSkills），供界面算 ●/○', Array.isArray(rolesList.json.data.projectSkills) && rolesList.json.data.projectSkills.some((entry) => entry.name === 'rp-alpha'), JSON.stringify(rolesList.json.data.projectSkills))
+check('带回可用仓库路径与数量', rolesList.json.data.library?.path === rolesLibrary && rolesList.json.data.library?.count === roleCandidates.length, JSON.stringify(rolesList.json.data.library))
 check('带回项目名与 fallback 标记', typeof rolesList.json.data.project?.name === 'string' && typeof rolesList.json.data.project?.fallback === 'boolean', JSON.stringify(rolesList.json.data.project))
+
+// 角色的复制来源必须是可用仓库：preview 会把 copy 步骤的来源路径写出来（只读，不落盘）。
+const libraryRoleResponse = await call({ method: 'POST', path: '/api/skill-console/roles/save', headers: { ...ROLE_WRITE, ...roleSession }, body: { name: '库来源角色', skills: ['rp-global'] } })
+const libraryRoleId = libraryRoleResponse.json.data.role.id
+const libraryPreview = await call({ path: `/api/skill-console/roles/preview?role=${libraryRoleId}`, headers: roleSession })
+const copyStep = (libraryPreview.json.data.steps ?? []).find((step) => step.action === 'copy' && step.name === 'rp-global')
+check('preview 的 copy 来源是可用仓库（不是全局技能根）', copyStep !== undefined && copyStep.sourcePath === join(rolesLibrary, 'rp-global', 'SKILL.md'), JSON.stringify(libraryPreview.json.data.steps))
+check('同名住在全局技能根也不被当成来源', copyStep !== undefined && !copyStep.sourcePath.startsWith(join(home, 'skills') + '/'), String(copyStep?.sourcePath))
+await call({ method: 'POST', path: '/api/skill-console/roles/remove', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: libraryRoleId } })
 
 const savedRoleResponse = await call({ method: 'POST', path: '/api/skill-console/roles/save', headers: { ...ROLE_WRITE, ...roleSession }, body: { name: '冒烟角色', skills: ['rp-alpha'] } })
 check('POST /roles/save 建了角色', savedRoleResponse.status === 200 && typeof savedRoleResponse.json.data.role.id === 'string', JSON.stringify(savedRoleResponse.json).slice(0, 160))
@@ -1544,7 +1627,7 @@ check('activate 之后磁盘上 rp-beta 被停用', existsSync(join(rolesProject
 check('activate 之后 rp-alpha 是启用的', existsSync(join(rolesProjectSkills, 'rp-alpha', 'SKILL.md')))
 check('activate 之后 status 是 matched', activated.json.data.status === 'matched', String(activated.json.data.status))
 check('activate 不回显角色里的绝对路径以外的东西（只回 id/name）', typeof activated.json.data.role?.id === 'string' && typeof activated.json.data.role?.name === 'string')
-check('整轮操作没有动全局技能根', existsSync(join(home, 'skills', 'rp-global', 'SKILL.md')) && !existsSync(join(home, 'skills', 'rp-global', 'SKILL.md.disabled')))
+check('整轮操作没有动可用仓库，也没动全局技能根', readFileSync(join(rolesLibrary, 'rp-global', 'SKILL.md'), 'utf8') === rolesLibrarySource && existsSync(join(home, 'skills', 'rp-only-global', 'SKILL.md')) && !existsSync(join(home, 'skills', 'rp-global')))
 check('全局同名接管被逐条报告（rp-beta 全局没有 → 空表）', Array.isArray(activated.json.data.takeover))
 
 const afterActivate = await call({ path: '/api/skill-console/roles', headers: roleSession })
@@ -1647,6 +1730,20 @@ check('install 带 target=project：全局技能根没有被写', !existsSync(jo
 const installDefault = await call({ method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['proj-only'] } })
 check('同一仓库缺省 target 再装一次：落点是全局技能根（向后兼容没坏）', installDefault.status === 200 && installDefault.json?.data?.installed?.[0]?.path === join(globalRoot, 'proj-only') && existsSync(join(globalRoot, 'proj-only', 'SKILL.md')), `${installDefault.status} ${JSON.stringify(installDefault.json).slice(0, 240)}`)
 
+// 「同步到可用仓库」：一次把清单落进独立库目录，**不读工作区、不碰任何技能根**。
+const syncLibraryDir = join(home, 'skill-console', 'library')
+const projOnlyGlobalBefore = readFileSync(join(globalRoot, 'proj-only', 'SKILL.md'), 'utf8')
+const syncRoute = await call({ method: 'POST', path: '/api/skill-console/repositories/sync', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r' } })
+check('POST /repositories/sync 把技能落进可用仓库', syncRoute.status === 200 && syncRoute.json?.data?.synced?.length === 1 && existsSync(join(syncLibraryDir, 'proj-only', 'SKILL.md')), `${syncRoute.status} ${JSON.stringify(syncRoute.json).slice(0, 240)}`)
+check('同步不碰任何技能根（全局那份一个字节没变、项目那份照旧）', readFileSync(join(globalRoot, 'proj-only', 'SKILL.md'), 'utf8') === projOnlyGlobalBefore && existsSync(join(rolesProjectSkills, 'proj-only', 'SKILL.md')))
+const syncAgain = await call({ method: 'POST', path: '/api/skill-console/repositories/sync', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r' } })
+check('路由层再同步一次也是幂等的', syncAgain.status === 200 && syncAgain.json?.data?.unchanged?.length === 1, `${syncAgain.status} ${JSON.stringify(syncAgain.json).slice(0, 200)}`)
+// 库是全局的：同步刻意不读工作区，所以没有会话头也必须能成。
+const syncNoSession = await call({ method: 'POST', path: '/api/skill-console/repositories/sync', headers: ROLE_WRITE, body: { id: 'o/r' } })
+check('同步不需要工作区（不带会话头也能成功）', syncNoSession.status === 200 && syncNoSession.json?.data?.unchanged?.length === 1, `${syncNoSession.status} ${JSON.stringify(syncNoSession.json).slice(0, 200)}`)
+const syncNoId = await call({ method: 'POST', path: '/api/skill-console/repositories/sync', headers: { ...ROLE_WRITE, ...roleSession }, body: {} })
+check('同步缺 id 时 400 error.proto.missingId', syncNoId.status === 400 && syncNoId.json?.code === 'error.proto.missingId', `${syncNoId.status} ${syncNoId.json?.code}`)
+
 // 解析不出项目根时，`target:'project'` 必须 400，不能悄悄退回全局。
 // 现场唯一能让项目解析失败的办法是拿掉 `sessions`——再 apply 一个只用于这条的路由。
 let noProjectRoute = null
@@ -1683,7 +1780,7 @@ pluginCtx.sessions = twoProjectCtx.sessions
 
 const otherRoles = await call({ path: `/api/skill-console/roles?project=${encodeURIComponent(secondProjectDir)}`, headers: roleSession })
 check('GET /roles?project= 读的是那个项目', otherRoles.json?.data?.project?.name === 'other' && otherRoles.json.data.project.fallback === false, JSON.stringify(otherRoles.json?.data?.project))
-check('那个项目的候选里有它自己的技能', otherRoles.json?.data?.candidates?.project?.some((entry) => entry.name === 'rp-other') === true)
+check('那个项目自己的技能活在 projectSkills 里（候选只有全局库，与项目解耦）', otherRoles.json?.data?.projectSkills?.some((entry) => entry.name === 'rp-other') === true && Array.isArray(otherRoles.json?.data?.candidates))
 
 const otherRole = (await call({ method: 'POST', path: '/api/skill-console/roles/save', headers: { ...ROLE_WRITE, ...roleSession }, body: { name: '另一个项目的角色', skills: ['rp-other'] } })).json.data.role
 const activateOther = await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: otherRole.id, project: secondProjectDir } })
@@ -2028,7 +2125,8 @@ check('注册了 locale 字典（zh + en）', localeDictionaries.length >= 1 && 
 const dictionaryZh = localeDictionaries[0]?.dictionaries?.zh ?? {}
 const dictionaryEn = localeDictionaries[0]?.dictionaries?.en ?? {}
 check('旧的「全局只读」说法已经删掉', !('roles.globalReadonly' in dictionaryZh) && !('roles.globalReadonly' in dictionaryEn))
-check('新的全局分组说明讲清「复制进项目、全局不受影响」', typeof dictionaryZh['roles.globalHint'] === 'string' && dictionaryZh['roles.globalHint'].includes('项目') && dictionaryEn['roles.globalHint'].includes('project'))
+check('新的分组说明讲清「从可用仓库挑、复制进项目」', typeof dictionaryZh['roles.libraryHint'] === 'string' && dictionaryZh['roles.libraryHint'].includes('项目') && dictionaryEn['roles.libraryHint'].includes('project') && !('roles.globalHint' in dictionaryZh) && !('roles.projectSkills' in dictionaryZh) && !('roles.globalSkills' in dictionaryZh))
+check('仓库卡的同步文案两种语言都有', typeof dictionaryZh['repos.sync'] === 'string' && typeof dictionaryEn['repos.sync'] === 'string' && typeof dictionaryZh['repos.syncDone'] === 'string' && typeof dictionaryEn['repos.syncDone'] === 'string')
 const missingInEn = Object.keys(dictionaryZh).filter((key) => !(key in dictionaryEn)).sort()
 const missingInZh = Object.keys(dictionaryEn).filter((key) => !(key in dictionaryZh)).sort()
 check('zh 与 en 的键集完全一致', missingInEn.length === 0 && missingInZh.length === 0, `en 缺 ${missingInEn.join(',')} / zh 缺 ${missingInZh.join(',')}`)
@@ -2181,10 +2279,14 @@ check('RoleRow 把技能数讲出来', collectTexts(roleRowTree).some((text) => 
 const roleEditorTree = RoleEditorExport({
 	t: tStub,
 	draft: { id: null, name: '新角色', skills: ['rp-alpha'] },
-	candidates: {
-		project: [{ name: 'rp-alpha', path: '/p/rp-alpha/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null }],
-		global: [{ name: 'rp-global', path: '/g/rp-global/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null }],
-	},
+	candidates: [
+		{ name: 'rp-alpha', path: '/l/rp-alpha/SKILL.md', enabled: false, toggleable: true, readOnlyReason: null },
+		{ name: 'rp-global', path: '/l/rp-global/SKILL.md', enabled: false, toggleable: true, readOnlyReason: null },
+	],
+	projectSkills: [
+		{ name: 'rp-alpha', path: '/p/rp-alpha/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null },
+		{ name: 'project-only', path: '/p/project-only/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null },
+	],
 	missing: [],
 	busy: false,
 	onName: () => {},
@@ -2193,16 +2295,17 @@ const roleEditorTree = RoleEditorExport({
 	onCancel: () => {},
 	onActivate: () => {},
 })
-check('RoleEditor 让全局技能也能勾选（不再是只读清单）', (() => {
+check('RoleEditor 让可用仓库的技能都能勾选', (() => {
 	const switchFor = (name) => collect(roleEditorTree, (element) => element.props !== undefined && element.props.label === name && typeof element.props.onChange === 'function')[0]
 	return switchFor('rp-alpha') !== undefined && switchFor('rp-global') !== undefined
 })(), collectTexts(roleEditorTree).join('|').slice(0, 200))
-check('勾选全局技能回报的是「技能名 + 是否选中」', (() => {
+check('勾选可用仓库技能回报的是「技能名 + 是否选中」', (() => {
 	const toggles = []
 	const tree = RoleEditorExport({
 		t: tStub,
 		draft: { id: null, name: 'x', skills: [] },
-		candidates: { project: [], global: [{ name: 'rp-global', path: '/g/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null }] },
+		candidates: [{ name: 'rp-global', path: '/l/rp-global/SKILL.md', enabled: false, toggleable: true, readOnlyReason: null }],
+		projectSkills: [],
 		missing: [],
 		busy: false,
 		onName: () => {},
@@ -2215,8 +2318,17 @@ check('勾选全局技能回报的是「技能名 + 是否选中」', (() => {
 	row?.props?.onChange(true)
 	return toggles.length === 1 && toggles[0][0] === 'rp-global' && toggles[0][1] === true
 })())
-check('RoleEditor 把可勾选的项目技能渲染出来', collectTexts(roleEditorTree).some((text) => text.includes('rp-alpha')), collectTexts(roleEditorTree).join('|').slice(0, 160))
-check('角色编辑器渲染了全局技能的说明文案', collectTexts(roleEditorTree).some((text) => text.includes('roles.globalHint')))
+check('RoleEditor 把可用仓库里的候选渲染出来', collectTexts(roleEditorTree).some((text) => text.includes('rp-alpha')), collectTexts(roleEditorTree).join('|').slice(0, 160))
+check('候选清单只有可用仓库的技能（项目专属技能不当候选）', (() => {
+	const names = collect(roleEditorTree, (element) => element.props !== undefined && typeof element.props['data-skill'] === 'string').map((element) => element.props['data-skill']).sort()
+	return names.join(',') === 'rp-alpha,rp-global'
+})(), JSON.stringify(collect(roleEditorTree, (element) => element.props !== undefined && typeof element.props['data-skill'] === 'string').map((element) => element.props['data-skill'])))
+check('●/○ 说的是「本项目里是否已启用」，与库里的 enabled 无关', (() => {
+	const alpha = collect(roleEditorTree, (element) => element.props !== undefined && element.props['data-skill'] === 'rp-alpha')[0]
+	const texts = alpha === undefined ? [] : collectTexts(alpha)
+	return texts.includes('●') && !texts.includes('○')
+})(), JSON.stringify(collect(roleEditorTree, (element) => element.props !== undefined && element.props['data-skill'] === 'rp-alpha').map((element) => collectTexts(element))))
+check('角色编辑器渲染了可用仓库的说明文案', collectTexts(roleEditorTree).some((text) => text.includes('roles.libraryHint')) && !collectTexts(roleEditorTree).some((text) => text.includes('roles.projectSkills')))
 const editorHeadOf = (tree) => collect(tree, (element) => element.props !== undefined && element.props.className === 'sc-role-editor-head')[0]
 check('保存 / 取消 / 切换三个按钮都在名称行里', (() => {
 	const head = editorHeadOf(roleEditorTree)
@@ -2232,7 +2344,8 @@ check('名称行排在技能勾选列表之前（结构顺序，不只看坐标�
 	const ordered = collect(roleEditorTree, (element) => element.props !== undefined && typeof element.props.className === 'string' && (element.props.className === 'sc-role-editor-head' || element.props.className.includes('sc-role-skill')))
 	return ordered.length >= 2 && ordered[0].props.className === 'sc-role-editor-head'
 })(), JSON.stringify(collect(roleEditorTree, (element) => element.props !== undefined && typeof element.props.className === 'string' && (element.props.className === 'sc-role-editor-head' || element.props.className.includes('sc-role-skill'))).map((element) => element.props.className)))
-check('RoleEditor 列出角色里缺失的技能', collectTexts(RoleEditorExport({ t: tStub, draft: { id: 'r', name: 'x', skills: ['gone'] }, candidates: { project: [], global: [] }, missing: ['gone'], busy: false, onName: () => {}, onToggle: () => {}, onSave: () => {}, onCancel: () => {}, onActivate: () => {} })).some((text) => text.includes('gone')))
+check('RoleEditor 列出角色里缺失的技能', collectTexts(RoleEditorExport({ t: tStub, draft: { id: 'r', name: 'x', skills: ['gone'] }, candidates: [], projectSkills: [], missing: ['gone'], busy: false, onName: () => {}, onToggle: () => {}, onSave: () => {}, onCancel: () => {}, onActivate: () => {} })).some((text) => text.includes('gone')))
+check('库为空时给出去「技能仓库」页签的引导', collectTexts(RoleEditorExport({ t: tStub, draft: { id: null, name: 'x', skills: [] }, candidates: [], projectSkills: [], missing: [], busy: false, onName: () => {}, onToggle: () => {}, onSave: () => {}, onCancel: () => {}, onActivate: () => {} })).some((text) => text.includes('roles.libraryEmpty')))
 
 // 角色名输入框：`onChange` 收到的是**原生 DOM 事件**，不是字符串。
 // 宿主的 primitives.Input 把 rest 直接铺在内部 `<input>` 上（见
@@ -2308,8 +2421,9 @@ check('本地技能气泡里没有 commit 行', !collectTexts(localTip?.props?.l
 
 // 面板上不出现任何具体目录地址（技能根 / 项目根 / 技能文件 / 备份目录）。
 const exposed = loaded.factory(requireFor(true))
-check('导出 missingSkillsOf：全局根能找到就不算缺', typeof exposed.missingSkillsOf === 'function' && exposed.missingSkillsOf(['a', 'b'], { project: [{ name: 'a' }], global: [{ name: 'b' }] }).length === 0)
-check('三个根都找不到才算缺', exposed.missingSkillsOf(['a', 'gone'], { project: [{ name: 'a' }], global: [] }).join(',') === 'gone')
+check('导出 missingSkillsOf：可用仓库能找到就不算缺', typeof exposed.missingSkillsOf === 'function' && exposed.missingSkillsOf(['a', 'b'], [{ name: 'a' }, { name: 'b' }], []).length === 0)
+check('项目技能根里有一份也算找得到（切换时复制的就是它）', exposed.missingSkillsOf(['a'], [], [{ name: 'a' }]).length === 0)
+check('两处都找不到才算缺', exposed.missingSkillsOf(['a', 'gone'], [{ name: 'a' }], []).join(',') === 'gone')
 check('导出 SkillGroup / RepoRow 供契约测试直接渲染', typeof exposed.SkillGroup === 'function' && typeof exposed.RepoRow === 'function')
 const groupTree = exposed.SkillGroup({
 	t: tStub,
@@ -2839,7 +2953,8 @@ for (const key of [
 	'skills.delete', 'skills.deleteConfirm', 'skills.deleteSymlinkHint', 'skills.deleteGlobalHint',
 	'skills.deleteDone', 'skills.deleteFailed', 'skills.move', 'skills.moveConfirm', 'skills.moveDone',
 	'skills.movePartial', 'skills.moveFailed', 'skills.formFlat', 'skills.formDirectory', 'skills.formSymlink',
-	'roles.copyCount', 'roles.localKept', 'roles.localKeptHint', 'roles.globalHint',
+	'roles.copyCount', 'roles.localKept', 'roles.localKeptHint', 'roles.librarySkills', 'roles.libraryHint', 'roles.libraryEmpty',
+	'repos.sync', 'repos.syncTitle', 'repos.syncDone', 'repos.syncFailed', 'repos.libraryLine', 'repos.libraryOutdated',
 	'skills.expand', 'skills.collapse', 'skills.batchEnableAria', 'skills.batchDisableAria',
 	'repos.installTarget', 'repos.targetGlobal', 'repos.targetProject', 'repos.targetProjectHint',
 	'error.roleNoProject', 'error.tooMany',
@@ -2889,6 +3004,14 @@ check('八个按路径定位的读写请求都带上当前工作区', WORKSPACE_
 	return !(at >= 0 && clientSource.slice(at, at + 200).includes('withProject(project'))
 }).join(' / '))
 check('三个页签都由 section 注入同一份工作区上下文', ['SkillsPanel', 'ReposPanel', 'RolesPanel'].every((name) => new RegExp(`h\\(${name}, \\{ t, sessionId, project \\}\\)`).test(clientSource)))
+
+// 可用仓库是全局的：同步一次服务所有工作区，绝不能顺带带上当前工作区（带上就变成
+// 「按工作区同步」的另一套语义了）。这条与上面那条正好相反，防止后来者顺手加 `withProject`。
+check('同步到可用仓库不带工作区（一次同步服务所有工作区）', (() => {
+	const at = clientSource.indexOf("apiPost('/repositories/sync'")
+	return at >= 0 && !clientSource.slice(at, at + 200).includes('withProject(')
+})(), clientSource.slice(clientSource.indexOf("apiPost('/repositories/sync'"), clientSource.indexOf("apiPost('/repositories/sync'") + 200))
+check('仓库卡片把可用仓库存量讲出来', clientSource.includes("t('repos.libraryLine'") && clientSource.includes("t('repos.libraryOutdated'"))
 
 section('版面条：节顶唯一工作区条，三页签不再各自为政')
 

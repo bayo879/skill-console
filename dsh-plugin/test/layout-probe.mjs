@@ -268,7 +268,7 @@ function tabStage() {
 <div class="tab-stage">
 	${tab('skills', root('全局技能', 12, 'alpha') + root('项目技能', 3, 'beta'))}
 	${tab('repos', card('已订阅的仓库', '1 个仓库') + card('仓库里的技能', '1 个技能'))}
-	${tab('roles', card('项目技能', '3 个技能') + card('全局技能', '12 个技能'))}
+	${tab('roles', card('可用仓库', '12 个技能'))}
 </div>`
 }
 

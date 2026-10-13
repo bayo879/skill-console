@@ -46,11 +46,14 @@ function takeoverFor(roots, name, excludePath) {
 
 /**
  * 建全部 handler。
- * @param deps - `{ctx, repositories, roleStore, dshHome, stateDir, skillsDir, version, refreshSkills, notifyFileChanged}`。
+ * @param deps - `{ctx, repositories, roleStore, dshHome, stateDir, skillsDir, libraryDir, version, refreshSkills, notifyFileChanged}`。
+ *   `libraryDir` = 可用仓库（`<DSH_HOME>/skill-console/library`）：DSH 不加载它，
+ *   角色候选与复制来源都只认它。
  * @returns handler 表。
  */
 export function createRouteHandlers(deps) {
 	const { ctx, repositories, dshHome, stateDir, skillsDir, version, refreshSkills, notifyFileChanged, roleStore } = deps
+	const libraryDir = typeof deps.libraryDir === 'string' ? deps.libraryDir : ''
 
 	/** 本次请求的项目 + 技能根（每个 handler 都要用，收口在一处）。 */
 	const contextOf = (sessionId) => {
@@ -116,15 +119,25 @@ export function createRouteHandlers(deps) {
 	/** 项目根当前扫描到的技能（项目根不存在时是空表）。 */
 	const projectSkillsOf = (projectRoot) => (projectRoot === null ? [] : scanRoot(projectRoot).skills)
 
+	/**
+	 * 可用仓库里的技能。
+	 *
+	 * 库**不在** `resolveRoots()` 的根列表里（它是本插件自己的数据目录，DSH 不加载），
+	 * 所以这里合成一个根描述来复用 `scanRoot`：技能名取法、frontmatter 诊断、软链判据
+	 * 与技能根完全一致，不另写一份扫描。
+	 */
+	const librarySkillsOf = () => (libraryDir === '' ? [] : scanRoot({ key: 'library', label: '可用仓库', scope: 'global', path: libraryDir }).skills)
+
 	/** 内部角色 → 回给界面的形状。 */
 	const publicRole = (role, activeId) => ({ id: role.id, name: role.name, skills: [...role.skills], updatedAt: role.updatedAt, active: role.id === activeId })
 
 	/**
-	 * 候选技能：项目根和全局根**同形状**，都能勾。
+	 * 候选技能：**只来自可用仓库**。
 	 *
-	 * 勾上全局候选不是「控制全局技能」，而是「切换时把全局那份复制进项目」——
-	 * 所以这里没有 readOnly/reason 之类的话术，能不能动只看 `toggleable`
-	 * （软链是 false，`readOnlyReason` 说明原因）。
+	 * 技能根里的东西不是候选——它们是角色切换的**结果**（切换 = 往项目技能根复制 +
+	 * 启停）。所以这里没有「控制项目技能」「控制全局技能」的话术：勾一个候选只是说
+	 * 「这个角色要它」。`toggleable` 在库里不表示「能不能启停」（库不是技能根），
+	 * 而是「能不能被复制进项目」——软链是 false，`readOnlyReason` 说明原因。
 	 */
 	const candidateOf = (skill) => ({
 		name: skill.name,
@@ -164,6 +177,7 @@ export function createRouteHandlers(deps) {
 				dshHome,
 				stateDir,
 				skillsDir,
+				libraryDir,
 				token: deps.tokenPresent(),
 				roots: rootsFor(project).map(publicRoot),
 				workspaces: workspaces.list,
@@ -308,13 +322,30 @@ export function createRouteHandlers(deps) {
 			return repositories.install({ id, skills: body.skills.map(String), confirm: body.confirm === true, targetSkillsDir })
 		},
 
+		/**
+		 * 把这个订阅的清单**整份**同步到可用仓库（手动批量，不做挑选）。
+		 *
+		 * 与 `/repositories/install` 的分工：install 是「挑几个装进技能根」，
+		 * 这个是「把仓库变成角色的候选池」。已存在的不动、要覆盖的先备份，
+		 * 判据与备份都在 `repositories.sync` 里，路由只做参数校验。
+		 *
+		 * **不读 `body.project`**：可用仓库是全局的，一个库服务所有工作区。
+		 */
+		async repositorySync(req) {
+			const body = await readJsonBody(req)
+			const id = String(body.id ?? '')
+			if (id === '') throw httpError(400, 'error.proto.missingId', '缺少 id')
+			return repositories.sync({ id, confirm: body.confirm === true })
+		},
+
 		async roles(req, url) {
-			const { project, projectRoot, globalRoot } = readRoleContextOfRequest(req, url)
+			const { project, projectRoot } = readRoleContextOfRequest(req, url)
 			const activeRole = activeRoleOf(project)
 			const projectSkills = projectSkillsOf(projectRoot)
-			// 全局扫描结果一身二用：既是复制来源（sources），又是候选名单；别扫两遍。
-			const globalSkills = globalRoot === null ? [] : scanRoot(globalRoot).skills
-			const plan = activeRole === null ? null : planRole({ role: activeRole, skills: projectSkills, sources: globalSkills })
+			// 候选与复制来源是同一份事实：**可用仓库**里的技能。技能根（全局/项目）
+			// 在这里只用来算「这个库技能在当前项目里是否已启用」，不当候选。
+			const librarySkills = librarySkillsOf()
+			const plan = activeRole === null ? null : planRole({ role: activeRole, skills: projectSkills, sources: librarySkills })
 			const stats = plan === null
 				? { inRole: 0, total: projectSkills.length, copy: 0, enable: 0, disable: 0, noop: 0, skipped: 0, missing: 0, localKept: 0 }
 				: { inRole: activeRole.skills.length, ...plan.stats, localKept: plan.localKept.length }
@@ -323,12 +354,11 @@ export function createRouteHandlers(deps) {
 				active: activeRole === null ? null : { id: activeRole.id, name: activeRole.name },
 				project: project === null ? null : { name: basename(project.root), fallback: project.fallback === true },
 				status: statusOf(activeRole, plan),
+				library: { path: libraryDir, count: librarySkills.length },
 				stats,
 				localKept: plan === null ? [] : plan.localKept,
-				candidates: {
-					project: projectSkills.map((skill) => candidateOf(skill)),
-					global: globalSkills.map((skill) => candidateOf(skill)),
-				},
+				candidates: librarySkills.map((skill) => candidateOf(skill)),
+				projectSkills: projectSkills.map((skill) => candidateOf(skill)),
 			}
 		},
 
@@ -337,9 +367,9 @@ export function createRouteHandlers(deps) {
 			if (roleId === null || roleId.trim() === '') throw httpError(400, 'error.proto.missingId', '缺少 role 参数')
 			const role = roleStore.get(roleId)
 			if (role === null) throw httpError(404, 'error.role.unknown', `没有这个角色：${roleId}`)
-			const { projectRoot, globalRoot } = readRoleContextOfRequest(req, url)
-			// 预览必须和切换看到同一份事实，所以同样传 sources。
-			const plan = planRole({ role, skills: projectSkillsOf(projectRoot), sources: globalRoot === null ? [] : scanRoot(globalRoot).skills })
+			const { projectRoot } = readRoleContextOfRequest(req, url)
+			// 预览必须和切换看到同一份事实，所以同样以可用仓库为 sources。
+			const plan = planRole({ role, skills: projectSkillsOf(projectRoot), sources: librarySkillsOf() })
 			return { role: { id: role.id, name: role.name }, status: plan.steps.length > 0 ? 'drifted' : 'matched', ...plan }
 		},
 
@@ -366,10 +396,10 @@ export function createRouteHandlers(deps) {
 			if (id === '') throw httpError(400, 'error.proto.missingId', '缺少 id')
 			const role = roleStore.get(id)
 			if (role === null) throw httpError(404, 'error.role.unknown', `没有这个角色：${id}`)
-			const { project, projectRoot, globalRoot, roots, code } = roleContextOfRequest(req, body)
+			const { project, projectRoot, roots, code } = roleContextOfRequest(req, body)
 			if (project === null || projectRoot === null) throw httpError(400, code, '解析不出项目根，无法切换角色')
-			// 全局扫描结果只当复制来源；它不会进 applyRole（那边只收 projectRoot）。
-			const plan = planRole({ role, skills: projectSkillsOf(projectRoot), sources: globalRoot === null ? [] : scanRoot(globalRoot).skills })
+			// 可用仓库只当复制来源；它不会进 applyRole（那边只收 projectRoot）。
+			const plan = planRole({ role, skills: projectSkillsOf(projectRoot), sources: librarySkillsOf() })
 			const { results, changed } = applyRole(projectRoot, plan)
 			if (changed > 0) {
 				refreshSkills()
@@ -529,6 +559,7 @@ const WRITE_ROUTES = {
 	'/repositories/remove': 'repositoryRemove',
 	'/repositories/fetch': 'repositoryFetch',
 	'/repositories/install': 'repositoryInstall',
+	'/repositories/sync': 'repositorySync',
 	'/restore': 'restore',
 	'/skills/delete': 'skillsDelete',
 	'/skills/move-to-project': 'skillsMoveToProject',

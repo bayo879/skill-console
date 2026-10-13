@@ -1,6 +1,6 @@
 # 角色（技能组合）
 
-状态：**已实现**（`dsh-skill-console@0.6.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
+状态：**已实现**（`dsh-skill-console@0.7.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
 
 ---
 
@@ -8,28 +8,31 @@
 
 在技能控制台里加第三个标签页「角色」，用来**保存自定义的技能组合**，并通过**切换角色**改变**当前工作区**下生效的技能，**全程不修改全局技能根**。面板上**可以切换要操作哪个工作区**（下拉在节顶的工作区条上，三个页签共用）：切换后，读（角色列表、候选）与写（切换 / 取消角色）都作用在选中的那个工作区上。这个「当前工作区」是**整屏共享**的——技能 / 技能仓库 / 角色三个页签看的是同一个；切换只在节顶那一处，角色页签自己不再带下拉。
 
+角色能挑选的技能来自**可用仓库**（`<DSH_HOME>/skill-console/library/`，见 `docs/HTTP-API.md` 的 `POST /repositories/sync`）：技能仓库把技能**手动同步**到那里，角色再从那里挑、切换时复制进项目。候选与当前工作区、与全局技能根都**无关**——这是 0.7.0 的改动（此前候选是「当前项目技能 + 全局技能」，选中哪个工作区就换一套候选）。
+
 一句话说清它的价值：现在要换一套技能得逐个点开关；有了角色，点一次就换一套。
 
 ## 2. 三条已拍板的前提
 
 1. **角色全局共享一份**，所有项目共用同一套角色定义；「当前激活的是哪个角色」按项目分别记录。
 2. **严格对齐**：切到某角色后，项目技能根严格等于该角色——角色内的启用、项目里其余的全部停用。
-3. **写盘只有两种机制**：项目内对齐用**重命名**（`toggleSkill`），「项目里没有、全局有」的条目用**复制**（`copySkillIntoRoot`，只从全局读、只往项目写）。切换前快照/回滚**当前不做**。
+3. **写盘只有两种机制**：项目内对齐用**重命名**（`toggleSkill`），「项目里没有、可用仓库有」的条目用**复制**（`copySkillIntoRoot`，只从可用仓库读、只往项目写）。切换前快照/回滚**当前不做**。
 
-## 3. 硬边界：全局技能无法被角色排除
+## 3. 硬边界：角色只认可用仓库，全局技能既不被读也不被写
 
-这不是实现细节，是 DSH 的加载模型决定的，必须写在这里，也必须写在界面上：
+这不是实现细节，是 DSH 的加载模型 + 「角色范围」的设计决定，必须写在这里，也必须写在界面上：
 
-DSH 把技能从「全局根 + 项目根」两份叠加加载，**没有任何「按项目遮蔽全局」的机制**。所以只要不修改全局：
+DSH 把技能从「全局根 + 项目根」两份叠加加载，**没有任何「按项目遮蔽全局」的机制**。角色的作用范围**只有项目技能根**，所以：
 
-- 角色的真实效果是 `项目技能根 = 角色集`，再 **∪ 全部全局技能**；
+- 角色的真实效果是 `项目技能根 = 角色集`，再 **∪ 全部全局技能**；角色既不把全局技能复制进来（0.7.0 起），也停用不了全局那份。
 - 更刁的一条：角色停用了项目里的技能 `C`，若全局根里也有同名 `C`，那份全局 `C` 会**接管生效**。也就是「角色里没有 C」≠「C 不生效」。
 
 因此：
 
-- 角色编辑器里**列出全局技能，并且可以勾选**：勾选 = 切换时把全局那份**复制进项目**（`copy`），不勾 = 什么都不做——全局那份照样生效，角色**不能**停用全局技能。软链接技能（`toggleable !== true`）不可勾。全局那份文件本身不会被改。
-- 切换后如果发生同名接管，**逐条报告**，复用现有 `/toggle` 的 `takeover` 口径（`../../dsh-plugin/lib/routes.js` 的 `takeoverFor`，定义在文件头部的辅助函数区）。
-- README「已知边界」里有一条讲明这件事（角色排除不掉全局技能）。
+- 角色编辑器的候选**只有一个来源：可用仓库**。全局根与当前项目技能根都**不出现**在候选里——角色范围与「DSH 实际从哪加载技能」彻底解耦。
+- 勾选一个库技能 = 切换时把**库里那份**复制进项目（`copy`）；不勾 = 什么都不做。软链接技能（`toggleable !== true`）不可勾。库里的文件本身只被读、不会被改。
+- 切换后如果发生同名接管，**逐条报告**，复用现有 `/toggle` 的 `takeover` 口径（`dsh-plugin/lib/routes.js` 的 `takeoverFor`，定义在文件头部的辅助函数区）。
+- 候选与项目现状分两个字段回（`candidates` / `projectSkills`）：界面用 `projectSkills` 算行首的 `●`（本项目已启用）/ `○`，勾选与对齐只认 `candidates`。
 
 ## 4. 数据模型与存储
 
@@ -58,7 +61,7 @@ DSH 把技能从「全局根 + 项目根」两份叠加加载，**没有任何�
 | 导出 | 职责 |
 | --- | --- |
 | `createRoleStore({ stateDir, log })` | 持久化。返回 `{ load, save, list, get, upsert, remove, activeFor, setActive, clearActive, stateFile }`。**完全不碰技能文件。** |
-| `planRole({ role, skills, sources })` | **纯函数**，不碰盘。`skills` 是项目根扫描结果、`sources` 是全局根扫描结果（只读来源，不落盘）。算出这次切换要做哪些动作。 |
+| `planRole({ role, skills, sources })` | **纯函数**，不碰盘。`skills` 是项目根扫描结果、`sources` 是**可用仓库**的扫描结果（只读来源，不落盘；路由层用 `scanRoot` 扫一个合成根，库不在 `ROOT_DEFS` 里）。算出这次切换要做哪些动作。 |
 | `applyRole(projectRoot, plan)` | 逐项调 `toggleSkill`（enable/disable）或 `copySkillIntoRoot`（copy），逐项回收结果。 |
 
 ### `planRole` 的返回形状
@@ -66,12 +69,12 @@ DSH 把技能从「全局根 + 项目根」两份叠加加载，**没有任何�
 ```js
 {
   steps:   [{ name, path, action: 'enable'|'disable', current, target }],
-           // 项目里没有、角色要、全局有 → { name, path: null, action: 'copy', current: false,
+           // 项目里没有、角色要、可用仓库有 → { name, path: null, action: 'copy', current: false,
            //   target: true, sourcePath, sourceKind }；目标路径由 applyRole 用 targetPathFor 算
   noop:    [{ name, path, enabled }],               // 已经在目标态
   skipped: [{ name, path, reason: 'symlink' }],     // 不可启停（项目里的，或全局来源是软链接）
-  localKept: [{ name, projectPath, globalPath }],   // 两边同名 → 保留项目那份，绝不覆盖
-  missing: [name],                                  // 角色里有、项目与全局都没有
+  localKept: [{ name, projectPath, libraryPath }],  // 项目里已有同名 → 保留项目那份，绝不被库覆盖
+  missing: [name],                                  // 角色里有、项目与可用仓库都没有
   stats:   { total, copy, enable, disable, noop, skipped, missing }
 }
 ```
@@ -128,25 +131,25 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
   project: { name, fallback },              // fallback=true 时界面必须显式提示
   status: 'unassigned' | 'matched' | 'drifted',
   stats: { inRole, total, copy, enable, disable, noop, skipped, missing, localKept },
-  localKept: [{ name, projectPath, globalPath }],
-  candidates: {
-    project: [{ name, path, enabled, toggleable, readOnlyReason }],
-    global:  [{ name, path, enabled, toggleable, readOnlyReason }]
-  }
+  localKept: [{ name, projectPath, libraryPath }],
+  candidates: [{ name, path, enabled, toggleable, readOnlyReason }],   // 只来自可用仓库（平面数组）
+  projectSkills: [{ name, path, enabled, toggleable, readOnlyReason }], // 本项目现状，只用来算 ●/○
+  library: { path, count }                                            // 可用仓库在哪、有几个技能
 }
 ```
 
-- `candidates.project` 与 `candidates.global` **同形状**，**全局候选也可勾选**——勾选 = 切换时把全局那份
-  **复制进项目**，不是「控制全局那一份」（全局那份文件本身不会被改）。能不能操作一律由 `toggleable` 表达：
-  软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`。
-- `stats.enable` / `stats.disable` / `stats.copy` 就是这次切换的落盘动作数（直接来自 `planRole`）：界面用 `disable` 讲「切换会停用 N 个」、用 `copy` 讲「会从全局复制 N 个进来」。
-- `stats.localKept` 与顶层 `localKept` 是「项目里已有同名、全局也有同名」的条目：**保留项目那份，绝不被全局覆盖**；它不计入 `stats.total`。
-- `status` 由 `planRole` 推导：无激活角色 → `unassigned`；`steps` 为空 → `matched`；否则 → `drifted`。注意 `missing` **不影响** `status`——角色里本项目不存在的技能只是没得管，不算「磁盘偏离角色」；它由 `stats.missing` 单独讲。
+- **`candidates` 是平面数组，唯一来源是可用仓库**（0.7.0）。项目技能与全局技能都**不在**候选里；候选里的
+  `enabled` 是「库里那份文件是否启用」（同步进来的都是启用态，所以基本恒为 `true`），能不能勾一律由
+  `toggleable` 表达：软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`。
+- **`projectSkills` 是本项目现状**，形状与候选逐字段相同（同一套 `candidateOf`），只用来算行首 `●`（同名已启用）/ `○`（没有或没启用）与界面上的数量——它**不参与勾选**。库为空时 `candidates` 是空数组，界面给「去技能仓库页签同步」的引导。
+- `stats.enable` / `stats.disable` / `stats.copy` 就是这次切换的落盘动作数（直接来自 `planRole`）：界面用 `disable` 讲「切换会停用 N 个」、用 `copy` 讲「会从可用仓库复制 N 个进来」。
+- `stats.localKept` 与顶层 `localKept` 是「项目里已有同名」的条目：**保留项目那份，绝不被库里那份覆盖**；它不计入 `stats.total`。
+- `status` 由 `planRole` 推导：无激活角色 → `unassigned`；`steps` 为空 → `matched`；否则 → `drifted`。注意 `missing` **不影响** `status`——角色里的名字在可用仓库与本项目都找不到时只是没得管，不算「磁盘偏离角色」；它由 `stats.missing` 单独讲。
 - **`drifted` 不自动纠正**：手工改过开关就显示「已偏离角色」，等用户主动再切一次。
 
 ### `GET /roles/preview?role=<id>` 响应
 
-`{ role: {id,name}, status, steps, noop, skipped, localKept, missing, stats }` —— 就是 `planRole` 的产物加角色信息，供确认弹窗显示「将复制 M / 启用 N / 停用 K」，并列出「两边同名、保留本地」的清单。
+`{ role: {id,name}, status, steps, noop, skipped, localKept, missing, stats }` —— 就是 `planRole` 的产物加角色信息，供确认弹窗显示「将复制 M / 启用 N / 停用 K」，并列出「项目里已有同名、保留本地」的清单（`copy` 的来源是可用仓库）。
 
 ### `POST /roles/activate` 响应
 
@@ -157,7 +160,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
   results: [{ name, path, action, ok, enabled, changed, code?, error? }],  // 逐项，坏了一个不影响其他项
   changed: <number>,
   takeover: [{ name, by: [{ root, label, scope, path }] }],   // 停用后被全局同名接管的清单
-  localKept: [{ name, projectPath, globalPath }]              // 两边同名 → 保留项目那份
+  localKept: [{ name, projectPath, libraryPath }]             // 项目里已有同名 → 保留项目那份
 }
 ```
 
@@ -187,16 +190,17 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
   - **头部**：状态徽标（已对齐 / 已偏离 / 未启用角色）+ 激活角色 + `fallback` / 复制数量提示。当前工作区名在节顶工作区条上，**不在**角色页签头部。
   - **左列**：角色列表（名字、技能数、`切换` / `编辑` / `删除`）+ `新建角色`。
   - **右列**：编辑器
-    - 「项目技能」可勾选——这是角色真正能控制的部分；
-    - 「全局技能」同样可勾选——勾选 = 复制进项目，不勾 = 什么都不做（全局技能始终生效；软链技能由 `toggleable` 决定不可勾）；
-    - 角色里本项目不存在的技能单列 `missing`，可移除；
+    - 只有一块「可用仓库」勾选清单——候选唯一来源，勾选 = 切换时把它复制进当前工作区；
+    - 每行行首 `●` / `○` 由 `projectSkills` 决定（本项目里同名已启用 / 否则），只是信息，不参与勾选；软链技能由 `toggleable` 决定不可勾（并显示只读原因）；
+    - 库为空时给「去技能仓库页签点同步」的引导；
+    - 角色里的名字在可用仓库与本项目都找不到时单列 `missing`，可移除；
     - `保存` = 改草稿（只写 `roles.json`）；`切换到此角色` = 落盘，点击先弹确认（将启用 M / 停用 N）。
   - **切换结果**：逐项结果 + 全局同名接管提示。
 - 新增测试导出：`RoleRow`、`RoleEditor`、`roleStatusOf`（沿用现有 `exports.*` 测试面）。
 
 ### 单文件增长的取舍（已知代价）
 
-角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3466 行**（`wc -l dsh-plugin/lib/client.js`，0.6.0 收尾时；0.5.0 收尾时是 3241 行），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
+角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3493 行**（`wc -l dsh-plugin/lib/client.js`，0.7.0 收尾时；0.6.0 收尾时是 3466 行），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
 
 已选择：**接受增长，不引入构建机制**（保住「改代码就生效」，且没有「改了源码忘了跑构建、界面静默跑旧代码」这种故障态）。缓解办法是把角色面板的**逻辑尽量压到宿主 `roles.js`**，客户端只留渲染。
 
@@ -211,35 +215,38 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 | 项目根移动/改名 | 激活记录失配，同上 |
 | 软链接技能 | 跳过并报告（不可启停） |
 | 停用项目副本后全局同名接管 | 复用 `takeoverFor` 口径逐条报告 |
-| 项目与全局同名 | 保留项目那份（`localKept`），该条目自身该开/关的照旧，**绝不用全局覆盖项目** |
-| 角色要、项目没有、全局有 | `action:'copy'` 复制进项目根，复制出来是启用态（源的 `.disabled` 状态不带过去） |
-| 角色要、项目与全局都没有 | 记 `missing`，只提示、不算失败 |
-| 全局来源是软链接 | 进 `skipped`（`reason: 'symlink'`），不复制 |
-| 项目技能根不存在 | 候选为空；项目与全局都没有的报 `missing`；**全局有的会被复制进项目，并随复制创建项目技能根目录** |
+| 项目里已有同名 | 保留项目那份（`localKept`），该条目自身该开/关的照旧，**绝不用库里那份覆盖项目** |
+| 角色要、项目没有、可用仓库有 | `action:'copy'` 从可用仓库复制进项目根，复制出来是启用态（源的 `.disabled` 状态不带过去） |
+| 角色要、项目与可用仓库都没有 | 记 `missing`，只提示、不算失败（多半是还没同步，或库里那份被删了） |
+| 可用仓库里的来源是软链接 | 进 `skipped`（`reason: 'symlink'`），不复制 |
+| 项目技能根不存在 | 候选**不受影响**（候选只来自可用仓库）；项目与可用仓库都没有的报 `missing`；库里有的会被复制进项目，并随复制创建项目技能根目录 |
+| 可用仓库目录不存在 | 等同于空库：`candidates` 为空、`library.count` 为 0，界面引导去同步 |
 
 ## 9. 测试覆盖（沿用现有三层）
 
-**`test/contract.mjs`（离线；0.6.0 收尾时全量 747 项）**
+**`test/contract.mjs`（离线；0.7.0 收尾时全量 789 项）**
 
 - 角色 CRUD；`roles.json` 损坏时拒绝写入且原文件不动；角色数/技能数上限；重名 409；名字非法 400。
 - `planRole` 纯函数：`copy` / `localKept` / `missing` / `disable` / 软链进 `skipped` / 同名双副本一起处置 / 连切两次第二次全 `noop` / `stats.total = copy+enable+disable+noop+skipped` 且 `localKept` 不计入。
 - **`applyRole` 只动项目根**：造一个全局技能，切换后断言它的文件名与 `mtime` 一个字节没变（含 `copy` 那一轮）；再造一个「plan 里塞了全局路径」的用例，断言抛 `error.path.outsideRoots`。
+- **候选与技能根解耦（0.7.0）**：角色路由那一节同时放三份夹具——库里的 `rp-global`、全局技能根里的 `rp-only-global`（反例）、项目技能根里的 `rp-alpha`；断言候选里有 `rp-global`、没有另外两个，`copy` 步骤的 `sourcePath` 指向**库**而不是全局根；整节跑完库文件内容一个字节没变。
+- **可用仓库同步（0.7.0）**：`repos.js` 一节直测 `sync()`——落库、不碰技能根、幂等（`synced` 空 / `unchanged` 全覆盖 / 连 mtime 都不动）、本地改过默认跳过且 `confirm` 才覆盖并留备份、上游前进跟着走、清单缓存丢了自动重拉；路由一节再端到端打一次 `POST /repositories/sync`（含缺 `id` 400 与**不带会话头也能成功**）。
 - 漂移：手工改一个开关 → `status === 'drifted'`。
 - 激活角色被删 → `active` 失效、`status === 'unassigned'`。
 - 客户端：模块表注册 id、第三个 tab 的两份 locale 齐全、缺 primitives / 缺 slots / 缺 locale 都不崩；角色名输入框的 `onChange` 交出字符串（有 / 无 primitives 两条路径都测，宿主 `Input` 与退化实现都是原生 `<input>` 事件透传）。
 
-**`test/integration-cordis.mjs`**：在真 cordis 上按既有形状加一条 `GET /roles` 探针（`provideServices: {}`，不注入 services），断言 200 + JSON 壳，且 `data.status` 是字符串、`data.roles` 是数组、`data.candidates` 是对象。注意它读的是真实 `~/.dsh` 下的 `roles.json`：`GET` 不写盘，跑完 `~/.dsh/skill-console/` 不该多出文件。
+**`test/integration-cordis.mjs`**：在真 cordis 上按既有形状加一条 `GET /roles` 探针（`provideServices: {}`，不注入 services），断言 200 + JSON 壳，且 `data.status` 是字符串、`data.roles` / `data.candidates` / `data.projectSkills` 都是数组。注意它读的是真实 `~/.dsh` 下的 `roles.json`：`GET` 不写盘，跑完 `~/.dsh/skill-console/` 不该多出文件。
 
-**`test/smoke.mjs`**：只加一次**零动作角色往返**——用当前已启用的项目技能拼一个夹具角色（`zz-skill-console-smoke-role`，同名已存在即退出），`save` → `preview`（断言 `steps.length === 0`）→ `activate`（断言 `changed === 0`、`status === 'matched'`）→ `deactivate` → `remove`，最后再读一次 `/roles` 断言夹具已清掉。
+**`test/smoke.mjs`**：只加一次**零动作角色往返**——用 `projectSkills` 里当前已启用的项目技能拼一个夹具角色（不能拿候选拼：候选现在是可用仓库，与项目现状无关）（`zz-skill-console-smoke-role`，同名已存在即退出），`save` → `preview`（断言 `steps.length === 0`）→ `activate`（断言 `changed === 0`、`status === 'matched'`）→ `deactivate` → `remove`，最后再读一次 `/roles` 断言夹具已清掉。
 
 为什么**不**在冒烟里测「真实的角色切换」：`smoke.mjs` 打的是用户**真实运行中的 DSH 与真实工作区**，并不存在「临时项目技能根」可建；而 `activate` 的语义就是把项目技能根里**角色外**的技能全部停用——为了验证一个接口，把用户项目里的一批技能关掉，代价与收益完全不成比例。上面这版方案仍然真走了写路径（`save`/`activate`/`remove` 都落盘），只是角色恰好等于现状，所以 `changed === 0`、盘上一个技能文件都不动。真正的对齐语义（复制 / 启用 / 停用 / 同名保留本地 / 软链跳过 / 逐项隔离 / 全局不可达）由 `test/contract.mjs` 在**临时目录**里覆盖——那里可以随便造技能根。
 
 ## 10. 相关文档与版本
 
-- `README.md`：功能节的「角色 tab」、四条设计边界的第 4 条、已知边界里「全局技能无法被角色排除」与「客户端单文件超 2000 行」两条、模块表的 `roles.js` 行，都是本文件的入口摘要。
-- `docs/HTTP-API.md` 第 15–20 节是这 6 个角色端点的冻结契约（含 `copy` / `localKept` / `missing` 字段）。
-- 插件版本 `0.6.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
-- `planRole` 的输入多了 `sources`（全局根扫描结果）；不传时按「没有全局来源」处理，只是不会有 `copy` / `localKept`。
+- `README.md`：功能节的「角色 tab」、设计边界的第 4 / 5 条、已知边界里「角色排除不掉全局技能」「可用仓库没有管理界面」与「客户端单文件超 2000 行」几条、模块表的 `roles.js` 行，都是本文件的入口摘要。
+- `docs/HTTP-API.md` 第 16–21 节是这 6 个角色端点的冻结契约（含 `copy` / `localKept` / `missing` 字段）；第 13 节是 `POST /repositories/sync`（写入可用仓库）。
+- 插件版本 `0.7.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
+- `planRole` 的 `sources` 现在是**可用仓库**的扫描结果；不传时按「没有可用来源」处理，只是不会有 `copy` / `localKept`。
 
 ## 11. 明确不做的事
 
@@ -247,4 +254,6 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 - **不做「角色决定全局技能」**。技术上必须写全局根，与前提冲突。
 - **不做角色继承 / 分组 / 标签**。平铺一层够用。
 - **角色不搬运技能**：角色只会启用 / 停用项目里的技能，以及把全局有的**复制**进项目；不会把项目里的技能移走或删除。「删除技能 / 移动到项目」是技能 tab 里独立的显式动作（都先备份）。
+- **不做可用仓库的管理界面**（浏览 / 删除 / 停用 / 自动清理）。库只是角色候选与复制来源的存放处：清理由用户自己删目录，上游删掉的技能不会自动从库里消失（卡片上的「与最新清单一致 / 不一致」两个数才是准的）。
+- **不做自动同步 / 定时同步**。链路必须由人手点「同步到可用仓库」触发。
 - **不做自动对齐**。打开面板不会静默改盘——写操作必须由用户显式点击。

@@ -162,7 +162,7 @@ const rolesUnderCordis = await runUnderCordis({
 	request: { path: '/api/skill-console/roles' },
 })
 check('真 cordis 下 GET /roles 返回 200 JSON 壳', rolesUnderCordis?.status === 200 && rolesUnderCordis?.body?.ok === true, `${rolesUnderCordis?.status} ${String(rolesUnderCordis?.body).slice(0, 200)}`)
-check('GET /roles 带回三个契约字段', typeof rolesUnderCordis?.body?.data?.status === 'string' && Array.isArray(rolesUnderCordis?.body?.data?.roles) && typeof rolesUnderCordis?.body?.data?.candidates === 'object', `${rolesUnderCordis?.status} ${String(rolesUnderCordis?.body).slice(0, 200)}`)
+check('GET /roles 带回三个契约字段', typeof rolesUnderCordis?.body?.data?.status === 'string' && Array.isArray(rolesUnderCordis?.body?.data?.roles) && Array.isArray(rolesUnderCordis?.body?.data?.candidates) && Array.isArray(rolesUnderCordis?.body?.data?.projectSkills), `${rolesUnderCordis?.status} ${String(rolesUnderCordis?.body).slice(0, 200)}`)
 
 // 6) 新增写路由必须在真 cordis 下也**按写路由**注册：缺标记头要 403，而不是 404/405。
 //    这两条都完全不碰盘（连 body 都不读：标记围栏在 handler 之前）。

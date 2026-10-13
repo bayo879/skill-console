@@ -30,6 +30,8 @@ kind: 'prefix'   path: '/api/skill-console'
     请求头会话严格解析，会话 id 不存在 / 拿不到 cwd 就是 400 `error.role.noProject`，
     **绝不回落到「最近一个会话」**。
     七个写接口都在解析出工作区之后**先判空再动手**：解析不出时**一个字节都不写**。
+    **唯一的例外是 `POST /repositories/sync`（0.7.0，§13）**：可用仓库是全局的，一次同步服务所有工作区，
+    所以它刻意不看 `project`、也不校验会话头。
   - **读接口**（`/state`、`/catalog`、`/roles`、`/roles/preview`、`/skill`）：`?project=<目录路径>` 优先于
     请求头，给了但无效同样是 400 `error.workspace.invalid`；**没给**时才按请求头会话宽松解析——
     解析不出会话时**回落**到「最近一个会话的 cwd」，并在 `data.project.fallback === true` 里说明。
@@ -65,8 +67,10 @@ kind: 'prefix'   path: '/api/skill-console'
 {
   "ok": true,
   "data": {
-    "version": "0.6.0",              // 插件版本（package.json 的 version）；配置页头部显示它
+    "version": "0.7.0",              // 插件版本（package.json 的 version）；配置页头部显示它
     "dshHome": "/Users/…/harness",
+    "stateDir": "/Users/…/harness/skill-console",
+    "libraryDir": "/Users/…/harness/skill-console/library",   // 可用仓库：角色的候选与复制来源（DSH 不加载它）
     "token": false,                    // 是否配了 GitHub token（只报存在性，不回显值）
     "roots": [
       { "key": "user-dsh", "scope": "global", "label": "全局 DSH",
@@ -332,8 +336,45 @@ kind: 'prefix'   path: '/api/skill-console'
   到位——中途失败时目标要么是旧版本、要么是新版本，不会是半截。
 - 下载字节逐个用 git blob SHA-1 与 tree 快照比对，对不上就整项失败、不落盘。
 - 安装完成后宿主会让技能注册表失效（下一次 `agent/pre-step` 就能看到新目录）。
+- 想一次把清单里能用的技能都取到本地、**不碰任何技能根**（只给角色当候选与复制来源）时，用 §13 的
+  `POST /repositories/sync`——安装是「装进技能根」，同步是「放进可用仓库」，两者互不影响。
 
-## 13. `GET /backups?name=<skill>`
+## 13. `POST /repositories/sync`  ← 同步到可用仓库（0.7.0）
+
+把一个订阅**当前清单里的全部合法技能**落到**可用仓库**（`<DSH_HOME>/skill-console/library/`）——
+角色的候选与复制来源就是它（见 §16）。**一次同步整个清单，不接受技能名列表。**
+
+```jsonc
+// 请求：id 必填；confirm 省略 = false
+{ "id": "obra/superpowers", "confirm": false }
+// data
+{ "synced":    [ { "name": "tdd", "path": "/Users/…/library/tdd", "updated": false, "backup": null } ],
+  "unchanged": [ "brainstorming" ],     // 库里已与清单一致、且没被本地改过 → 一个字节都没写
+  "skipped":   [ { "name": "x",
+                   "reason": "local modifications detected; pass confirm:true to overwrite (a backup is taken)" } ] }
+```
+
+语义（写死的边界，README 里也要写）：
+- **只写可用仓库，不碰任何技能根**：`<DSH_HOME>/skills` 与 `<projectRoot>/.dsh/skills` 一个字节不变，
+  技能注册表也**不**失效（库不在 DSH 的加载路径上，DSH 永远不会加载它）。
+- **库是全局的**：这个端点**不读工作区**——不看请求体 `project`、也不校验 `x-skill-console-session`
+  （唯一的例外写接口），一次同步对**所有**工作区生效。
+- **幂等**：清单里每个技能，若库里的快照 `commit` 与清单一致、且文件没被本地改过 → 进 `unchanged`，
+  **不下载、不写盘**（连 mtime 都不动）。再点一次同步不会有任何写动作。
+- **保护本地改动**：库里的文件与其快照对不上时，该技能默认进 `skipped` 并给出
+  `local modifications detected…`；`confirm:true` 才覆盖，覆盖前把旧版本整份备份到
+  `<DSH_HOME>/skill-console/backups/<name>/<ts>/`（与安装共用同一套备份与「本地改动」判据）。
+- 清单缓存（`repository-cache/`）丢了也能同步：先自动按当前分支重新拉取一次清单再落盘。
+- 上游已删除的技能**不会被清出库**（不自动清理），所以卡片上「可用仓库里有 N 个」可能大于
+  「与最新清单一致 + 不一致」之和。
+- 落盘与安装同样**目录级原子**（staging → rename）、下载字节逐个比对 git blob SHA-1；
+  frontmatter 非法的技能直接进 `skipped`。
+- 同步台账记在订阅状态里（`repositories.json` 的 `record.library`），与「安装到技能根」的
+  `record.skills` **互不影响**；`/repositories/remove` 只删订阅记录，库里的文件留着。
+- 错误：`id` 缺失/非法 → 400 `error.proto.missingId`；订阅不存在 → 404 `error.repo.unknown`；
+  订阅状态文件损坏 → 500 `error.repo.state`；逐项下载/校验失败进 `skipped` 或整项报 `error.install.*`。
+
+## 14. `GET /backups?name=<skill>`
 
 ```jsonc
 // name 省略 = 列出全部技能的备份
@@ -344,7 +385,7 @@ kind: 'prefix'   path: '/api/skill-console'
                            "kind": "directory", "target": "/Users/…/skills/tdd" } ] } }
 ```
 
-## 14. `POST /restore`
+## 15. `POST /restore`
 
 ```jsonc
 { "name": "tdd", "backup": "1789…" }   // backup 省略 = 最近一次备份
@@ -359,16 +400,18 @@ kind: 'prefix'   path: '/api/skill-console'
 
 角色是一条**只在项目技能根上落盘**的支线：读端点看角色清单与对齐状态，写端点先只改
 `<DSH_HOME>/skill-console/roles.json`，只有 `/roles/activate` 会重命名项目根里的发现文件。
-全局技能根（`user-dsh`）在这条线上的路径**结构上不可达**（`applyRole` 只接受单个项目根）。
+全局技能根（`user-dsh`）在这条线上的路径**既不读也不写**、结构上不可达（`applyRole` 只接受单个项目根）。
+**角色的候选只有一个来源：可用仓库**（§13 同步出来的那份）——候选与当前工作区、与全局技能根都无关，
+切换时「项目里没有、库里有」的技能从库里复制进项目。
 
-## 15. `GET /roles`
+## 16. `GET /roles`
 
 角色清单 + 本项目激活角色 + 对齐状态。**只读**。
 
 ```jsonc
 // 读接口：?project=<workspaceDir>（工作区目录路径，无效即 400）优先于 x-skill-console-session 头；
 // 没给 project 且会话也解析不出时回落最近一个会话，并把 project.fallback 置为 true
-// （这是**读路径**：写路径只认请求体 project / 请求头且严格解析，见 §12、§19、§20、§22）
+// （这是**读路径**：写路径只认请求体 project / 请求头且严格解析，见 §12、§20、§21、§23）
 {
   "ok": true,
   "data": {
@@ -377,11 +420,12 @@ kind: 'prefix'   path: '/api/skill-console'
     "project": { "name": "proj-a", "fallback": false },   // 解析不出项目根时 null
     "status": "unassigned",                        // 'unassigned' | 'matched' | 'drifted'
     "stats": { "inRole": 2, "total": 7, "copy": 0, "enable": 0, "disable": 0, "noop": 5, "skipped": 0, "missing": 0, "localKept": 0 },
-    "localKept": [ { "name": "g", "projectPath": "…/g/SKILL.md", "globalPath": "…/g/SKILL.md" } ],
-    "candidates": {
-      "project": [ { "name": "a", "path": "…", "enabled": true, "toggleable": true, "readOnlyReason": null } ],
-      "global":  [ { "name": "g", "path": "…", "enabled": true, "toggleable": true, "readOnlyReason": null } ]
-    }
+    "localKept": [ { "name": "g", "projectPath": "…/g/SKILL.md", "libraryPath": "…/library/g/SKILL.md" } ],
+    // 候选 = 可用仓库里的技能（0.7.0 起是**平面数组**，不再分 project/global）
+    "candidates": [ { "name": "g", "path": "…/library/g", "enabled": true, "toggleable": true, "readOnlyReason": null } ],
+    // 本项目技能根现状，只用于算「● 已启用 / ○」与数量，**不参与勾选与对齐**
+    "projectSkills": [ { "name": "a", "path": "…/.dsh/skills/a", "enabled": true, "toggleable": true, "readOnlyReason": null } ],
+    "library": { "path": "/Users/…/harness/skill-console/library", "count": 3 }
   }
 }
 ```
@@ -389,16 +433,18 @@ kind: 'prefix'   path: '/api/skill-console'
 - `status`：无激活角色 → `unassigned`；`planRole` 的 `steps` 为空 → `matched`；否则 `drifted`。
   `missing` **不影响** `status`（只是「角色里有、本项目没有」）。
 - `drifted` **不自动纠正**：手工改过开关就一直显示「已偏离」，等用户主动再切一次。
-- `candidates.project` 与 `candidates.global` **同形状**，只带 `name` / `path` / `enabled` / `toggleable` /
-  `readOnlyReason`；**全局候选也可勾选**——勾选的含义是「切换时把全局那份**复制进项目**」，不是
-  「控制全局那一份」。能不能操作一律由 `toggleable` 表达（软链技能是 `toggleable: false` +
-  `readOnlyReason: 'symlink'`）。
-- `stats.copy`：角色里要、项目里没有、**全局有**的技能数量——切换时会把它们复制进项目根（复制出来一律启用态）。
-- `stats.localKept` / 顶层 `localKept`：项目里已有同名、全局也有同名的条目；**保留项目那份，绝不被全局覆盖**，该条目自身该 enable / disable / noop 照旧。`localKept` 不计入 `stats.total`。
-- `stats.missing`：角色里要、项目与全局都没有的名字数量；只报告，不算失败，也不影响 `status`。
+- `candidates` 是**平面数组**（只来自可用仓库），每项只带 `name` / `path` / `enabled` / `toggleable` /
+  `readOnlyReason`；勾选的含义是「切换时把**库里那份复制进项目**」。能不能操作一律由 `toggleable`
+  表达（软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`）。**项目技能与全局技能都不在候选里。**
+- `projectSkills` 是本项目技能根的现状（同形状）：界面只用它算行首的 `●`（本项目已启用）/ `○`
+  与 `stats.total`，**不参与勾选与对齐**。
+- `library` 是可用仓库的位置与技能数，供界面讲「候选从哪来」；`library.path` 只用于定位，界面不显示绝对路径。
+- `stats.copy`：角色里要、项目里没有、**库里有**的技能数量——切换时会把它们从库复制进项目根（复制出来一律启用态）。
+- `stats.localKept` / 顶层 `localKept`：项目里已有同名的条目；**保留项目那份，绝不被库覆盖**，该条目自身该 enable / disable / noop 照旧。`localKept` 不计入 `stats.total`。
+- `stats.missing`：角色里要、项目与可用仓库都没有的名字数量；只报告，不算失败，也不影响 `status`。
 - 错误：500 `error.role.state`（`roles.json` 损坏，拒绝覆盖）。
 
-## 16. `GET /roles/preview?role=<id>`
+## 17. `GET /roles/preview?role=<id>`
 
 切换会做什么。**只读，绝不落盘**——就是 `planRole` 的产物加角色信息。
 
@@ -413,7 +459,7 @@ kind: 'prefix'   path: '/api/skill-console'
                    "sourcePath": "…/g/SKILL.md", "sourceKind": "directory" } ],
     "noop":    [ { "name": "a", "path": "…", "enabled": true } ],
     "skipped": [ { "name": "s", "path": "…", "reason": "symlink" } ],
-    "localKept": [ { "name": "k", "projectPath": "…/k/SKILL.md", "globalPath": "…/k/SKILL.md" } ],
+    "localKept": [ { "name": "k", "projectPath": "…/k/SKILL.md", "libraryPath": "…/library/k/SKILL.md" } ],
     "missing": ["在其他项目里才有的技能"],
     "stats":   { "total": 8, "copy": 1, "enable": 1, "disable": 0, "noop": 5, "skipped": 1, "missing": 1 }
   }
@@ -421,7 +467,7 @@ kind: 'prefix'   path: '/api/skill-console'
 ```
 错误：400 `error.proto.missingId`（缺 `role` 参数）、404 `error.role.unknown`。
 
-## 17. `POST /roles/save`  ← 新建 / 更新角色
+## 18. `POST /roles/save`  ← 新建 / 更新角色
 
 ```jsonc
 // 请求（id 省略 = 新建）
@@ -435,7 +481,7 @@ kind: 'prefix'   path: '/api/skill-console'
 400 `error.role.tooMany`（角色数 > 50 或每角色技能数 > 200）、409 `error.role.duplicate`（重名）、
 404 `error.role.unknown`（带了不存在的 `id`）、500 `error.role.state`。
 
-## 18. `POST /roles/remove`
+## 19. `POST /roles/remove`
 
 ```jsonc
 { "id": "…" }
@@ -444,7 +490,7 @@ kind: 'prefix'   path: '/api/skill-console'
 **只删角色记录，磁盘上的技能文件一个都不动**；指向它的激活记录一并清掉并逐条列入
 `clearedProjects`。错误：400 `error.proto.missingId`、404 `error.role.unknown`、500 `error.role.state`。
 
-## 19. `POST /roles/activate`  ← 对齐（唯一破坏性的角色操作）
+## 20. `POST /roles/activate`  ← 对齐（唯一破坏性的角色操作）
 
 ```jsonc
 // 请求：project（工作区目录路径，要操作哪个工作区）给了就只认它；没给才按 x-skill-console-session 头解析
@@ -456,7 +502,7 @@ kind: 'prefix'   path: '/api/skill-console'
                { "name": "c", "path": "…", "action": "disable", "ok": false, "code": "error.toggle.notFound", "error": "…" } ],
   "changed": 1,
   "takeover": [ { "name": "c", "by": [ { "root": "user-dsh", "label": "全局 DSH", "scope": "global", "path": "…" } ] } ],
-  "localKept": [ { "name": "k", "projectPath": "…/k/SKILL.md", "globalPath": "…/k/SKILL.md" } ] }
+  "localKept": [ { "name": "k", "projectPath": "…/k/SKILL.md", "libraryPath": "…/library/k/SKILL.md" } ] }
 ```
 语义：严格对齐——角色内的启用、项目里其余的全部停用（复用 `/toggle` 的发现文件重命名），
 角色里要、项目里没有、全局有的技能**先从全局复制进项目**（`action: 'copy'`，复制出来一律启用态），
@@ -471,7 +517,7 @@ kind: 'prefix'   path: '/api/skill-console'
 400 `error.workspace.invalid`（给了 project 但不是存在的目录）、
 404 `error.role.unknown`、500 `error.role.state`。
 
-## 20. `POST /roles/deactivate`
+## 21. `POST /roles/deactivate`
 
 ```jsonc
 { "project": "/Users/…/proj-a" }   // 清掉本项目「激活了哪个角色」的记录；project（工作区目录路径）可省略（省略时按请求头解析）
@@ -483,7 +529,7 @@ kind: 'prefix'   path: '/api/skill-console'
 **不会回落到「最近一个会话」**。
 错误：400 `error.role.noProject`、400 `error.workspace.invalid`、500 `error.role.state`。
 
-## 21. `POST /skills/delete`  ← 删除技能（破坏性，先备份）
+## 22. `POST /skills/delete`  ← 删除技能（破坏性，先备份）
 
 ```jsonc
 // 请求（发现文件的绝对路径，可能是 .disabled；project 省略时按请求头解析的会话）
@@ -504,7 +550,7 @@ kind: 'prefix'   path: '/api/skill-console'
 - **技能根本身永远不会被删**（删除目标只可能来自扫描到的发现文件）。
 - 成功 200；恢复走 `GET /backups` + `POST /restore`。
 
-## 22. `POST /skills/move-to-project`  ← 全局技能搬到当前工作区（破坏性，先备份）
+## 23. `POST /skills/move-to-project`  ← 全局技能搬到当前工作区（破坏性，先备份）
 
 ```jsonc
 // 请求：必须是全局技能根里的发现文件路径；project 指定搬进哪个工作区（工作区目录路径；没给才按请求头解析）
@@ -584,13 +630,15 @@ kind: 'prefix'   path: '/api/skill-console'
 宿主只动这几个地方：
 
 1. 技能根里的**发现文件重命名**（`SKILL.md` ↔ `SKILL.md.disabled`、`*.md` ↔ `*.md.disabled`）：
-   两个技能根（项目根、全局根）都能做，但 `/roles/activate` **只写项目根**——全局根在角色链路上结构不可达
+   两个技能根（项目根、全局根）都能做，但 `/roles/activate` **只写项目根**——全局根在角色链路上既不读也不写
 2. 仓库安装/更新的目标：缺省 `<DSH_HOME>/skills/<name>/`；`target:'project'` 时是当前工作区的项目根下的 `.dsh/skills/<name>/`（根不存在会随写入创建）
+2.1. `POST /repositories/sync` 的目标：`<DSH_HOME>/skill-console/library/<name>/`（可用仓库；只被角色读到、DSH 不加载）
 3. `<DSH_HOME>/skill-console/repositories.json`（订阅与安装快照）
 4. `<DSH_HOME>/skill-console/roles.json`（角色定义 + 每个项目激活了哪个角色；`/roles/save`、`/roles/remove`、`/roles/deactivate` **只写这一个文件**，不动任何技能）
 5. `<DSH_HOME>/skill-console/repository-cache/` 与 `backups/`
 6. `POST /skills/delete`：先整份备份，再删发现文件所在的整包（目录包）／那个文件（扁平）／链接本身（软链接）；技能根本身永远不删
 7. `POST /skills/move-to-project`：先备份全局那份 → 复制进项目根 → 删全局那份；删全局失败不回滚（项目里那份留着，如实报 `warning`）
 8. `POST /repositories/install` 的 `target:'project'`：只写当前工作区的项目技能根 `<projectRoot>/.dsh/skills/`，不更新订阅快照
+9. `POST /repositories/sync`：只写可用仓库 `<DSH_HOME>/skill-console/library/` 与订阅状态里的 `record.library` 台账；**不写任何技能根**，也不让技能注册表失效
 
 除此之外不写任何文件；不会自动删技能——删除／移动只在你显式调用时发生，且删前必先备份。

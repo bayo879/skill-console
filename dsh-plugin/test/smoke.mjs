@@ -257,15 +257,16 @@ try {
 	const rolesBefore = await call('/api/skill-console/roles', { headers: sessionHeader(sessionId) })
 	check('GET /roles 返回 200', rolesBefore.status === 200 && rolesBefore.body?.ok === true, `http=${rolesBefore.status}`)
 	check('角色列表是数组', Array.isArray(rolesBefore.body?.data?.roles))
-	check('候选里项目技能与全局技能分开', Array.isArray(rolesBefore.body?.data?.candidates?.project) && Array.isArray(rolesBefore.body?.data?.candidates?.global))
-	check('全局候选与项目候选同形状（可勾选，不再标只读）', (rolesBefore.body?.data?.candidates?.global ?? []).every((entry) => !('readOnly' in entry) && !('reason' in entry) && 'toggleable' in entry && 'readOnlyReason' in entry))
+	check('候选是平面数组（只来自可用仓库）', Array.isArray(rolesBefore.body?.data?.candidates) && (rolesBefore.body?.data?.candidates ?? []).every((entry) => !('readOnly' in entry) && !('reason' in entry) && 'toggleable' in entry && 'readOnlyReason' in entry))
+	check('本项目现状单独回在 projectSkills 里（与候选解耦）', Array.isArray(rolesBefore.body?.data?.projectSkills))
 	if (rolesBefore.body?.data?.roles?.some((role) => role.name === roleFixtureName)) {
 		console.error(`\n同名角色已存在，拒绝覆盖：${roleFixtureName}`)
 		console.error('请先在面板里删除它，或手工编辑 roles.json 后重跑。')
 		process.exit(3)
 	}
 
-	const enabledProjectSkills = (rolesBefore.body?.data?.candidates?.project ?? []).filter((entry) => entry.enabled === true && entry.toggleable === true)
+	// 零动作夹具必须按「本项目现状」拼（projectSkills），不能按候选拼——候选现在是可用仓库。
+	const enabledProjectSkills = (rolesBefore.body?.data?.projectSkills ?? []).filter((entry) => entry.enabled === true && entry.toggleable === true)
 	if (enabledProjectSkills.length === 0) {
 		console.log('  跳过：本项目没有已启用的技能可用来拼零动作角色')
 	} else {

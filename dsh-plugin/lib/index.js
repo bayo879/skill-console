@@ -81,6 +81,9 @@ export function apply(ctx) {
 	const dshHome = resolveDshHome()
 	const stateDir = join(dshHome, 'skill-console')
 	const skillsDir = join(dshHome, 'skills')
+	// 可用仓库：订阅同步的落点，也是角色候选的唯一来源。它**不**在 DSH 的技能根里
+	// （DSH 不会加载它），所以同步完不需要让技能注册表失效。
+	const libraryDir = join(stateDir, 'library')
 
 	const log = (message) => {
 		try {
@@ -90,7 +93,7 @@ export function apply(ctx) {
 		}
 	}
 
-	const repositories = createRepositoryManager({ stateDir, skillsDir, log })
+	const repositories = createRepositoryManager({ stateDir, skillsDir, libraryDir, log })
 	const roleStore = createRoleStore({ stateDir, log })
 
 	/**
@@ -152,6 +155,7 @@ export function apply(ctx) {
 						dshHome,
 						stateDir,
 						skillsDir,
+						libraryDir,
 						version,
 						refreshSkills,
 						notifyFileChanged,

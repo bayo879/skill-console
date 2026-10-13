@@ -8,7 +8,7 @@
  *   - `backups.js` —— 备份存储、快照、原子恢复
  *   - `frontmatter.js` —— 远端 SKILL.md 的 name/description 解析（与本地扫描同一份口径）
  *
- * 三条刻意的设计边界：
+ * 几条刻意的设计边界：
  *
  *   1. **安装可以指定目标**：缺省写全局 DSH 技能根（`<DSH_HOME>/skills`），
  *      显式传 `targetSkillsDir` 时写那个目录（当前项目技能根走这条路）。
@@ -21,6 +21,11 @@
  *      frontmatter 才收入清单，否则仓库根下的 README/CONTRIBUTING 会被当成
  *      「frontmatter 不合法的技能」刷屏（判据在 `repo-manifest.js` 的
  *      `isManifestSkill`）。目录候选不受影响：SKILL.md 坏了要让人看见。
+ *   5. **可用仓库是第三个落点，不是技能根**：`sync` 把清单里的技能同步到
+ *      `libraryDir`（`<DSH_HOME>/skill-console/library`）。DSH 不加载这个目录，
+ *      所以同步完不需要让技能注册表失效；它只有一个用途——给「角色」当候选池
+ *      （角色切换是往项目技能根复制，与这里无关）。`install` 写技能根、`sync`
+ *      写库，两条路径共用同一份落盘实现（判据/备份/确认只能有一处）。
  *
  * 没有轮询、没有自动更新：拉取只发生在「添加订阅」和用户点「拉取最新」时。
  */
@@ -62,14 +67,18 @@ export function normalizeSubdirectory(value) {
 /**
  * 创建一个仓库管理器。
  *
- * @param options - `{stateDir, skillsDir, log, fetchImpl?, token?, now?}`。
- *   `stateDir` = `<DSH_HOME>/skill-console`；`skillsDir` = `<DSH_HOME>/skills`。
+ * @param options - `{stateDir, skillsDir, libraryDir, log, fetchImpl?, token?, now?}`。
+ *   `stateDir` = `<DSH_HOME>/skill-console`；`skillsDir` = `<DSH_HOME>/skills`；
+ *   `libraryDir` = `<DSH_HOME>/skill-console/library`（「可用仓库」落点，缺省按这个算）。
  *   `fetchImpl` 可注入（离线契约测试用桩替换网络）。
  * @returns 管理器。
  */
 export function createRepositoryManager(options) {
 	const stateDir = options.stateDir
 	const skillsDir = options.skillsDir
+	// 可用仓库缺省与 stateDir 同级：它属于 skill-console 自己的数据，
+	// 不是 DSH 的技能根，所以不能挂在 skillsDir 底下。
+	const libraryDir = typeof options.libraryDir === 'string' && options.libraryDir !== '' ? options.libraryDir : join(stateDir, 'library')
 	const stagingDir = join(stateDir, 'staging')
 	const now = options.now ?? (() => Date.now())
 	const log = options.log ?? (() => {})
@@ -211,6 +220,72 @@ export function createRepositoryManager(options) {
 		renameSync(staging, target)
 	}
 
+	/**
+	 * 把一个清单条目落到 `dir` 下：判据 → 下载 → 备份 → 原子写。
+	 *
+	 * `install`（写技能根）与 `sync`（写可用仓库）共用这一份实现：「覆盖前先备份」
+	 * 「本地改动要确认」「跳过原因文案」只能有一处，否则两条路径迟早讲两套话。
+	 *
+	 * **不写任何台账**：写 `record.skills` 还是 `record.library` 由调用方决定——
+	 * 两者语义不同，一处是「装进了技能根」，一处是「同步进了库」。
+	 *
+	 * @param input - `{record, manifest, entry, dir, snapshot, confirm}`。
+	 *   `snapshot` 是**对应这份台账**里该技能的快照；`undefined` 表示这个目标不受
+	 *   任何台账作证，于是只存在同名就一律当冲突，必须 `confirm: true`。
+	 * @returns `{ok: true, name, path, updated, backup, files}` 或 `{ok: false, name, reason}`。
+	 */
+	async function writeManifestEntry({ record, manifest, entry, dir, snapshot, confirm }) {
+		const name = entry.name
+		if (!entry.valid || !isValidSkillName(name)) {
+			return { ok: false, name, reason: 'skill frontmatter is invalid; fix it upstream' }
+		}
+		const target = targetPathFor(dir, name, entry.kind)
+		const conflict = existsSync(target) && snapshot === undefined
+		const modified = snapshot !== undefined && isLocallyModified(target, snapshot)
+		if ((conflict || modified) && confirm !== true) {
+			return {
+				ok: false,
+				name,
+				reason: conflict
+					? 'a local skill with this name exists and is not tracked by this subscription; pass confirm:true to overwrite (a backup is taken)'
+					: 'local modifications detected; pass confirm:true to overwrite (a backup is taken)',
+			}
+		}
+		const files = await downloadSkillFiles(record, manifest.commit, entry)
+		const backup = existsSync(target) ? backups.create(name, target, entry.kind) : null
+		writeSkill(target, entry.kind, files)
+		return {
+			ok: true,
+			name,
+			path: target,
+			updated: snapshot !== undefined || conflict,
+			backup,
+			files: Object.fromEntries(files.map((file) => [file.rel, file.blobSha])),
+		}
+	}
+
+	/**
+	 * 库台账对这份清单的覆盖情况。**只比 commit、不读盘**：列表接口每个订阅都要算，
+	 * 逐文件比对会把「打开仓库页」变成一次全盘扫描；本地改动要到 `sync` 才暴露。
+	 *
+	 * `count` 可能大于 `synced + outdated`：台账里有、清单里已经没有的技能（上游删了）
+	 * 仍留在库里，只是不再被这份清单覆盖。报表以 `synced` / `outdated` 为准。
+	 */
+	function librarySummaryOf(record, manifest) {
+		const snapshots = record.library ?? {}
+		const entries = manifest?.skills ?? []
+		let synced = 0
+		let outdated = 0
+		for (const entry of entries) {
+			const snapshot = snapshots[entry.name]
+			if (snapshot === undefined) continue
+			if (snapshot.commit !== manifest.commit) outdated += 1
+			else synced += 1
+		}
+		const orphan = Object.keys(snapshots).filter((name) => !entries.some((entry) => entry.name === name)).length
+		return { count: Object.keys(snapshots).length, synced, outdated, orphan }
+	}
+
 	/** 单个订阅的详情（技能行）。 */
 	function detailOf(id) {
 		const record = store.require(id)
@@ -246,20 +321,24 @@ export function createRepositoryManager(options) {
 			afterMutation = typeof fn === 'function' ? fn : () => {}
 		},
 
-		/** 订阅列表 + 汇总状态。 */
+		/** 订阅列表 + 汇总状态（含「可用仓库」的覆盖情况）。 */
 		list() {
-			const repositories = store.load().repositories.map((record) => ({
-				id: record.id,
-				owner: record.owner,
-				name: record.name,
-				url: `https://github.com/${record.owner}/${record.name}`,
-				ref: record.ref,
-				subdirectory: record.subdirectory,
-				addedAt: record.addedAt,
-				lastFetch: record.lastFetch ?? null,
-				installedCount: Object.keys(record.skills ?? {}).length,
-				status: summarize(rowsOf(record, store.readManifest(record.id))),
-			}))
+			const repositories = store.load().repositories.map((record) => {
+				const manifest = store.readManifest(record.id)
+				return {
+					id: record.id,
+					owner: record.owner,
+					name: record.name,
+					url: `https://github.com/${record.owner}/${record.name}`,
+					ref: record.ref,
+					subdirectory: record.subdirectory,
+					addedAt: record.addedAt,
+					lastFetch: record.lastFetch ?? null,
+					installedCount: Object.keys(record.skills ?? {}).length,
+					status: summarize(rowsOf(record, manifest)),
+					library: librarySummaryOf(record, manifest),
+				}
+			})
 			return { repositories, token: tokenOf() !== null, maxRepositories: MAX_REPOSITORIES }
 		},
 
@@ -347,7 +426,7 @@ export function createRepositoryManager(options) {
 
 		fetch: fetchRepository,
 
-		/** 手动安装/更新选中的技能。 */
+		/** 手动安装/更新选中的技能（落到技能根：缺省的全局根，或显式传入的项目根）。 */
 		async install({ id, skills, confirm, targetSkillsDir }) {
 			const record = store.require(id)
 			const manifest = store.readManifest(id) ?? (await fetchRepository(id)).manifest
@@ -363,27 +442,13 @@ export function createRepositoryManager(options) {
 						skipped.push({ name, reason: 'not in the fetched manifest; run 拉取最新 first' })
 						continue
 					}
-					if (!entry.valid || !isValidSkillName(name)) {
-						skipped.push({ name, reason: 'skill frontmatter is invalid; fix it upstream' })
+					// 订阅快照只描述全局那份：装到别的根时它不能证明目标没被改过。
+					const snapshot = dir === skillsDir ? record.skills?.[name] : undefined
+					const outcome = await writeManifestEntry({ record, manifest, entry, dir, snapshot, confirm })
+					if (outcome.ok !== true) {
+						skipped.push({ name: outcome.name ?? name, reason: outcome.reason })
 						continue
 					}
-					const target = targetPathFor(dir, name, entry.kind)
-					const snapshot = record.skills?.[name]
-					// 装到别的根时，订阅快照（只描述全局那份）不能拿来证明目标没被改过 → 一律当冲突处理。
-					const conflict = existsSync(target) && (snapshot === undefined || dir !== skillsDir)
-					const modified = dir === skillsDir && snapshot !== undefined && isLocallyModified(target, snapshot)
-					if ((conflict || modified) && confirm !== true) {
-						skipped.push({
-							name,
-							reason: conflict
-								? 'a local skill with this name exists and is not tracked by this subscription; pass confirm:true to overwrite (a backup is taken)'
-								: 'local modifications detected; pass confirm:true to overwrite (a backup is taken)',
-						})
-						continue
-					}
-					const files = await downloadSkillFiles(record, manifest.commit, entry)
-					const backup = existsSync(target) ? backups.create(name, target, entry.kind) : null
-					writeSkill(target, entry.kind, files)
 					// 只在写全局时才更新订阅快照：项目安装不写台账，免得顶掉全局那份的记录。
 					if (dir === skillsDir) {
 						record.skills = record.skills ?? {}
@@ -392,17 +457,76 @@ export function createRepositoryManager(options) {
 							kind: entry.kind,
 							commit: manifest.commit,
 							installedAt: now(),
-							files: Object.fromEntries(files.map((file) => [file.rel, file.blobSha])),
+							files: outcome.files,
 						}
 						store.save()
 					}
-					installed.push({ name, path: target, updated: snapshot !== undefined || conflict, backup })
+					installed.push({ name, path: outcome.path, updated: outcome.updated, backup: outcome.backup })
 				} catch (error) {
 					skipped.push({ name, reason: errorText(error) })
 				}
 			}
 			if (installed.length > 0) afterWrite('安装')
 			return { installed, skipped }
+		},
+
+		/**
+		 * 手动批量同步：把这份清单里能用的技能**全部**同步到可用仓库（`libraryDir`）。
+		 *
+		 * 与 `install` 的分工：`install` 写技能根（DSH 会加载），`sync` 只写库——
+		 * DSH 不加载库，所以这里**不调 `afterWrite`**（让技能注册表失效没有意义）。
+		 *
+		 * 幂等：台账 commit 与清单一致、本地又没被动过 → 记 `unchanged`，连下载都省掉。
+		 * 所以同步按钮可以放心反复点：第二次不产生任何写盘动作。
+		 *
+		 * 台账（`record.library`）循环结束后一次落盘：逐个技能 save 会在几十个技能时
+		 * 写几十遍状态文件。
+		 *
+		 * @param input - `{id, confirm}`。
+		 * @returns `{synced, unchanged, skipped}`。
+		 */
+		async sync({ id, confirm }) {
+			const record = store.require(id)
+			const manifest = store.readManifest(id) ?? (await fetchRepository(id)).manifest
+			const synced = []
+			const unchanged = []
+			const skipped = []
+			let dirty = false
+			for (const entry of manifest.skills ?? []) {
+				const name = entry.name
+				try {
+					const snapshot = record.library?.[name]
+					if (!entry.valid || !isValidSkillName(name)) {
+						skipped.push({ name, reason: 'skill frontmatter is invalid; fix it upstream' })
+						continue
+					}
+					const target = targetPathFor(libraryDir, name, entry.kind)
+					// 幂等短路：清单 commit 与台账一致、本地又没被动过 → 什么都不用做。
+					if (snapshot !== undefined && snapshot.commit === manifest.commit && !isLocallyModified(target, snapshot)) {
+						unchanged.push(name)
+						continue
+					}
+					const outcome = await writeManifestEntry({ record, manifest, entry, dir: libraryDir, snapshot, confirm })
+					if (outcome.ok !== true) {
+						skipped.push({ name: outcome.name ?? name, reason: outcome.reason })
+						continue
+					}
+					record.library = record.library ?? {}
+					record.library[name] = {
+						sourcePath: entry.sourcePath,
+						kind: entry.kind,
+						commit: manifest.commit,
+						syncedAt: now(),
+						files: outcome.files,
+					}
+					dirty = true
+					synced.push({ name, path: outcome.path, updated: outcome.updated, backup: outcome.backup })
+				} catch (error) {
+					skipped.push({ name, reason: errorText(error) })
+				}
+			}
+			if (dirty) store.save()
+			return { synced, unchanged, skipped }
 		},
 
 		/** 备份列表（`name` 省略 = 全部技能）。 */

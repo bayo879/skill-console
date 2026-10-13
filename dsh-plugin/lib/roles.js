@@ -227,14 +227,15 @@ export function createRoleStore(options) {
 /**
  * 算一次切换要做哪些动作。**纯函数，不碰盘。**
  *
- * 0.4.0 起，角色里「项目没有、全局有」的技能会先**复制**进来（`action:'copy'`）。
+ * 0.4.0 起，角色里「项目没有、来源里有」的技能会先**复制**进来（`action:'copy'`）。
+ * 0.7.0 起这个来源是**可用仓库**（`<DSH_HOME>/skill-console/library`），不是全局技能根。
  * 复制步骤的 `path` 固定为 `null`：纯函数这一层拿不到项目根路径，目标路径由
  * `applyRole` 用 `targetPathFor(projectRoot.path, step.name, step.sourceKind)` 算。
  *
- * 同名不覆盖：项目里已有同名、全局也有同名时，进 `localKept`（只报告），该条目
- * 自身该 enable / disable / noop 照旧——**不会**用全局那份覆盖项目那份。
+ * 同名不覆盖：项目里已有同名、来源里也有同名时，进 `localKept`（只报告），该条目
+ * 自身该 enable / disable / noop 照旧——**不会**用来源那份覆盖项目那份。
  *
- * @param input - `{role, skills, sources}`：`role` 是角色对象（或 null），`skills` 是项目根扫描结果，`sources` 是全局根扫描结果（只读来源，不落盘）。
+ * @param input - `{role, skills, sources}`：`role` 是角色对象（或 null），`skills` 是项目根扫描结果，`sources` 是可用仓库扫描结果（只读来源，不落盘）。
  * @returns `{steps, noop, skipped, localKept, missing, stats}`。
  */
 export function planRole(input) {
@@ -259,9 +260,9 @@ export function planRole(input) {
 		const name = typeof skill?.name === 'string' ? skill.name : ''
 		if (name === '') continue
 		seen.add(name)
-		// 项目里已有同名、全局也有同名：保留本地副本，绝不覆盖。
+		// 项目里已有同名、可用仓库里也有同名：保留本地副本，绝不覆盖。
 		const source = sourceByName.get(name)
-		if (source !== undefined) localKept.push({ name, projectPath: skill.path, globalPath: source.path })
+		if (source !== undefined) localKept.push({ name, projectPath: skill.path, libraryPath: source.path })
 		if (skill.toggleable !== true) {
 			skipped.push({ name, path: skill.path, reason: skill.readOnlyReason ?? 'readonly' })
 			continue
@@ -274,7 +275,7 @@ export function planRole(input) {
 		steps.push({ name, path: skill.path, action: target ? 'enable' : 'disable', current: skill.enabled === true, target })
 	}
 
-	// 项目里根本没有、角色要、全局有 → 复制进来（复制出来一律是启用态）。
+	// 项目里根本没有、角色要、可用仓库里有 → 复制进来（复制出来一律是启用态）。
 	for (const name of wanted) {
 		if (seen.has(name)) continue
 		const source = sourceByName.get(name)
