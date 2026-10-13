@@ -2820,7 +2820,7 @@ check('安装到项目时会提示全局根不受影响', clientSource.includes(
 // 从角色列表直接激活时没有草稿：确认框的数量必须按「被激活的那个角色」算，否则恒为 0。
 check('激活确认框按被激活角色的技能算数量', clientSource.includes('const confirmText = (skills) =>') && clientSource.includes('runActivate(role.id, role.skills ?? [])'))
 check('从编辑器激活时按草稿算数量', clientSource.includes('runActivate(current.id, current.skills)'))
-// 面板不显示任何具体目录地址（README.md:28）：删除 / 移动的回执里不许留 {path} / {backup} 槽。
+// 面板不显示任何具体目录地址（README 技能 tab 那条）：删除 / 移动的回执里不许留 {path} / {backup} 槽。
 const noticeCopy = [dictionaryZh['skills.deleteDone'], dictionaryZh['skills.moveDone'], dictionaryEn['skills.deleteDone'], dictionaryEn['skills.moveDone']].join('|')
 check('删除 / 移动的回执不显示目录地址', !/\{path\}|\{backup\}/.test(noticeCopy), noticeCopy)
 
@@ -2854,6 +2854,17 @@ for (const key of ['roles.fallback', 'error.roleNoProject']) {
 	const en = String(dictionaryEn['repos.targetProjectHint'] ?? '')
 	check('repos.targetProjectHint 的 zh 文案说「当前工作区」、保留「项目技能根」', zh.includes('工作区') && !zh.includes('当前项目') && zh.includes('项目技能根'), zh)
 	check('repos.targetProjectHint 的 en 文案说 current workspace（不再说 current project）', /workspace/i.test(en) && !/current project/i.test(en), en)
+}
+
+// Fix round 1：Task 8 的键清单漏了角色页签这三处用户可见的「项目」文案。
+// `roles.noProject` 是 `projectName` 的兜底、`roles.empty` 是空态引导、`roles.subtitle` 是页签副标题。
+// 与上面 `repos.targetProjectHint` 同一条口径：术语「项目技能根」（en: the project skill root）是文件系统概念，必须留着，
+// 所以 zh 钉的是「当前项目」、en 钉的是「current project」，而不是把「项目」/project 一刀切掉。
+for (const key of ['roles.subtitle', 'roles.noProject', 'roles.empty']) {
+	const zh = String(dictionaryZh[key] ?? '')
+	const en = String(dictionaryEn[key] ?? '')
+	check(`${key} 的 zh 文案改叫工作区（不再说当前项目）`, zh.includes('工作区') && !zh.includes('当前项目'), zh)
+	check(`${key} 的 en 文案改叫 workspace（不再说 current project）`, /workspace/i.test(en) && !/current project/i.test(en), en)
 }
 
 section('工作区：共享上下文按目录路径，三个页签读同一份')
