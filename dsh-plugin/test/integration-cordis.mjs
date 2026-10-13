@@ -175,9 +175,9 @@ check('真 cordis 下 POST /skills/delete 缺标记头 → 403 JSON 壳', skillD
 
 const moveUnderCordis = await runUnderCordis({
 	provideServices: {},
-	request: { method: 'GET', path: '/api/skill-console/skills/move-to-project' },
+	request: { method: 'GET', path: '/api/skill-console/skills/move-to-library' },
 })
-check('GET 打 /skills/move-to-project → 405（说明它登记在写路由表里）', moveUnderCordis?.status === 405, `${moveUnderCordis?.status} ${JSON.stringify(moveUnderCordis?.body).slice(0, 200)}`)
+check('GET 打 /skills/move-to-library → 405（说明它登记在写路由表里）', moveUnderCordis?.status === 405, `${moveUnderCordis?.status} ${JSON.stringify(moveUnderCordis?.body).slice(0, 200)}`)
 
 console.log(`\n结果：${passed}/${passed + failed} 项通过（真 cordis 集成）`)
 if (failed > 0) process.exit(1)

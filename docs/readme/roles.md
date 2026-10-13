@@ -1,6 +1,6 @@
 # 角色（技能组合）
 
-状态：**已实现**（`dsh-skill-console@0.7.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
+状态：**已实现**（`dsh-skill-console@0.8.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
 
 ---
 
@@ -176,7 +176,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 | `error.role.duplicate` | 409 | 角色重名 |
 | `error.role.tooMany` | 400 | 角色数或每角色技能数超上限 |
 | `error.role.skills` | 400 | `skills` 不是字符串数组 |
-| `error.role.noProject` | 400 | 解析不出项目根（`/roles/activate`、`/roles/deactivate`；同一枚码也用于 `/skills/move-to-project` 与 `target:'project'` 的 `/repositories/install`，见 `docs/HTTP-API.md`） |
+| `error.role.noProject` | 400 | 解析不出项目根（`/roles/activate`、`/roles/deactivate`；同一枚码也用于 `/skills/move-to-library`（来源是项目技能时）与 `target:'project'` 的 `/repositories/install`，见 `docs/HTTP-API.md`） |
 | `error.proto.missingId` | 400 | 复用现有 |
 | `error.path.outsideRoots` | 400 | 复用现有（第二层保证触发时） |
 
@@ -200,7 +200,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ### 单文件增长的取舍（已知代价）
 
-角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3493 行**（`wc -l dsh-plugin/lib/client.js`，0.7.0 收尾时；0.6.0 收尾时是 3466 行），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
+角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3136 行**（`wc -l dsh-plugin/lib/client.js`，0.8.0 收尾时；0.7.0 收尾时是 3493 行——0.8.0 撤掉批量层与安装块后**变短了**），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
 
 已选择：**接受增长，不引入构建机制**（保住「改代码就生效」，且没有「改了源码忘了跑构建、界面静默跑旧代码」这种故障态）。缓解办法是把角色面板的**逻辑尽量压到宿主 `roles.js`**，客户端只留渲染。
 
@@ -224,7 +224,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ## 9. 测试覆盖（沿用现有三层）
 
-**`test/contract.mjs`（离线；0.7.0 收尾时全量 789 项）**
+**`test/contract.mjs`（离线；0.8.0 收尾时全量 785 项）**
 
 - 角色 CRUD；`roles.json` 损坏时拒绝写入且原文件不动；角色数/技能数上限；重名 409；名字非法 400。
 - `planRole` 纯函数：`copy` / `localKept` / `missing` / `disable` / 软链进 `skipped` / 同名双副本一起处置 / 连切两次第二次全 `noop` / `stats.total = copy+enable+disable+noop+skipped` 且 `localKept` 不计入。
@@ -245,7 +245,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 - `README.md`：功能节的「角色 tab」、设计边界的第 4 / 5 条、已知边界里「角色排除不掉全局技能」「可用仓库没有管理界面」与「客户端单文件超 2000 行」几条、模块表的 `roles.js` 行，都是本文件的入口摘要。
 - `docs/HTTP-API.md` 第 16–21 节是这 6 个角色端点的冻结契约（含 `copy` / `localKept` / `missing` 字段）；第 13 节是 `POST /repositories/sync`（写入可用仓库）。
-- 插件版本 `0.7.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
+- 插件版本 `0.8.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
 - `planRole` 的 `sources` 现在是**可用仓库**的扫描结果；不传时按「没有可用来源」处理，只是不会有 `copy` / `localKept`。
 
 ## 11. 明确不做的事
@@ -253,7 +253,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 - **不做切换前快照 / 一键回滚**（当前）。严格对齐一次可能停用几十个技能，但现有 `backups.js` 是「文件内容快照」，给状态对齐用会引入第二套一致性问题，收益不足以抵掉它。
 - **不做「角色决定全局技能」**。技术上必须写全局根，与前提冲突。
 - **不做角色继承 / 分组 / 标签**。平铺一层够用。
-- **角色不搬运技能**：角色只会启用 / 停用项目里的技能，以及把全局有的**复制**进项目；不会把项目里的技能移走或删除。「删除技能 / 移动到项目」是技能 tab 里独立的显式动作（都先备份）。
+- **角色不搬运技能**：角色只会启用 / 停用项目里的技能，以及把全局有的**复制**进项目；不会把项目里的技能移走或删除。「删除技能 / 移到可用仓库」是技能 tab 里独立的显式动作（都先备份）；其中「移到可用仓库」只在技能还没被当前角色管着、且库里没有同名时才出现。
 - **不做可用仓库的管理界面**（浏览 / 删除 / 停用 / 自动清理）。库只是角色候选与复制来源的存放处：清理由用户自己删目录，上游删掉的技能不会自动从库里消失（卡片上的「与最新清单一致 / 不一致」两个数才是准的）。
 - **不做自动同步 / 定时同步**。链路必须由人手点「同步到可用仓库」触发。
 - **不做自动对齐**。打开面板不会静默改盘——写操作必须由用户显式点击。

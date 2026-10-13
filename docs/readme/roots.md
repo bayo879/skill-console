@@ -79,16 +79,17 @@
 | `error.toggle.symlink` | 400 | `toggleSkill`：软链接不允许启停 |
 | `error.toggle.conflict` | 409 | `toggleSkill`：目标名已存在，拒绝覆盖 |
 | `error.skill.notFound` | 404 | `copySkillIntoRoot` / `planRemoval`：源不存在或没名字 |
-| `error.transfer.symlink` | 400 | `copySkillIntoRoot`；`/skills/move-to-project` 的软链来源 |
+| `error.transfer.symlink` | 400 | `copySkillIntoRoot`；`/skills/move-to-library` 的软链来源 |
 | `error.copy.exists` | 409 | `copySkillIntoRoot`：目标位置已有同名 |
-| `error.transfer.notGlobal` | 400 | `/skills/move-to-project`：只允许全局 → 项目 |
-| `error.transfer.exists` | 409 | `/skills/move-to-project`：项目里已有同名（**按技能名判**，不按目标路径） |
+| `error.transfer.exists` | 409 | `/skills/move-to-library`：**可用仓库**里已有同名（**按技能名判**，不按目标路径） |
 | `error.workspace.invalid` | 400 | 写/读接口里**显式给的** `project` 解析不出（相对路径 / 不存在 / 不是目录）：写路径**绝不回落到请求头会话** |
-| `error.role.noProject` | 400 | 写接口**没给** `project`，且会话头也解析不出项目根；`/skills/move-to-project`、`target:'project'` 的安装同样落到这条 |
+| `error.role.noProject` | 400 | 写接口**没给** `project`，且会话头也解析不出项目根；`/skills/move-to-library`（来源是项目技能时）、`target:'project'` 的安装同样落到这条 |
 | `error.delete.backup` | 500 | 删除 / 移动前的备份失败：**什么都没改** |
 
-## 6. 「移到项目」的顺序（`routes.js` 编排）
+## 6. 「移到可用仓库」的顺序（`routes.js` 编排）
 
-① 备份全局那份（失败 → 500，什么都不移）→ ② `copySkillIntoRoot` 复制进项目根 → ③ `removeSkill` 删全局那份。
+① 备份原处那份（失败 → 500，什么都不移）→ ② `copySkillIntoRoot(libraryRootOf(), source)` 复制进可用仓库 → ③ `removeSkill` 删原处那份。
 
-③ 失败**不回滚**：项目里那份已经就位，响应 `globalRemoved:false` + `warning` 如实报告，用户再点一次「删除」即可清掉全局那份。复制失败时按复制自身的错误码上抛，全局那份没动。
+③ 失败**不回滚**：库里那份已经就位，响应 `sourceRemoved:false` + `warning` 如实报告，用户再点一次「删除」即可清掉原处那份。复制失败时按复制自身的错误码上抛，原处没动。
+
+来源可以是**任意技能根**（全局或当前工作区项目技能根）：0.7.0 之前这条只允许全局 → 项目，0.8.0 起统一成「搬进可用仓库」，`error.transfer.notGlobal` 这枚码**已不再产生**。可用仓库不是技能根（不在 `ROOT_DEFS` / `resolveRoots` 里），所以 `libraryRootOf()` 是路由层临时合成的根描述，只用来复用 `scanRoot` / `copySkillIntoRoot`。

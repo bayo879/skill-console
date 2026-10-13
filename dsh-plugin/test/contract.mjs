@@ -950,10 +950,11 @@ const libManager = reposModule.createRepositoryManager({
 	now: () => 1789000000000,
 })
 await libManager.add({ url: 'https://github.com/o/r', ref: '', subdirectory: 'skills' })
+// 0.8.0：订阅默认同步——添加订阅就已经把清单落进库，不再需要用户再点一次。
+check('添加订阅后技能已经在可用仓库里（订阅默认同步）', existsSync(join(libDir, 'alpha', 'SKILL.md')) && existsSync(join(libDir, 'alpha', 'reference.md')) && existsSync(join(libDir, 'gamma.md')))
+check('自动同步一个字节都不碰技能根', !existsSync(join(libSkillsDir, 'alpha')) && (!existsSync(libSkillsDir) || readdirSync(libSkillsDir).length === 0))
 const firstSync = await libManager.sync({ id: 'o/r' })
-check('同步把清单里的技能全部落进可用仓库', firstSync.synced.length === 3 && existsSync(join(libDir, 'alpha', 'SKILL.md')) && existsSync(join(libDir, 'alpha', 'reference.md')) && existsSync(join(libDir, 'gamma.md')), JSON.stringify(firstSync))
-check('同步一个字节都不碰技能根', !existsSync(join(libSkillsDir, 'alpha')) && (!existsSync(libSkillsDir) || readdirSync(libSkillsDir).length === 0))
-check('首次同步没有备份（库文件本来就不存在）', firstSync.synced.every((entry) => entry.backup === null), JSON.stringify(firstSync.synced))
+check('添加之后再手动同步是幂等的', firstSync.synced.length === 0 && firstSync.unchanged.length === 3, JSON.stringify(firstSync))
 check('卡片能报出可用仓库存量', libManager.list().repositories[0].library.count === 3 && libManager.list().repositories[0].library.synced === 3, JSON.stringify(libManager.list().repositories[0].library))
 
 // 幂等：台账与清单一致时既不下载也不写盘（连 mtime 都不该动）
@@ -991,7 +992,7 @@ const noFetchManager = reposModule.createRepositoryManager({ stateDir: noFetchSt
 await noFetchManager.add({ url: 'https://github.com/o/r', ref: '', subdirectory: 'skills' })
 for (const cached of readdirSync(join(noFetchState, 'repository-cache'))) rmSync(join(noFetchState, 'repository-cache', cached))
 const coldSync = await noFetchManager.sync({ id: 'o/r' })
-check('清单缓存没了也能同步（自动重拉一次）', coldSync.synced.length === 3, JSON.stringify(coldSync))
+check('清单缓存没了也能同步（自动重拉一次）', coldSync.skipped.length === 0 && coldSync.unchanged.length === 3 && existsSync(join(noFetchState, 'library', 'alpha', 'SKILL.md')), JSON.stringify(coldSync))
 
 section('仓库订阅：仓库根下的文档不算技能（monorepo 根不被当成技能根）')
 // 现场事故：订阅 juliusbrussee/caveman 的仓库根，11 个根级 .md（README / CLAUDE /
@@ -1680,41 +1681,45 @@ check('根外路径 → 400 error.path.outsideRoots', outsideDelete.status === 4
 check('GET 打这个写端点 → 405', (await call({ path: '/api/skill-console/skills/delete', headers: roleSession })).status === 405)
 check('缺标记头 → 403', (await call({ method: 'POST', path: '/api/skill-console/skills/delete', headers: { 'content-type': 'application/json' }, body: { path: join(home, 'skills', 'del-target', 'SKILL.md') } })).status === 403)
 
-// 移动：只允许全局 → 项目
+// 收进可用仓库：技能离开原技能根（整份备份），任何一个技能根都不留副本
 placeSkill(join(home, 'skills'), 'move-me', true)
-const moveRes = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'move-me', 'SKILL.md') } })
-check('POST /skills/move-to-project 200 且 globalRemoved=true', moveRes.status === 200 && moveRes.json?.data?.globalRemoved === true, `${moveRes.status} ${JSON.stringify(moveRes.json).slice(0, 200)}`)
-check('项目里出现启用态副本', existsSync(join(rolesProjectSkills, 'move-me', 'SKILL.md')))
-check('全局那份已经不存在', !existsSync(join(home, 'skills', 'move-me')))
+const moveRes = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-library', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'move-me', 'SKILL.md') } })
+check('POST /skills/move-to-library 200 且 sourceRemoved=true', moveRes.status === 200 && moveRes.json?.data?.sourceRemoved === true, `${moveRes.status} ${JSON.stringify(moveRes.json).slice(0, 200)}`)
+check('可用仓库里出现启用态副本', existsSync(join(rolesLibrary, 'move-me', 'SKILL.md')))
+check('原技能根那份已经不存在', !existsSync(join(home, 'skills', 'move-me')))
+check('移动返回落地路径与备份目录', typeof moveRes.json?.data?.to === 'string' && moveRes.json.data.to === join(rolesLibrary, 'move-me') && typeof moveRes.json.data.backup === 'string' && existsSync(moveRes.json.data.backup), JSON.stringify(moveRes.json?.data).slice(0, 300))
+// 项目技能同样能收进库：0.8.0 起「只有全局能搬」这条限制没了，判据只剩「角色没在用、库里没有」
 placeSkill(rolesProjectSkills, 'p-local', true)
-const notGlobal = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesProjectSkills, 'p-local', 'SKILL.md') } })
-check('项目里的技能不能「移到项目」→ 400 error.transfer.notGlobal', notGlobal.status === 400 && notGlobal.json?.code === 'error.transfer.notGlobal', `${notGlobal.status} ${JSON.stringify(notGlobal.json).slice(0, 160)}`)
+const projectMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-library', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesProjectSkills, 'p-local', 'SKILL.md') } })
+check('项目技能也能收进可用仓库', projectMove.status === 200 && existsSync(join(rolesLibrary, 'p-local', 'SKILL.md')) && !existsSync(join(rolesProjectSkills, 'p-local')), `${projectMove.status} ${JSON.stringify(projectMove.json).slice(0, 200)}`)
 placeSkill(join(home, 'skills'), 'dup-me', true)
-placeSkill(rolesProjectSkills, 'dup-me', true)
-const dupMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'dup-me', 'SKILL.md') } })
-check('目标已有同名 → 409 error.transfer.exists', dupMove.status === 409 && dupMove.json?.code === 'error.transfer.exists', `${dupMove.status} ${JSON.stringify(dupMove.json).slice(0, 200)}`)
-check('冲突时全局那份没被动', existsSync(join(home, 'skills', 'dup-me', 'SKILL.md')))
-check('冲突时项目那份也没被动', existsSync(join(rolesProjectSkills, 'dup-me', 'SKILL.md')))
+placeSkill(rolesLibrary, 'dup-me', true)
+const dupMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-library', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'dup-me', 'SKILL.md') } })
+check('库里已有同名 → 409 error.transfer.exists', dupMove.status === 409 && dupMove.json?.code === 'error.transfer.exists', `${dupMove.status} ${JSON.stringify(dupMove.json).slice(0, 200)}`)
+check('冲突时原技能根那份没被动', existsSync(join(home, 'skills', 'dup-me', 'SKILL.md')))
+check('冲突时库里那份也没被动', existsSync(join(rolesLibrary, 'dup-me', 'SKILL.md')))
 const linkOutside = tempDir('move-outside')
 mkdirSync(join(linkOutside, 'nofm'), { recursive: true })
 writeFileSync(join(linkOutside, 'nofm', 'SKILL.md'), '# 没有 frontmatter\n')
 symlinkSync(join(linkOutside, 'nofm'), join(home, 'skills', 'link-me'))
-const linkMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'link-me', 'SKILL.md') } })
+const linkMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-library', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'link-me', 'SKILL.md') } })
 check('软链接 → 400 error.transfer.symlink', linkMove.status === 400 && linkMove.json?.code === 'error.transfer.symlink', `${linkMove.status} ${JSON.stringify(linkMove.json).slice(0, 200)}`)
 check('软链接被拒后链接目标还在', existsSync(join(linkOutside, 'nofm', 'SKILL.md')))
 
-// 「复制成功、删全局失败」：把全局那份设成只读，删不掉 → 如实报告，不回滚
+// 「复制进库成功、删原处失败」：把原处设成只读，删不掉 → 如实报告，不回滚
 placeSkill(join(home, 'skills'), 'stuck-me', true)
 chmodSync(join(home, 'skills', 'stuck-me'), 0o500)
 let stuckMove
 try {
-	stuckMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'stuck-me', 'SKILL.md') } })
+	stuckMove = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-library', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'stuck-me', 'SKILL.md') } })
 } finally {
 	chmodSync(join(home, 'skills', 'stuck-me'), 0o700)
 }
-check('删全局失败 → 200 但 globalRemoved=false', stuckMove?.status === 200 && stuckMove?.json?.data?.globalRemoved === false, `${stuckMove?.status} ${JSON.stringify(stuckMove?.json).slice(0, 240)}`)
-check('删全局失败时项目里已经就位', existsSync(join(rolesProjectSkills, 'stuck-me', 'SKILL.md')))
-check('删全局失败时如实带 warning', typeof stuckMove?.json?.data?.warning === 'string' && stuckMove.json.data.warning.length > 0, String(stuckMove?.json?.data?.warning))
+check('删原处失败 → 200 但 sourceRemoved=false', stuckMove?.status === 200 && stuckMove?.json?.data?.sourceRemoved === false, `${stuckMove?.status} ${JSON.stringify(stuckMove?.json).slice(0, 240)}`)
+check('删原处失败时库里已经就位', existsSync(join(rolesLibrary, 'stuck-me', 'SKILL.md')))
+check('删原处失败时如实带 warning', typeof stuckMove?.json?.data?.warning === 'string' && stuckMove.json.data.warning.length > 0, String(stuckMove?.json?.data?.warning))
+check('缺 path → 400 error.proto.missingPath', (await call({ method: 'POST', path: '/api/skill-console/skills/move-to-library', headers: { ...ROLE_WRITE, ...roleSession }, body: {} })).json?.code === 'error.proto.missingPath')
+check('GET 打这个写端点 → 405', (await call({ path: '/api/skill-console/skills/move-to-library', headers: roleSession })).status === 405)
 
 // 安装目标端点：`target:'project'` 必须在**路由层**就端到端证明落点。
 // 先用桩 GitHub（见 apply 处的 `routeStub`）经路由订阅 'o/r'，再分别装到项目 / 缺省全局。
@@ -1730,11 +1735,14 @@ check('install 带 target=project：全局技能根没有被写', !existsSync(jo
 const installDefault = await call({ method: 'POST', path: '/api/skill-console/repositories/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r', skills: ['proj-only'] } })
 check('同一仓库缺省 target 再装一次：落点是全局技能根（向后兼容没坏）', installDefault.status === 200 && installDefault.json?.data?.installed?.[0]?.path === join(globalRoot, 'proj-only') && existsSync(join(globalRoot, 'proj-only', 'SKILL.md')), `${installDefault.status} ${JSON.stringify(installDefault.json).slice(0, 240)}`)
 
-// 「同步到可用仓库」：一次把清单落进独立库目录，**不读工作区、不碰任何技能根**。
+// 「同步到可用仓库」：订阅默认就同步，端点用来补齐**落下的**技能；它不读工作区、不碰任何技能根。
 const syncLibraryDir = join(home, 'skill-console', 'library')
 const projOnlyGlobalBefore = readFileSync(join(globalRoot, 'proj-only', 'SKILL.md'), 'utf8')
+check('添加订阅时已经自动同步进可用仓库', existsSync(join(syncLibraryDir, 'proj-only', 'SKILL.md')))
+// 把库里那份删掉，模拟「落下了」：端点必须补回来，而不是只回一句「无变化」。
+rmSync(join(syncLibraryDir, 'proj-only'), { recursive: true })
 const syncRoute = await call({ method: 'POST', path: '/api/skill-console/repositories/sync', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r' } })
-check('POST /repositories/sync 把技能落进可用仓库', syncRoute.status === 200 && syncRoute.json?.data?.synced?.length === 1 && existsSync(join(syncLibraryDir, 'proj-only', 'SKILL.md')), `${syncRoute.status} ${JSON.stringify(syncRoute.json).slice(0, 240)}`)
+check('POST /repositories/sync 把落下的技能补进可用仓库', syncRoute.status === 200 && syncRoute.json?.data?.synced?.length === 1 && existsSync(join(syncLibraryDir, 'proj-only', 'SKILL.md')), `${syncRoute.status} ${JSON.stringify(syncRoute.json).slice(0, 240)}`)
 check('同步不碰任何技能根（全局那份一个字节没变、项目那份照旧）', readFileSync(join(globalRoot, 'proj-only', 'SKILL.md'), 'utf8') === projOnlyGlobalBefore && existsSync(join(rolesProjectSkills, 'proj-only', 'SKILL.md')))
 const syncAgain = await call({ method: 'POST', path: '/api/skill-console/repositories/sync', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: 'o/r' } })
 check('路由层再同步一次也是幂等的', syncAgain.status === 200 && syncAgain.json?.data?.unchanged?.length === 1, `${syncAgain.status} ${JSON.stringify(syncAgain.json).slice(0, 200)}`)
@@ -1803,10 +1811,10 @@ const installOther = await call({ method: 'POST', path: '/api/skill-console/repo
 check('install 带 project：装进那个项目', installOther.status === 200 && existsSync(join(otherSkillsRoot, 'proj-only', 'SKILL.md')), `${installOther.status} ${JSON.stringify(installOther.json).slice(0, 200)}`)
 
 placeSkill(join(home, 'skills'), 'move-other', true)
-const moveOther = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'move-other', 'SKILL.md'), project: secondProjectDir } })
-check('move-to-project 带 project：搬到那个项目', moveOther.status === 200 && existsSync(join(otherSkillsRoot, 'move-other', 'SKILL.md')), `${moveOther.status} ${JSON.stringify(moveOther.json).slice(0, 200)}`)
-const moveUnknown = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-project', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesProjectSkills, 'rp-keep', 'SKILL.md'), project: join(secondProjectDir, 'nope') } })
-check('move-to-project 未知 project → 400 且没搬走', moveUnknown.status === 400 && existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')), `${moveUnknown.status} ${JSON.stringify(moveUnknown.json).slice(0, 160)}`)
+const moveOther = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-library', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(home, 'skills', 'move-other', 'SKILL.md'), project: secondProjectDir } })
+check('move-to-library 带 project：照常收进库（库是全局的，与工作区无关）', moveOther.status === 200 && existsSync(join(rolesLibrary, 'move-other', 'SKILL.md')) && !existsSync(join(home, 'skills', 'move-other')), `${moveOther.status} ${JSON.stringify(moveOther.json).slice(0, 200)}`)
+const moveUnknown = await call({ method: 'POST', path: '/api/skill-console/skills/move-to-library', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesProjectSkills, 'rp-keep', 'SKILL.md'), project: join(secondProjectDir, 'nope') } })
+check('move-to-library 未知 project → 400 且没搬走', moveUnknown.status === 400 && existsSync(join(rolesProjectSkills, 'rp-keep', 'SKILL.md')), `${moveUnknown.status} ${JSON.stringify(moveUnknown.json).slice(0, 160)}`)
 
 // ── 4d. 技能写路径也跟项目走 ──────────────────────────────────────────────
 //
@@ -1863,13 +1871,12 @@ if (clientSource !== '') {
 	for (const shape of [
 		["apiGet('/skill', withProject(project,", '/skill 读取'],
 		["apiPost('/toggle', withProject(project,", '/toggle 单个启停'],
-		["apiPost('/toggle-batch', withProject(project,", '/toggle-batch 批量'],
 		["apiPost('/skills/delete', withProject(project,", '/skills/delete 删除'],
 	]) {
 		check(`客户端 ${shape[1]} 的调用形态带上当前项目`, flat.includes(shape[0]), shape[0])
 	}
 	check('客户端不再有裸的 /toggle 调用', !flat.includes("apiPost('/toggle', { path: skill.path, enabled }, sessionId)"))
-	check('客户端不再有裸的 /toggle-batch 调用', !flat.includes("apiPost('/toggle-batch', { items }, sessionId)"))
+	check('客户端不再调用 /toggle-batch（根头的批量启停已撤）', !flat.includes("apiPost('/toggle-batch'"))
 	check('客户端不再有裸的 /skills/delete 调用', !flat.includes("apiPost('/skills/delete', { path: skill.path }, sessionId)"))
 	check('客户端不再有裸的 /skill 调用', !flat.includes("apiGet('/skill', { path: skill.path }, sessionId)"))
 }
@@ -2126,7 +2133,7 @@ const dictionaryZh = localeDictionaries[0]?.dictionaries?.zh ?? {}
 const dictionaryEn = localeDictionaries[0]?.dictionaries?.en ?? {}
 check('旧的「全局只读」说法已经删掉', !('roles.globalReadonly' in dictionaryZh) && !('roles.globalReadonly' in dictionaryEn))
 check('新的分组说明讲清「从可用仓库挑、复制进项目」', typeof dictionaryZh['roles.libraryHint'] === 'string' && dictionaryZh['roles.libraryHint'].includes('项目') && dictionaryEn['roles.libraryHint'].includes('project') && !('roles.globalHint' in dictionaryZh) && !('roles.projectSkills' in dictionaryZh) && !('roles.globalSkills' in dictionaryZh))
-check('仓库卡的同步文案两种语言都有', typeof dictionaryZh['repos.sync'] === 'string' && typeof dictionaryEn['repos.sync'] === 'string' && typeof dictionaryZh['repos.syncDone'] === 'string' && typeof dictionaryEn['repos.syncDone'] === 'string')
+check('订阅卡片不再有单独的「同步」按钮文案，改为讲可用仓库里的状态', !('repos.sync' in dictionaryZh) && !('repos.sync' in dictionaryEn) && typeof dictionaryZh['repos.library.synced'] === 'string' && typeof dictionaryEn['repos.library.synced'] === 'string')
 const missingInEn = Object.keys(dictionaryZh).filter((key) => !(key in dictionaryEn)).sort()
 const missingInZh = Object.keys(dictionaryEn).filter((key) => !(key in dictionaryZh)).sort()
 check('zh 与 en 的键集完全一致', missingInEn.length === 0 && missingInZh.length === 0, `en 缺 ${missingInEn.join(',')} / zh 缺 ${missingInZh.join(',')}`)
@@ -2438,7 +2445,7 @@ const groupTexts = collectTexts(groupTree)
 check('技能分组头不显示技能根路径', !groupTexts.some((text) => text.includes('/Users/someone')), JSON.stringify(groupTexts))
 check('技能分组头仍然显示根名', groupTexts.includes('全局 DSH'), JSON.stringify(groupTexts))
 
-// 需求 ④：相同仓库的技能收进同一个可折叠列表，组头可按仓库批量操作。
+// 需求 ④：相同仓库的技能收进同一个可折叠列表。0.8.0 起组头**只有折叠开关**，批量启停整层撤掉。
 check('导出 groupSkillsByRepo / SkillRepoGroup 供契约测试直接打', typeof exposed.groupSkillsByRepo === 'function' && typeof exposed.SkillRepoGroup === 'function')
 const groupedSkills = exposed.groupSkillsByRepo([
 	{ name: 'b', installed: { id: 'o/z', owner: 'o', name: 'z' } },
@@ -2459,8 +2466,6 @@ const repoGroupTree = exposed.SkillRepoGroup({
 	busy: false,
 	busyPath: null,
 	onToggleRepo: (key) => groupCalls.push('toggle:' + key),
-	// 记下整批：标签只能说明「哪一组」，paths 才钉得住「恰好是这一组的技能」。
-	onBatch: (skills, enabled, label) => groupCalls.push({ label, enabled, count: skills.length, paths: skills.map((skill) => skill.path) }),
 	onOpen: () => {},
 	onToggle: () => {},
 	onDelete: () => {},
@@ -2471,11 +2476,11 @@ const repoGroupToggles = collect(repoGroupTree, (element) => element.props !== u
 check('仓库组头带可访问的折叠开关', repoGroupToggles.length === 1, collectTexts(repoGroupTree).join('|'))
 repoGroupToggles[0].props.onClick()
 check('点折叠开关回报这个组的标识（供上层记状态）', groupCalls.includes('toggle:o/r'), groupCalls.join(','))
-const repoGroupBatch = collect(repoGroupTree, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batchEnableAria'))[0]
-repoGroupBatch?.props?.onClick()
-const lastBatchOf = (calls, label) => calls.filter((entry) => typeof entry === 'object' && entry !== null && entry.label === label).pop()
-const repoBatchCall = lastBatchOf(groupCalls, 'o/r')
-check('按仓库批量：作用域恰好是这一组的技能', repoBatchCall !== undefined && repoBatchCall.enabled === true && repoBatchCall.paths.join(',') === '/x/alpha/SKILL.md', JSON.stringify(repoBatchCall))
+check(
+	'仓库组头不再有批量启停按钮（整层撤掉）',
+	collect(repoGroupTree, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batch')).length === 0,
+	collectTexts(repoGroupTree).join('|'),
+)
 
 // 规格 §1「根 → 仓库，两层都可折叠」/ §4「折叠字典的 key 也含 root.key」/ §7「点根组的收起 → 整根的仓库组全消失」。
 const rootFoldCalls = []
@@ -2489,7 +2494,6 @@ const rootFoldProps = {
 	busy: false,
 	busyPath: null,
 	onToggleRepo: (key) => rootFoldCalls.push('toggle:' + key),
-	onBatch: (skills, enabled, label) => rootFoldCalls.push({ label, enabled, count: skills.length, paths: skills.map((skill) => skill.path) }),
 	onOpen: () => {},
 	onToggle: () => {},
 	onDelete: () => {},
@@ -2499,8 +2503,6 @@ const rootFoldProps = {
 const inHead = (tree, headClass, predicate) =>
 	collect(collect(tree, (element) => String(element.props?.className || '').includes(headClass))[0], predicate)[0]
 const disclosureIn = (tree, headClass) => inHead(tree, headClass, (element) => String(element.props?.className || '').includes('sc-disclosure'))
-const batchButtonIn = (tree, headClass, kind) =>
-	inHead(tree, headClass, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes(kind))
 // 测试环境的 createElement 不展开函数组件：SkillGroup 里的 SkillRepoGroup 要手动求值才看得到组内结构。
 const isRepogroup = (element) => {
 	const className = String(element.props?.className || '')
@@ -2520,50 +2522,14 @@ check('根组头带可访问的折叠开关', rootDisclosure !== undefined && ro
 check('折叠根时整根的仓库组都不渲染', repogroupsOf(rootCollapsedTree).length === 0, collectTexts(rootCollapsedTree).join('|'))
 rootDisclosure?.props?.onClick()
 check('点根组的折叠开关回报根标识（供上层记状态）', rootFoldCalls.includes('toggle:user-dsh'), rootFoldCalls.join(','))
-const rootBatchWhenCollapsed = batchButtonIn(rootCollapsedTree, 'sc-group-head', 'batchEnableAria')
-rootBatchWhenCollapsed?.props?.onClick()
-const rootBatchCall = lastBatchOf(rootFoldCalls, '全局 DSH')
-check('折叠根时根头的批量按钮仍然可用、作用仍是整根', rootBatchCall !== undefined && rootBatchCall.enabled === true && rootBatchCall.paths.join(',') === '/x/alpha/SKILL.md,/x/beta/SKILL.md', JSON.stringify(rootBatchCall))
+check(
+	'根组头也不再有批量启停按钮（折叠态也一样）',
+	collect(rootCollapsedTree, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batch')).length === 0,
+	collectTexts(rootCollapsedTree).join('|'),
+)
 check('默认全展开：根未折叠时渲染出它的仓库组', repogroupsOf(expandRepoGroups(exposed.SkillGroup({ ...rootFoldProps, collapsedRepos: {} }))).length === 2)
 
-// 规格 §4「批量作用域不许越组」：同一个仓库下按包 id 分组的两个组，各自只能批量自己那一组。
-// 同名技能、同一根，只有 path 与 installed.id 不同——标签相同，所以只能靠 paths 分辨。
-const mixedScopeTree = expandRepoGroups(exposed.SkillGroup({
-	...rootFoldProps,
-	root: { key: 'user-dsh', label: '全局 DSH', path: '/r', exists: true, skills: [
-		{ name: 'alpha', path: '/r/a/SKILL.md', enabled: false, toggleable: true, installed: { id: 'o/a' } },
-		{ name: 'gamma', path: '/r/g/SKILL.md', enabled: false, toggleable: true, installed: { id: 'o/a' } },
-		{ name: 'alpha', path: '/r/b2/SKILL.md', enabled: false, toggleable: true, installed: { id: 'o/b' } },
-	] },
-	collapsedRepos: {},
-}))
-const repogroupHeadOf = (tree, label) =>
-	collect(tree, (element) => String(element.props?.className || '') === 'sc-repogroup-head' && collectTexts(element).includes(label))[0]
-const batchButtonAt = (head) =>
-	collect(head, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batchEnableAria'))[0]
-const clickBatchIn = (tree, headClass, label) => {
-	const head = headClass === 'sc-group-head' ? collect(tree, (element) => String(element.props?.className || '') === 'sc-group-head')[0] : repogroupHeadOf(tree, label)
-	batchButtonAt(head)?.props?.onClick()
-}
-clickBatchIn(mixedScopeTree, 'sc-repogroup-head', 'o/a')
-const groupACall = lastBatchOf(rootFoldCalls, 'o/a')
-check(
-	'按仓库批量不许越组：o/a 只带自己那两行，同名技能混在别的组里也不行',
-	groupACall !== undefined && [...groupACall.paths].sort().join(',') === '/r/a/SKILL.md,/r/g/SKILL.md' && !groupACall.paths.includes('/r/b2/SKILL.md'),
-	JSON.stringify(groupACall),
-)
-clickBatchIn(mixedScopeTree, 'sc-repogroup-head', 'o/b')
-const groupBCall = lastBatchOf(rootFoldCalls, 'o/b')
-check('按仓库批量不许越组：o/b 只带自己那一行', groupBCall !== undefined && groupBCall.paths.join(',') === '/r/b2/SKILL.md', JSON.stringify(groupBCall))
-clickBatchIn(mixedScopeTree, 'sc-group-head', '全局 DSH')
-const mixedRootCall = lastBatchOf(rootFoldCalls, '全局 DSH')
-check(
-	'根组头批量是全集：三行都在（跨组但同一根）',
-	mixedRootCall !== undefined && mixedRootCall.count === 3 && ['/r/a/SKILL.md', '/r/g/SKILL.md', '/r/b2/SKILL.md'].every((path) => mixedRootCall.paths.includes(path)),
-	JSON.stringify(mixedRootCall),
-)
-
-// 规格 §7「本机组也能折叠、也能批量」（installed === null 不是「没资格」）。
+// 规格 §7「本机组也能折叠」（installed === null 不是「没资格」）。
 // 折叠字典 key 是 `${root.key}:${group.key}`，本机组的 key 是 @local。
 const localOnlyTree = expandRepoGroups(exposed.SkillGroup({ ...rootFoldProps, root: { ...rootFoldProps.root, skills: [rootFoldSkills[1]] }, collapsedRepos: { 'user-dsh:@local': true } }))
 const localDisclosure = disclosureIn(localOnlyTree, 'sc-repogroup-head')
@@ -2572,33 +2538,20 @@ check(
 	localDisclosure !== undefined && localDisclosure.props['aria-expanded'] === 'false' && !collectTexts(localOnlyTree).includes('beta'),
 	collectTexts(localOnlyTree).join('|'),
 )
-const localBatch = batchButtonIn(localOnlyTree, 'sc-repogroup-head', '本地（非订阅）')
-localBatch?.props?.onClick()
-const localBatchCall = lastBatchOf(rootFoldCalls, '本地（非订阅）')
-check('本机组也能批量（折叠了也还能整组批量）', localBatchCall !== undefined && localBatchCall.enabled === true && localBatchCall.paths.join(',') === '/x/beta/SKILL.md', JSON.stringify(localBatchCall))
-
-// 规格 §7「空集合不请求」：整根一个技能都没有时，批量按钮点不动。
-const emptyRootTree = exposed.SkillGroup({ ...rootFoldProps, root: { ...rootFoldProps.root, skills: [] }, collapsedRepos: {} })
-const emptyBatchButtons = collect(emptyRootTree, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batch'))
 check(
-	'空集合：批量按钮禁用、只出提示',
-	emptyBatchButtons.length === 2 && emptyBatchButtons.every((element) => element.props.disabled === true) && collectTexts(emptyRootTree).includes('skills.empty'),
-	collectTexts(emptyRootTree).join('|'),
+	'本机组同样没有批量按钮',
+	collect(localOnlyTree, (element) => element.props !== undefined && typeof element.props['aria-label'] === 'string' && element.props['aria-label'].includes('batch')).length === 0,
+	collectTexts(localOnlyTree).join('|'),
 )
-// 筛选本身是纯函数，直接打在函数上；源码切片那种写法换个变量名就失效。
-const batchItemsOf = exposed.batchItems
-const noopItems = typeof batchItemsOf === 'function' ? batchItemsOf([{ path: '/p/a', enabled: true, toggleable: true }], true) : null
-check('空集合：没有要改的项 → 筛选结果为空（组件据此不发请求）', Array.isArray(noopItems) && noopItems.length === 0, JSON.stringify(noopItems))
-const mixedBatchItems = typeof batchItemsOf === 'function' ? batchItemsOf([
-	{ path: '/p/a', enabled: false, toggleable: true },
-	{ path: '/p/b', enabled: false, toggleable: false },
-	{ path: '/p/c', enabled: false, toggleable: true },
-	{ path: 123, enabled: false, toggleable: true },
-], true) : null
+
+// 空根仍然给引导（只是不再有批量按钮可点）。
+const emptyRootTree = exposed.SkillGroup({ ...rootFoldProps, root: { ...rootFoldProps.root, skills: [] }, collapsedRepos: {} })
+check('空集合：出空态提示', collectTexts(emptyRootTree).includes('skills.empty'), collectTexts(emptyRootTree).join('|'))
+
+// 0.8.0 撤掉的那一整层：批量启停的按钮、批量筛选纯函数、批量请求全都不该再留在客户端里。
 check(
-	'批量筛选：不可勾的与路径不是字符串的都被剔掉',
-	Array.isArray(mixedBatchItems) && mixedBatchItems.map((item) => item.path).join(',') === '/p/a,/p/c' && mixedBatchItems.every((item) => item.enabled === true),
-	JSON.stringify(mixedBatchItems),
+	'客户端不再有批量启停：无 batch 按钮、无 batchItems、无 /toggle-batch',
+	!clientSource.includes('batchEnableAria') && !clientSource.includes('batchDisableAria') && !clientSource.includes('batchItems') && !clientSource.includes("apiPost('/toggle-batch'"),
 )
 
 // 需求 ③「编辑器按钮上移」的样式锚点：分隔线只画在真实的相邻节点上，别留死选择器。
@@ -2616,15 +2569,15 @@ check(
 	JSON.stringify([disclosureIn(rootCollapsedTree, 'sc-group-head')?.props, disclosureIn(repoGroupTree, 'sc-repogroup-head')?.props]),
 )
 
-// 「（{project}）」在文案里是无条件拼上去的：项目名解析不出来时必须兜底，否则渲染成空的「（）」。
-// 取调用点（`askConfirm(moveConfirmText(`）——直接找 `moveConfirmText(t, skill,` 会命中函数定义。
-const moveConfirmCallAt = clientSource.indexOf('askConfirm(moveConfirmText(t, skill,')
+// 「移到可用仓库」的确认文案必须说清动的是哪个技能、它在哪个技能根（不再拼项目名）。
+const moveConfirmCallAt = clientSource.indexOf('askConfirm(moveConfirmText(t, skill))')
 const moveConfirmCall = clientSource.slice(moveConfirmCallAt, moveConfirmCallAt + 140)
-check('「移到项目」的确认文案在项目名解析不出来时有兜底', moveConfirmCallAt >= 0 && /moveConfirmText\(t, skill, project\.activeName \|\| /.test(moveConfirmCall), moveConfirmCall)
+check('「移到可用仓库」的确认文案带技能名与所在技能根', moveConfirmCallAt >= 0 && /askConfirm\(moveConfirmText\(t, skill\)\)/.test(moveConfirmCall), moveConfirmCall)
 
-// 「移到项目」必须带上界面选中的项目：不带项目时宿主按会话头解析，落点会是别的项目。
-const moveWiring = clientSource.indexOf("apiPost('/skills/move-to-project'")
-check('「移到项目」也带上选中项目', moveWiring >= 0 && clientSource.slice(moveWiring, moveWiring + 120).includes('withProject(project'))
+// 「移到可用仓库」必须带上界面选中的工作区：源技能可能就在这个工作区的项目技能根里，
+// 不带工作区时宿主按会话头解析，会去另一个项目的技能根里找（找不到就 400）。
+const moveWiring = clientSource.indexOf("apiPost('/skills/move-to-library'")
+check('「移到可用仓库」也带上选中工作区', moveWiring >= 0 && clientSource.slice(moveWiring, moveWiring + 120).includes('withProject(project'), clientSource.slice(moveWiring, moveWiring + 120))
 
 const repoRowCalls = []
 const repoStub = (key, params) => {
@@ -2639,8 +2592,6 @@ const repoRowProps = {
 	editing: false,
 	editForm: { ref: '', subdirectory: '' },
 	detail: { loading: false, data: null, error: null },
-	picked: {},
-	installResult: null,
 	emptyDetailKey: 'repos.detailEmpty',
 	onToggle: () => {},
 	onFetch: () => {},
@@ -2649,10 +2600,6 @@ const repoRowProps = {
 	onEditField: () => {},
 	onEditSave: () => {},
 	onEditCancel: () => {},
-	onTogglePick: () => {},
-	onSelectAll: () => {},
-	onClearPicked: () => {},
-	onInstall: () => {},
 	onRestore: () => {},
 }
 const repoRowTree = exposed.RepoRow(repoRowProps)
@@ -2661,6 +2608,7 @@ check(
 	['repos.edit', 'repos.fetch', 'repos.remove'].every((key) => repoRowCalls.includes(key)),
 	repoRowCalls.join(','),
 )
+check('仓库行不再有「同步 / 安装到…」按钮（订阅默认同步进可用仓库）', !repoRowCalls.includes('repos.sync') && !repoRowCalls.includes('repos.install'), repoRowCalls.join(','))
 check('未进入编辑态时不渲染编辑表单', !repoRowCalls.includes('repos.editSave'), repoRowCalls.join(','))
 
 // 订阅卡片必须是**可折叠**的：技能明细长在它所属的仓库下面，收起时连明细一起收。
@@ -2709,7 +2657,7 @@ const stopLog = []
 actionButtonOf(clickTree, 'repos.edit').props.onClick({ stopPropagation: () => stopLog.push('stopped') })
 check('点「编辑」先掐断冒泡，不会顺带折叠卡片', stopLog.length === 1 && edits === 1 && toggles === 1, `stop=${stopLog.length} edit=${edits} toggle=${toggles}`)
 
-// 展开区里的勾选 / 全选 / 安装，以及勾选状态跟着**这个仓库**走。
+// 展开区只读：每个技能显示**它在可用仓库里的状态**，外加「恢复上一版」。
 const panelCalls = []
 const panelParams = []
 const panelProps = {
@@ -2722,30 +2670,30 @@ const panelProps = {
 	detail: {
 		loading: false,
 		error: null,
-		data: { repository: { id: 'o/r' }, skills: [{ name: 'alpha', status: 'not-installed', valid: true, sourcePath: 'skills/alpha', description: 'x' }] },
+		data: { repository: { id: 'o/r' }, skills: [{ name: 'alpha', status: 'installed', valid: true, sourcePath: 'skills/alpha', description: 'x', library: { state: 'outdated', commit: 'feedface9999', syncedAt: 1 } }] },
 	},
-	picked: { alpha: true },
-	installResult: null,
 	emptyDetailKey: 'repos.detailEmpty',
-	onTogglePick: () => {},
-	onSelectAll: () => {},
-	onClearPicked: () => {},
-	onInstall: () => {},
 	onRestore: () => {},
 }
 const panelTree = exposed.RepoSkills(panelProps)
-check(
-	'展开区给出勾选 / 全不选 / 安装更新选中三个控件',
-	['repos.selectAll', 'repos.selectNone', 'repos.install'].every((key) => panelCalls.includes(key)),
-	panelCalls.join(','),
-)
+check('展开区不再有安装相关的勾选 / 安装控件', !['repos.selectAll', 'repos.selectNone', 'repos.install', 'repos.selected'].some((key) => panelCalls.includes(key)), panelCalls.join(','))
 check('展开区里的技能来自这个仓库的明细', collect(panelTree, (element) => element.type === exposed.RepoRow).length === 0 && panelCalls.includes('repos.skillCount'))
+const rowCalls = []
+exposed.RepoSkillRow({
+	t: (key, params) => {
+		rowCalls.push(key)
+		return params === undefined ? key : key + JSON.stringify(params)
+	},
+	skill: { name: 'alpha', sourcePath: 'skills/alpha', description: 'x', installedPath: '/x/alpha', library: { state: 'outdated', commit: 'feedface9999' } },
+	busy: false,
+	onRestore: () => {},
+})
 check(
-	'展开区显示已勾选数量',
-	panelParams.some(([key, params]) => key === 'repos.selected' && params?.count === 1),
-	JSON.stringify(panelParams.filter(([key]) => key === 'repos.selected')),
+	'展开区显示每个技能在可用仓库里的状态',
+	rowCalls.includes('repos.library.outdated') && rowCalls.includes('repos.restore'),
+	rowCalls.join(','),
 )
-check('展开区里的技能行是可勾选的', collect(panelTree, (element) => element.props?.selected !== undefined).some((element) => element.props.selected === true))
+check('展开区里的技能行不再有勾选框', collect(panelTree, (element) => element.props?.selected !== undefined).length === 0)
 check('明细加载中 / 出错时说得清楚', (() => {
 	const loadingCalls = []
 	exposed.RepoSkills({ ...panelProps, detail: { loading: true, data: null, error: null } , t: (key) => { loadingCalls.push(key); return key } })
@@ -2935,12 +2883,13 @@ check('项目技能没有「移到项目」（canMove=false）', !renderRow({ ca
 check('删除确认框带上根名、技能名与形态', clientSource.includes("t('skills.deleteConfirm', { name:") && clientSource.includes('form: skillFormText(t, skill)') && clientSource.includes('root: rootName'))
 check('软链接的删除说明是「只删这个链接」', clientSource.includes("t('skills.deleteSymlinkHint')"))
 check('全局技能的删除说明会提示影响所有项目', clientSource.includes("t('skills.deleteGlobalHint')"))
-check('「移到项目」只在全局技能上出现', clientSource.includes("root.key === 'user-dsh' && skill.toggleable === true"))
-check('移动确认框写明「全局那份会消失」', clientSource.includes("t('skills.moveConfirm', { name:") && clientSource.includes("t('skills.movePartial'"))
+check('「移到可用仓库」只在「当前角色没在用、库里也没有同名」的普通技能上出现', clientSource.includes('skill.toggleable === true && skill.inRole !== true && skill.inLibrary !== true'))
+check('移动确认框写明动的是哪个技能、哪个技能根', clientSource.includes("t('skills.moveConfirm', { name:") && clientSource.includes("t('skills.movePartial'"))
+check('技能行标出「当前角色 / 可用仓库」两个来源', clientSource.includes("t('skills.tagInRole')") && clientSource.includes("t('skills.tagInLibrary')"))
 check('角色面板把 copy 数显示出来', clientSource.includes("t('roles.copyCount', { count: copyCount })"))
 check('角色面板把 localKept 显示出来', clientSource.includes("t('roles.localKept')") && clientSource.includes("t('roles.localKeptHint')"))
-check('仓库页有安装目标选择', clientSource.includes("t('repos.installTarget')") && clientSource.includes('target: installTarget'))
-check('安装到项目时会提示全局根不受影响', clientSource.includes("t('repos.targetProjectHint')"))
+check('仓库页签不再有安装目标选择（订阅默认同步进可用仓库）', !clientSource.includes("t('repos.installTarget')") && !clientSource.includes('target: installTarget'))
+check('订阅卡片讲清可用仓库里的存量与不一致', clientSource.includes("t('repos.statusLine'") && clientSource.includes("'repos.library.synced'") && clientSource.includes("'repos.library.outdated'"))
 // 从角色列表直接激活时没有草稿：确认框的数量必须按「被激活的那个角色」算，否则恒为 0。
 check('激活确认框按被激活角色的技能算数量', clientSource.includes('const confirmText = (skills) =>') && clientSource.includes('runActivate(role.id, role.skills ?? [])'))
 check('从编辑器激活时按草稿算数量', clientSource.includes('runActivate(current.id, current.skills)'))
@@ -2954,9 +2903,8 @@ for (const key of [
 	'skills.deleteDone', 'skills.deleteFailed', 'skills.move', 'skills.moveConfirm', 'skills.moveDone',
 	'skills.movePartial', 'skills.moveFailed', 'skills.formFlat', 'skills.formDirectory', 'skills.formSymlink',
 	'roles.copyCount', 'roles.localKept', 'roles.localKeptHint', 'roles.librarySkills', 'roles.libraryHint', 'roles.libraryEmpty',
-	'repos.sync', 'repos.syncTitle', 'repos.syncDone', 'repos.syncFailed', 'repos.libraryLine', 'repos.libraryOutdated',
-	'skills.expand', 'skills.collapse', 'skills.batchEnableAria', 'skills.batchDisableAria',
-	'repos.installTarget', 'repos.targetGlobal', 'repos.targetProject', 'repos.targetProjectHint',
+	'repos.library.synced', 'repos.library.outdated', 'repos.library.missing', 'repos.library.modified', 'repos.library.orphan', 'repos.library.invalid',
+	'skills.expand', 'skills.collapse', 'skills.tagInRole', 'skills.tagInLibrary',
 	'error.roleNoProject', 'error.tooMany',
 	'workspace.session', 'error.workspaceInvalid',
 ]) {
@@ -2974,11 +2922,9 @@ for (const key of ['roles.fallback', 'error.roleNoProject']) {
 	check(`${key} 的 en 文案改叫工作区`, /workspace/i.test(en) && !/project/i.test(en), en)
 }
 {
-	// 这一条不同：`repos.targetProjectHint` 说的就是项目技能根那个目录，术语必须留着。
-	const zh = String(dictionaryZh['repos.targetProjectHint'] ?? '')
-	const en = String(dictionaryEn['repos.targetProjectHint'] ?? '')
-	check('repos.targetProjectHint 的 zh 文案说「当前工作区」、保留「项目技能根」', zh.includes('工作区') && !zh.includes('当前项目') && zh.includes('项目技能根'), zh)
-	check('repos.targetProjectHint 的 en 文案说 current workspace（不再说 current project）', /workspace/i.test(en) && !/current project/i.test(en), en)
+	// 「项目技能根」这个文件系统术语仍然留着：角色和技能页签都还会提到它。
+	const zh = String(dictionaryZh['skills.deleteGlobalHint'] ?? '')
+	check('删全局技能时的说明仍然提「项目技能根」这个概念', zh.includes('项目') || zh === '', zh)
 }
 
 // Fix round 1：Task 8 的键清单漏了角色页签这三处用户可见的「项目」文案。
@@ -2995,8 +2941,8 @@ for (const key of ['roles.subtitle', 'roles.noProject', 'roles.empty']) {
 section('工作区：共享上下文按目录路径，三个页签读同一份')
 
 check('整个控制台只在一处拉 /state（工作区单点）', (clientSource.match(/apiGet\('\/state'/g) ?? []).length === 1)
-const WORKSPACE_WRITES = ["apiGet('/skill'", "apiPost('/toggle'", "apiPost('/toggle-batch'", "apiPost('/skills/delete'", "apiPost('/skills/move-to-project'", "apiPost('/repositories/install'", "apiPost('/roles/activate'", "apiPost('/roles/deactivate'"]
-check('八个按路径定位的读写请求都带上当前工作区', WORKSPACE_WRITES.every((snippet) => {
+const WORKSPACE_WRITES = ["apiGet('/skill'", "apiPost('/toggle'", "apiPost('/skills/delete'", "apiPost('/skills/move-to-library'", "apiPost('/roles/activate'", "apiPost('/roles/deactivate'"]
+check('六个按路径定位的读写请求都带上当前工作区', WORKSPACE_WRITES.every((snippet) => {
 	const at = clientSource.indexOf(snippet)
 	return at >= 0 && clientSource.slice(at, at + 200).includes('withProject(project')
 }), WORKSPACE_WRITES.filter((snippet) => {
@@ -3005,13 +2951,10 @@ check('八个按路径定位的读写请求都带上当前工作区', WORKSPACE_
 }).join(' / '))
 check('三个页签都由 section 注入同一份工作区上下文', ['SkillsPanel', 'ReposPanel', 'RolesPanel'].every((name) => new RegExp(`h\\(${name}, \\{ t, sessionId, project \\}\\)`).test(clientSource)))
 
-// 可用仓库是全局的：同步一次服务所有工作区，绝不能顺带带上当前工作区（带上就变成
-// 「按工作区同步」的另一套语义了）。这条与上面那条正好相反，防止后来者顺手加 `withProject`。
-check('同步到可用仓库不带工作区（一次同步服务所有工作区）', (() => {
-	const at = clientSource.indexOf("apiPost('/repositories/sync'")
-	return at >= 0 && !clientSource.slice(at, at + 200).includes('withProject(')
-})(), clientSource.slice(clientSource.indexOf("apiPost('/repositories/sync'"), clientSource.indexOf("apiPost('/repositories/sync'") + 200))
-check('仓库卡片把可用仓库存量讲出来', clientSource.includes("t('repos.libraryLine'") && clientSource.includes("t('repos.libraryOutdated'"))
+// 撤下来的两条 UI 通路：安装块整块消失、「移到项目」换成「移到可用仓库」。
+check('客户端不再调用 /repositories/install（安装块已撤）', !clientSource.includes("apiPost('/repositories/install'"))
+check('客户端不再调用 /skills/move-to-project（已换成 move-to-library）', !clientSource.includes("/skills/move-to-project'"))
+check('仓库卡片把可用仓库的状态讲出来', clientSource.includes("t('repos.statusLine'") && clientSource.includes("'repos.library.synced'"))
 
 section('版面条：节顶唯一工作区条，三页签不再各自为政')
 
@@ -3097,7 +3040,6 @@ section('文案：界面说「工作区」，词典与错误码跟得上')
 check('技能页签与节顶工作区条的标签文案叫「工作区」（skills.project）', dictionaryZh['skills.project'] === '工作区' && dictionaryEn['skills.project'] === 'Workspace', `${dictionaryZh['skills.project']} / ${dictionaryEn['skills.project']}`)
 check('工作区条的回落文案讲的是工作区', dictionaryZh['skills.projectFallback'].includes('工作区') && dictionaryEn['skills.projectFallback'].toLowerCase().includes('workspace'))
 check('「还没选工作区」取代了「没有活动会话」', dictionaryZh['skills.noSessions'].includes('工作区') && !dictionaryZh['skills.noSessions'].includes('活动会话'), dictionaryZh['skills.noSessions'])
-check('安装目标那行也改叫工作区', dictionaryZh['repos.installTarget'].includes('工作区') && dictionaryEn['repos.installTarget'].toLowerCase().includes('workspace'))
 check('「范围」开关的键随 UI 一起删了', !('skills.scope' in dictionaryZh) && !('skills.scope' in dictionaryEn) && !('skills.scope.global' in dictionaryZh) && !('skills.scope.project' in dictionaryZh))
 check('角色页签的「当前项目」键随那一行删了', !('roles.currentProject' in dictionaryZh) && !('roles.currentProject' in dictionaryEn))
 check('新错误码两种语言都有文案', typeof dictionaryZh['error.workspaceInvalid'] === 'string' && typeof dictionaryEn['error.workspaceInvalid'] === 'string')
@@ -3125,17 +3067,18 @@ const persistCollapsedOf = fnOr('persistCollapsed', () => {})
 const collisionOfOf = fnOr('collisionOf', () => null)
 const SkillDetailOf = fnOr('SkillDetail', () => null)
 
-// §4-2 批量按钮的 aria 必须报出作用域（根 = 整根，仓库组 = 那个仓库）。
+// §4-2 0.8.0 撤掉批量层之后，组头上的控件只剩折叠开关，没有任何 aria 再报「批量作用域」。
 const ariaOf = (tree) => collect(tree, (element) => typeof element.props?.['aria-label'] === 'string').map((element) => element.props['aria-label'])
 const ariaSkills = [
 	{ name: 'ar-a', path: join(rolesProjectSkills, 'ar-a', 'SKILL.md'), enabled: true, toggleable: true, installed: { owner: 'o', name: 'r' } },
 	{ name: 'ar-b', path: join(rolesProjectSkills, 'ar-b', 'SKILL.md'), enabled: false, toggleable: true, installed: null },
 ]
-const ariaRootTree = exposed.SkillGroup({ t: tStub, root: { key: 'user-dsh', label: '全局 DSH', exists: true, skills: ariaSkills }, collapsedRepos: {}, onToggleRepo: () => {}, onBatch: () => {} })
-const ariaOtherTree = exposed.SkillGroup({ t: tStub, root: { key: 'project-dsh', label: '项目 DSH', exists: true, skills: ariaSkills }, collapsedRepos: {}, onToggleRepo: () => {}, onBatch: () => {} })
-check('根头批量按钮的 aria 报出作用域（两个根各不相同）', ariaOf(ariaRootTree).some((label) => label.includes('全局 DSH')) && ariaOf(ariaOtherTree).some((label) => label.includes('项目 DSH')) && !ariaOf(ariaRootTree).some((label) => label.includes('项目 DSH')), `${ariaOf(ariaRootTree).join(' | ')} ;; ${ariaOf(ariaOtherTree).join(' | ')}`)
-const ariaRepoTree = exposed.SkillRepoGroup({ t: tStub, root: { key: 'user-dsh' }, group: { key: 'o/r', label: 'o/r', skills: ariaSkills }, collapsed: false, onToggleRepo: () => {}, onBatch: () => {} })
-check('仓库组头批量按钮的 aria 报出作用域', ariaOf(ariaRepoTree).some((label) => label.includes('o/r')), ariaOf(ariaRepoTree).join(' | '))
+const ariaRootTree = exposed.SkillGroup({ t: tStub, root: { key: 'user-dsh', label: '全局 DSH', exists: true, skills: ariaSkills }, collapsedRepos: {}, onToggleRepo: () => {} })
+const ariaOtherTree = exposed.SkillGroup({ t: tStub, root: { key: 'project-dsh', label: '项目 DSH', exists: true, skills: ariaSkills }, collapsedRepos: {}, onToggleRepo: () => {} })
+const noBatchAria = (tree) => ariaOf(tree).every((label) => !label.includes('batch') && !label.includes('Batch'))
+check('根头上的控件不再有批量按钮（两个根都一样）', noBatchAria(ariaRootTree) && noBatchAria(ariaOtherTree), `${ariaOf(ariaRootTree).join(' | ')} ;; ${ariaOf(ariaOtherTree).join(' | ')}`)
+const ariaRepoTree = exposed.SkillRepoGroup({ t: tStub, root: { key: 'user-dsh' }, group: { key: 'o/r', label: 'o/r', skills: ariaSkills }, collapsed: false, onToggleRepo: () => {} })
+check('仓库组头上的控件不再有批量按钮', noBatchAria(ariaRepoTree), ariaOf(ariaRepoTree).join(' | '))
 
 // §4-3 同名工作区：标签补上「最短能区分的目录尾段」，能分辨。
 const sameName = { data: { workspaces: [

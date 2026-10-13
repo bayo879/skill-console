@@ -126,7 +126,22 @@ export function createRouteHandlers(deps) {
 	 * 所以这里合成一个根描述来复用 `scanRoot`：技能名取法、frontmatter 诊断、软链判据
 	 * 与技能根完全一致，不另写一份扫描。
 	 */
-	const librarySkillsOf = () => (libraryDir === '' ? [] : scanRoot({ key: 'library', label: '可用仓库', scope: 'global', path: libraryDir }).skills)
+	/** 库的根描述（不是 DSH 技能根：只为复用 `scanRoot` / `copySkillIntoRoot`）。 */
+	const libraryRootOf = () => ({ key: 'library', label: '可用仓库', scope: 'global', path: libraryDir })
+	const librarySkillsOf = () => (libraryDir === '' ? [] : scanRoot(libraryRootOf()).skills)
+
+	/**
+	 * 技能的两个「来源」标记，技能页签用它决定动作与标签：
+	 * - `inRole`：当前工作区的角色正在管它（角色切换会复制/启停它）→ 不提供「移动到可用仓库」。
+	 * - `inLibrary`：可用仓库里已经有同名技能 → 不必再搬（搬也会被同名拒绝）。
+	 */
+	const sourceFlagsOf = (project) => {
+		const activeRole = activeRoleOf(project)
+		return {
+			inRole: new Set((activeRole === null ? [] : activeRole.skills).map(String)),
+			inLibrary: new Set(librarySkillsOf().map((skill) => skill.name)),
+		}
+	}
 
 	/** 内部角色 → 回给界面的形状。 */
 	const publicRole = (role, activeId) => ({ id: role.id, name: role.name, skills: [...role.skills], updatedAt: role.updatedAt, active: role.id === activeId })
@@ -194,6 +209,7 @@ export function createRouteHandlers(deps) {
 			const scope = requested === 'project' || requested === 'global' ? requested : 'all'
 			const { project, roots } = readProjectOfRequest(req, url)
 			const installed = repositories.installedIndex()
+			const flags = sourceFlagsOf(project)
 			const warnings = []
 			// 扫全部技能根（两个：全局 + 项目，不只是当前筛选的那个）：覆盖关系要在全集上算，
 			// 否则「项目副本压住全局副本」这件最该讲清楚的事会被筛选藏掉。
@@ -206,7 +222,12 @@ export function createRouteHandlers(deps) {
 				.filter((root) => scope === 'all' || root.scope === scope)
 				.map((root) => ({
 					...publicRoot(root),
-					skills: root.skills.map((skill) => ({ ...skill, installed: installed.get(skill.name) ?? null })),
+					skills: root.skills.map((skill) => ({
+						...skill,
+						installed: installed.get(skill.name) ?? null,
+						inRole: flags.inRole.has(skill.name),
+						inLibrary: flags.inLibrary.has(skill.name),
+					})),
 				}))
 			return { scope, project: scope === 'global' ? null : project, roots: rows, collisions: findCollisions(scanned), warnings }
 		},
@@ -214,9 +235,15 @@ export function createRouteHandlers(deps) {
 		async skill(req, url) {
 			const path = url.searchParams.get('path')
 			if (path === null || path.trim() === '') throw httpError(400, 'error.proto.missingPath', '缺少 path 参数')
-			const { roots } = readProjectOfRequest(req, url)
+			const { project, roots } = readProjectOfRequest(req, url)
 			const skill = readSkill(path, { roots, withBody: true })
-			return { ...skill, installed: repositories.installedIndex().get(skill.name) ?? null }
+			const flags = sourceFlagsOf(project)
+			return {
+				...skill,
+				installed: repositories.installedIndex().get(skill.name) ?? null,
+				inRole: flags.inRole.has(skill.name),
+				inLibrary: flags.inLibrary.has(skill.name),
+			}
 		},
 
 		async toggle(req) {
@@ -298,9 +325,10 @@ export function createRouteHandlers(deps) {
 			const body = await readJsonBody(req)
 			const id = String(body.id ?? '')
 			if (id === '') throw httpError(400, 'error.proto.missingId', '缺少 id')
-			const { record, manifest } = await repositories.fetch(id)
+			// 拉取清单顺带同步进库：订阅的默认行为，面板上没有单独的「同步」按钮。
+			const { record, manifest, sync, syncError } = await repositories.fetchAndSync(id)
 			const detail = repositories.detail(id)
-			return { repository: detail.repository, skills: detail.skills, commit: manifest?.commit ?? record.lastFetch?.commit ?? null }
+			return { repository: detail.repository, skills: detail.skills, commit: manifest?.commit ?? record.lastFetch?.commit ?? null, sync, syncError }
 		},
 
 		async repositoryInstall(req) {
@@ -478,22 +506,30 @@ export function createRouteHandlers(deps) {
 			}
 		},
 
-		/** 把全局技能根里的一个技能搬到当前项目技能根：先复制，复制成功后再删全局。 */
-		async skillsMoveToProject(req) {
+		/**
+		 * 把一个技能收进可用仓库：先复制进库，复制成功后再删原处（先整份备份）。
+		 *
+		 * 为什么删原处：库是角色的**唯一**来源，不删的话同一个技能会长期存在两份、
+		 * 慢慢不一致，而 DSH 加载的那份还不受角色控制。删掉之后它可以被任何角色的
+		 * 角色定义选用，由角色切换决定落到哪个项目。
+		 *
+		 * 面板只在「不在当前角色里、且不在库里」时给出这个按钮；宿主这里只兜住
+		 * 结构性的两条：软链不动、库里已有同名不覆盖。
+		 */
+		async skillsMoveToLibrary(req) {
 			const body = await readJsonBody(req)
 			const filePath = String(body.path ?? '')
 			if (filePath === '') throw httpError(400, 'error.proto.missingPath', '缺少 path')
-			const { project, projectRoot, globalRoot, roots: visibleRoots, code } = roleContextOfRequest(req, body)
-			if (project === null || projectRoot === null) throw httpError(400, code, '解析不出项目技能根，无法移动')
+			if (libraryDir === '') throw httpError(500, 'error.internal', '可用仓库目录没有配置')
+			const { project, roots: visibleRoots, code } = roleContextOfRequest(req, body)
+			if (project === null) throw httpError(400, code, '解析不出项目技能根，无法移动')
 			const removal = planRemoval(visibleRoots, filePath)
-			// `planRemoval` 的 `root` 是根的 **key 字符串**（见 roots.js 的 readSkill），不是根对象。
-			if (removal.root !== 'user-dsh') throw httpError(400, 'error.transfer.notGlobal', `只能把全局技能移到项目：${removal.path}`)
 			if (removal.form === 'symlink') throw httpError(400, 'error.transfer.symlink', `软链接技能不允许移动（会动到链接目标）：${removal.path}`)
 			const source = readSkill(removal.path, { roots: visibleRoots })
-			// 「同名」一律按**技能名**判，不按目标路径判：项目里那份可能是扁平 `X.md`，
-			// 而源是目录包 `X/`，只比 `targetPathFor()` 会漏判，结果同一个名字两个副本。
-			if (scanRoot(projectRoot).skills.some((entry) => entry.name === source.name)) {
-				throw httpError(409, 'error.transfer.exists', `项目里已有同名技能，拒绝覆盖：${source.name}`)
+			// 「同名」按**技能名**判：库里那份可能是目录包，源是扁平文件（反之亦然），
+			// 只比目标路径会漏判，结果同一个名字两份并存。
+			if (scanRoot(libraryRootOf()).skills.some((entry) => entry.name === source.name)) {
+				throw httpError(409, 'error.transfer.exists', `可用仓库里已有同名技能，拒绝覆盖：${source.name}`)
 			}
 			let backup
 			try {
@@ -501,26 +537,26 @@ export function createRouteHandlers(deps) {
 			} catch (error) {
 				throw httpError(500, 'error.delete.backup', `备份失败，什么都没移动：${errorText(error)}`)
 			}
-			const copied = copySkillIntoRoot(projectRoot, source)
-			let globalRemoved = true
+			const copied = copySkillIntoRoot(libraryRootOf(), source)
+			let sourceRemoved = true
 			let warning
 			try {
 				removeSkill(removal)
 			} catch (error) {
-				// 不回滚：项目里那份已经就位，如实报告全局没删掉，让用户再点一次「删除」。
-				globalRemoved = false
-				warning = `项目里已经就位，但全局那份没删掉：${errorText(error)}`
+				// 不回滚：库里那份已经就位，如实报告原处没删掉（用户可再点一次「删除」）。
+				sourceRemoved = false
+				warning = `库里已经就位，但原处那份没删掉：${errorText(error)}`
 			}
 			refreshSkills()
 			notifyFileChanged(copied.path)
-			if (globalRemoved) notifyFileChanged(removal.path)
+			if (sourceRemoved) notifyFileChanged(removal.path)
 			return {
 				name: copied.name,
-				from: globalRoot === null ? null : globalRoot.path,
-				to: projectRoot.path,
+				from: removal.path,
+				to: copied.path,
 				kind: source.kind,
 				backup,
-				globalRemoved,
+				sourceRemoved,
 				...(warning === undefined ? {} : { warning }),
 			}
 		},
@@ -562,7 +598,7 @@ const WRITE_ROUTES = {
 	'/repositories/sync': 'repositorySync',
 	'/restore': 'restore',
 	'/skills/delete': 'skillsDelete',
-	'/skills/move-to-project': 'skillsMoveToProject',
+	'/skills/move-to-library': 'skillsMoveToLibrary',
 	'/roles/save': 'rolesSave',
 	'/roles/remove': 'rolesRemove',
 	'/roles/activate': 'rolesActivate',

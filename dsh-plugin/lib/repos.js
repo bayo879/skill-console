@@ -241,7 +241,8 @@ export function createRepositoryManager(options) {
 		}
 		const target = targetPathFor(dir, name, entry.kind)
 		const conflict = existsSync(target) && snapshot === undefined
-		const modified = snapshot !== undefined && isLocallyModified(target, snapshot)
+		// 「文件不在了」不算本地改动：没什么可保护的，直接补回来。
+		const modified = snapshot !== undefined && existsSync(target) && isLocallyModified(target, snapshot)
 		if ((conflict || modified) && confirm !== true) {
 			return {
 				ok: false,
@@ -262,6 +263,82 @@ export function createRepositoryManager(options) {
 			backup,
 			files: Object.fromEntries(files.map((file) => [file.rel, file.blobSha])),
 		}
+	}
+
+	/**
+	 * 把这份清单里能用的技能同步进可用仓库（`libraryDir`）。
+	 *
+	 * 这就是「订阅」的默认落点：`add` / `update` / `fetchAndSync` 拉完清单都会调它，
+	 * 面板上没有单独的「同步」按钮。DSH 不加载库，所以这里**不调 `afterWrite`**
+	 * （让技能注册表失效没有意义）。
+	 *
+	 * 幂等：台账 commit 与清单一致、本地又没被动过 → 记 `unchanged`，连下载都省掉。
+	 * 台账（`record.library`）循环结束后一次落盘：逐个技能 save 会在几十个技能时
+	 * 写几十遍状态文件。
+	 *
+	 * @param id - 订阅 id。
+	 * @param confirm - `true` 时才允许覆盖「来源不明」或「被本地改过」的目标（覆盖前一律备份）。
+	 * @returns `{synced, unchanged, skipped}`。
+	 */
+	async function syncToLibrary(id, confirm) {
+		const record = store.require(id)
+		const manifest = store.readManifest(id) ?? (await fetchRepository(id)).manifest
+		const synced = []
+		const unchanged = []
+		const skipped = []
+		let dirty = false
+		for (const entry of manifest.skills ?? []) {
+			const name = entry.name
+			try {
+				const snapshot = record.library?.[name]
+				if (!entry.valid || !isValidSkillName(name)) {
+					skipped.push({ name, reason: 'skill frontmatter is invalid; fix it upstream' })
+					continue
+				}
+				const target = targetPathFor(libraryDir, name, entry.kind)
+				// 幂等短路：清单 commit 与台账一致、本地又没被动过 → 什么都不用做。
+				if (snapshot !== undefined && snapshot.commit === manifest.commit && !isLocallyModified(target, snapshot)) {
+					unchanged.push(name)
+					continue
+				}
+				const outcome = await writeManifestEntry({ record, manifest, entry, dir: libraryDir, snapshot, confirm })
+				if (outcome.ok !== true) {
+					skipped.push({ name: outcome.name ?? name, reason: outcome.reason })
+					continue
+				}
+				record.library = record.library ?? {}
+				record.library[name] = {
+					sourcePath: entry.sourcePath,
+					kind: entry.kind,
+					commit: manifest.commit,
+					syncedAt: now(),
+					files: outcome.files,
+				}
+				dirty = true
+				synced.push({ name, path: outcome.path, updated: outcome.updated, backup: outcome.backup })
+			} catch (error) {
+				skipped.push({ name, reason: errorText(error) })
+			}
+		}
+		if (dirty) store.save()
+		return { synced, unchanged, skipped }
+	}
+
+	/**
+	 * 拉取清单 + 顺手同步进库：订阅的默认行为（添加、编辑分支、点「拉取最新」都走这里）。
+	 *
+	 * 同步失败不推翻拉取结果：清单已经更新，把 `syncError` 报出来让用户再拉一次即可。
+	 */
+	async function fetchAndSync(id) {
+		const { record, manifest } = await fetchRepository(id)
+		let sync = null
+		let syncError = null
+		try {
+			sync = await syncToLibrary(id, false)
+		} catch (error) {
+			syncError = errorText(error)
+		}
+		return { record, manifest, sync, syncError }
 	}
 
 	/**
@@ -286,7 +363,35 @@ export function createRepositoryManager(options) {
 		return { count: Object.keys(snapshots).length, synced, outdated, orphan }
 	}
 
-	/** 单个订阅的详情（技能行）。 */
+	/**
+	 * 单个清单条目在可用仓库里的状态（详情行用）。与 `librarySummaryOf` 的区别：
+	 * 这里会读盘比一次内容，所以只在打开一个订阅的详情时算。
+	 */
+	function libraryStateOf(record, manifest, entry) {
+		const snapshot = record.library?.[entry.name]
+		if (snapshot === undefined) return { state: 'missing', commit: null, syncedAt: null }
+		const base = { state: 'synced', commit: snapshot.commit ?? null, syncedAt: snapshot.syncedAt ?? null }
+		const target = targetPathFor(libraryDir, entry.name, entry.kind)
+		if (!existsSync(target)) return { ...base, state: 'missing' }
+		if (isLocallyModified(target, snapshot)) return { ...base, state: 'modified' }
+		if (snapshot.commit !== manifest.commit) return { ...base, state: 'outdated' }
+		return base
+	}
+
+	/** 给详情行补上「这份清单条目在库里是什么状态」。 */
+	function libraryRowsOf(record, manifest, rows) {
+		const entries = manifest?.skills ?? []
+		return rows.map((row) => {
+			const entry = entries.find((candidate) => candidate.name === row.name)
+			if (entry === undefined) {
+				// 台账里有、清单里没有（上游删了）：保留在库里，这里如实标成孤儿。
+				return { ...row, library: { state: 'orphan', commit: record.library?.[row.name]?.commit ?? null, syncedAt: record.library?.[row.name]?.syncedAt ?? null } }
+			}
+			return { ...row, library: libraryStateOf(record, manifest, entry) }
+		})
+	}
+
+	/** 单个订阅的详情（技能行，每行带可用仓库状态）。 */
 	function detailOf(id) {
 		const record = store.require(id)
 		const manifest = store.readManifest(id)
@@ -301,7 +406,7 @@ export function createRepositoryManager(options) {
 				addedAt: record.addedAt,
 				lastFetch: record.lastFetch ?? null,
 			},
-			skills: rowsOf(record, manifest),
+			skills: libraryRowsOf(record, manifest, rowsOf(record, manifest)),
 			fetched: manifest !== null,
 		}
 	}
@@ -374,12 +479,13 @@ export function createRepositoryManager(options) {
 			current.repositories.push(record)
 			store.save()
 			try {
-				const fetched = await fetchRepository(id)
-				return { repository: detailOf(id).repository, skills: rowsOf(fetched.record, fetched.manifest), fetchError: null }
+				// 订阅默认就同步：拉完清单立刻把能用的技能落进可用仓库（也就是角色候选池）。
+				const { record: fetchedRecord, manifest, sync, syncError } = await fetchAndSync(id)
+				return { repository: detailOf(id).repository, skills: rowsOf(fetchedRecord, manifest), fetchError: null, sync, syncError }
 			} catch (error) {
 				record.lastFetch = { at: now(), commit: null, commitShort: null, commitMessage: null, commitDate: null, skillCount: 0, error: errorText(error) }
 				store.save()
-				return { repository: detailOf(id).repository, skills: [], fetchError: errorText(error) }
+				return { repository: detailOf(id).repository, skills: [], fetchError: errorText(error), sync: null, syncError: null }
 			}
 		},
 
@@ -397,7 +503,7 @@ export function createRepositoryManager(options) {
 			const nextRef = typeof ref === 'string' ? ref.trim() : record.ref
 			const nextSubdirectory = normalizeSubdirectory(typeof subdirectory === 'string' ? subdirectory : record.subdirectory)
 			if (nextRef === record.ref && nextSubdirectory === record.subdirectory) {
-				return { changed: false, repository: detailOf(id).repository, skills: rowsOf(record, store.readManifest(id)), fetchError: null }
+				return { changed: false, repository: detailOf(id).repository, skills: rowsOf(record, store.readManifest(id)), fetchError: null, sync: null, syncError: null }
 			}
 			record.ref = nextRef
 			record.subdirectory = nextSubdirectory
@@ -405,12 +511,12 @@ export function createRepositoryManager(options) {
 			record.lastFetch = null
 			store.save()
 			try {
-				const fetched = await fetchRepository(id)
-				return { changed: true, repository: detailOf(id).repository, skills: rowsOf(fetched.record, fetched.manifest), fetchError: null }
+				const { record: fetchedRecord, manifest, sync, syncError } = await fetchAndSync(id)
+				return { changed: true, repository: detailOf(id).repository, skills: rowsOf(fetchedRecord, manifest), fetchError: null, sync, syncError }
 			} catch (error) {
 				record.lastFetch = { at: now(), commit: null, commitShort: null, commitMessage: null, commitDate: null, skillCount: 0, error: errorText(error) }
 				store.save()
-				return { changed: true, repository: detailOf(id).repository, skills: [], fetchError: errorText(error) }
+				return { changed: true, repository: detailOf(id).repository, skills: [], fetchError: errorText(error), sync: null, syncError: null }
 			}
 		},
 
@@ -425,6 +531,17 @@ export function createRepositoryManager(options) {
 		},
 
 		fetch: fetchRepository,
+
+		/** 拉取清单并顺手同步进库（「拉取最新」「添加订阅」「改分支」都走它）。 */
+		fetchAndSync,
+
+		/**
+		 * 重来一次同步。订阅本身已经在同步，这个入口只有一个用途：
+		 * 用户看清「哪些被本地改过」之后，带 `confirm: true` 确认覆盖（覆盖前一律备份）。
+		 */
+		sync({ id, confirm }) {
+			return syncToLibrary(id, confirm)
+		},
 
 		/** 手动安装/更新选中的技能（落到技能根：缺省的全局根，或显式传入的项目根）。 */
 		async install({ id, skills, confirm, targetSkillsDir }) {
@@ -468,65 +585,6 @@ export function createRepositoryManager(options) {
 			}
 			if (installed.length > 0) afterWrite('安装')
 			return { installed, skipped }
-		},
-
-		/**
-		 * 手动批量同步：把这份清单里能用的技能**全部**同步到可用仓库（`libraryDir`）。
-		 *
-		 * 与 `install` 的分工：`install` 写技能根（DSH 会加载），`sync` 只写库——
-		 * DSH 不加载库，所以这里**不调 `afterWrite`**（让技能注册表失效没有意义）。
-		 *
-		 * 幂等：台账 commit 与清单一致、本地又没被动过 → 记 `unchanged`，连下载都省掉。
-		 * 所以同步按钮可以放心反复点：第二次不产生任何写盘动作。
-		 *
-		 * 台账（`record.library`）循环结束后一次落盘：逐个技能 save 会在几十个技能时
-		 * 写几十遍状态文件。
-		 *
-		 * @param input - `{id, confirm}`。
-		 * @returns `{synced, unchanged, skipped}`。
-		 */
-		async sync({ id, confirm }) {
-			const record = store.require(id)
-			const manifest = store.readManifest(id) ?? (await fetchRepository(id)).manifest
-			const synced = []
-			const unchanged = []
-			const skipped = []
-			let dirty = false
-			for (const entry of manifest.skills ?? []) {
-				const name = entry.name
-				try {
-					const snapshot = record.library?.[name]
-					if (!entry.valid || !isValidSkillName(name)) {
-						skipped.push({ name, reason: 'skill frontmatter is invalid; fix it upstream' })
-						continue
-					}
-					const target = targetPathFor(libraryDir, name, entry.kind)
-					// 幂等短路：清单 commit 与台账一致、本地又没被动过 → 什么都不用做。
-					if (snapshot !== undefined && snapshot.commit === manifest.commit && !isLocallyModified(target, snapshot)) {
-						unchanged.push(name)
-						continue
-					}
-					const outcome = await writeManifestEntry({ record, manifest, entry, dir: libraryDir, snapshot, confirm })
-					if (outcome.ok !== true) {
-						skipped.push({ name: outcome.name ?? name, reason: outcome.reason })
-						continue
-					}
-					record.library = record.library ?? {}
-					record.library[name] = {
-						sourcePath: entry.sourcePath,
-						kind: entry.kind,
-						commit: manifest.commit,
-						syncedAt: now(),
-						files: outcome.files,
-					}
-					dirty = true
-					synced.push({ name, path: outcome.path, updated: outcome.updated, backup: outcome.backup })
-				} catch (error) {
-					skipped.push({ name, reason: errorText(error) })
-				}
-			}
-			if (dirty) store.save()
-			return { synced, unchanged, skipped }
 		},
 
 		/** 备份列表（`name` 省略 = 全部技能）。 */

@@ -165,12 +165,12 @@ try {
 		body: JSON.stringify({}),
 	})
 	check('POST /skills/delete 缺 path → 400 error.proto.missingPath（没删任何东西）', deleteWithoutPath.status === 400 && deleteWithoutPath.body?.code === 'error.proto.missingPath', `http=${deleteWithoutPath.status} ${JSON.stringify(deleteWithoutPath.body).slice(0, 120)}`)
-	const moveNotGlobal = await call('/api/skill-console/skills/move-to-project', {
+	const moveNotGlobal = await call('/api/skill-console/skills/move-to-library', {
 		method: 'POST',
 		headers: { ...WRITE_HEADERS, ...sessionHeader(sessionId) },
 		body: JSON.stringify({}),
 	})
-	check('POST /skills/move-to-project 缺 path → 400（没移动任何东西）', moveNotGlobal.status === 400 && moveNotGlobal.body?.code === 'error.proto.missingPath', `http=${moveNotGlobal.status} ${JSON.stringify(moveNotGlobal.body).slice(0, 120)}`)
+	check('POST /skills/move-to-library 缺 path → 400（没移动任何东西）', moveNotGlobal.status === 400 && moveNotGlobal.body?.code === 'error.proto.missingPath', `http=${moveNotGlobal.status} ${JSON.stringify(moveNotGlobal.body).slice(0, 120)}`)
 
 	section('2. 写操作围栏')
 	const noMarker = await call('/api/skill-console/toggle', { method: 'POST', body: JSON.stringify({ path: '/tmp/x', enabled: false }) })

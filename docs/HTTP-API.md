@@ -22,16 +22,17 @@ kind: 'prefix'   path: '/api/skill-console'
   或 `x-skill-console-session: <sessionId>` 头（浏览器半边从 `props.useSessions`
   拿到当前会话 id 后带上）。宿主把会话解析成它的 `header.cwd`。
   **读宽松、写严格**：
-  - **写接口**（`/repositories/install`、`/roles/activate`、`/roles/deactivate`、`/skills/move-to-project`、
+  - **写接口**（`/repositories/install`、`/roles/activate`、`/roles/deactivate`、`/skills/move-to-library`、
     `/toggle`、`/toggle-batch`、`/skills/delete`）：
     请求体 `project` 优先于请求头；给了 `project` 就**只认它**——必须是**存在的工作区目录**，
     相对路径 / 不存在的路径 / 不是目录 / **不是字符串**都是 400 `error.workspace.invalid`，**绝不回落到请求头会话**
     （否则界面上选着工作区 B、写却落到 A）。只有 `project` **缺席**（或空串 `"project": ""`）时才按
     请求头会话严格解析，会话 id 不存在 / 拿不到 cwd 就是 400 `error.role.noProject`，
     **绝不回落到「最近一个会话」**。
-    七个写接口都在解析出工作区之后**先判空再动手**：解析不出时**一个字节都不写**。
-    **唯一的例外是 `POST /repositories/sync`（0.7.0，§13）**：可用仓库是全局的，一次同步服务所有工作区，
-    所以它刻意不看 `project`、也不校验会话头。
+    这些写接口都在解析出工作区之后**先判空再动手**：解析不出时**一个字节都不写**。
+    **唯一的例外是 `POST /repositories/sync`（0.7.0，§13）与它带动的自动同步**：可用仓库是全局的，
+    一次同步服务所有工作区，所以它刻意不看 `project`、也不校验会话头。
+    （`/toggle-batch` 与 `/repositories/install` 仍在路由表里、仍有契约测试，但 0.8.0 起面板不再调用它们。）
   - **读接口**（`/state`、`/catalog`、`/roles`、`/roles/preview`、`/skill`）：`?project=<目录路径>` 优先于
     请求头，给了但无效同样是 400 `error.workspace.invalid`；**没给**时才按请求头会话宽松解析——
     解析不出会话时**回落**到「最近一个会话的 cwd」，并在 `data.project.fallback === true` 里说明。
@@ -67,7 +68,7 @@ kind: 'prefix'   path: '/api/skill-console'
 {
   "ok": true,
   "data": {
-    "version": "0.7.0",              // 插件版本（package.json 的 version）；配置页头部显示它
+    "version": "0.8.0",              // 插件版本（package.json 的 version）；配置页头部显示它
     "dshHome": "/Users/…/harness",
     "stateDir": "/Users/…/harness/skill-console",
     "libraryDir": "/Users/…/harness/skill-console/library",   // 可用仓库：角色的候选与复制来源（DSH 不加载它）
@@ -131,7 +132,9 @@ kind: 'prefix'   path: '/api/skill-console'
             "size": 1234,
             "mtimeMs": 1789…,
             "installed": { "id": "obra/superpowers", "owner": "obra", "name": "superpowers",
-                           "commit": "abc1234", "sourcePath": "skills/tdd" } // 非订阅安装时为 null
+                           "commit": "abc1234", "sourcePath": "skills/tdd" }, // 非订阅安装时为 null
+            "inRole": false,            // 当前角色的技能集里有同名？（0.8.0；角色未分配时恒 false）
+            "inLibrary": true           // 可用仓库里有同名？（0.8.0）
           }
         ] }
     ],
@@ -162,7 +165,9 @@ kind: 'prefix'   path: '/api/skill-console'
     "path": "…", "enabled": true, "kind": "directory",
     "frontmatter": "name: tdd\ndescription: …",   // 去掉 --- 围栏后的原始 YAML 文本
     "body": "# tdd\n…",                            // 去掉 frontmatter 的正文
-    "diagnostics": [ … ], "size": 1234, "mtimeMs": 1789…
+    "diagnostics": [ … ], "size": 1234, "mtimeMs": 1789…,
+    "inRole": false,      // 当前角色的技能集里有同名？（0.8.0；角色未分配时恒 false）
+    "inLibrary": true     // 可用仓库里有同名？（0.8.0）
   }
 }
 ```
@@ -202,6 +207,9 @@ kind: 'prefix'   path: '/api/skill-console'
 没给才按 `x-skill-console-session` 头严格解析，解析不出 → 400 `error.role.noProject`。
 两种失败都**一个字节都不写**（不会退化成「逐项 `ok:false`」的静默失败）。
 
+> 0.8.0 起面板**不再调用这个端点**：根头 / 仓库组头的「全部启用 / 全部停用」整层撤掉，逐项
+> `POST /toggle` 是唯一入口。端点本身保留（契约测试仍在跑），删不删待单独清理。
+
 ## 6. `GET /repositories`
 
 订阅列表 + 每个订阅的汇总状态。
@@ -223,7 +231,9 @@ kind: 'prefix'   path: '/api/skill-console'
                        "skillCount": 12, "error": null },   // 从未拉取时 null
         // 计数含 invalid / localModified / conflict 三项（非 0 时界面要提示）
         "status": { "total": 12, "notInstalled": 10, "installed": 1,
-                    "updateAvailable": 1, "upstreamDeleted": 0, "localModified": 1 } }
+                    "updateAvailable": 1, "upstreamDeleted": 0, "localModified": 1 },
+        // 可用仓库台账汇总（0.7.0；只比 commit，不读盘）——卡片状态行显示的就是它
+        "library": { "count": 12, "synced": 10, "outdated": 2, "orphan": 0 } }
     ]
   }
 }
@@ -234,9 +244,12 @@ kind: 'prefix'   path: '/api/skill-console'
 ```jsonc
 // 请求（url 支持 https://github.com/owner/name、github.com/owner/name、owner/name）
 { "url": "obra/superpowers", "ref": "", "subdirectory": "skills" }
-// 响应 data：添加后立刻做一次初始拉取（这不是「更新」，是首次发现）
+// 响应 data：添加后立刻做一次初始拉取（这不是「更新」，是首次发现），并**顺带同步进可用仓库**
 { "repository": { …同上 repositories[] 条目… },
-  "skills": [ …见 /repositories/detail 的 skills… ] }
+  "skills": [ …见 /repositories/detail 的 skills… ],
+  "fetchError": null,                        // 拉取失败时订阅仍保留，原因在这里
+  "sync": { "synced": [ …同 §13… ], "unchanged": [ "…" ], "skipped": [ … ] },   // 0.8.0：自动同步的回执
+  "syncError": null }                        // 同步失败不回滚订阅，原因在这里
 ```
 错误：400 `error.repo.url`（解析不出 owner/name）、409 `error.repo.exists`、
 502 `error.repo.network` / `error.repo.notFound` / `error.repo.rateLimit`。
@@ -245,7 +258,8 @@ kind: 'prefix'   path: '/api/skill-console'
 
 ```jsonc
 { "id": "obra/superpowers", "ref": "v1.2.3", "subdirectory": "skills" }
-// data: { "changed": true, "repository": { … }, "skills": [ … ], "fetchError": null }
+// data: { "changed": true, "repository": { … }, "skills": [ … ], "fetchError": null,
+//         "sync": { "synced": [], "unchanged": [ … ], "skipped": [] }, "syncError": null }
 ```
 语义：只改**分支/标签**与**子目录**——`owner/name` 是订阅的身份，换仓库必须走
 「移除订阅 + 添加」。分支/子目录真的变了就**丢弃旧清单并立刻重拉**（旧清单属于
@@ -265,10 +279,12 @@ kind: 'prefix'   path: '/api/skill-console'
 
 ```jsonc
 { "id": "obra/superpowers" }
-// data: { "repository": { … }, "skills": [ …同 detail… ] }
+// data: { "repository": { … }, "skills": [ …同 detail… ], "commit": "def5678",
+//         "sync": { "synced": [], "unchanged": [ … ], "skipped": [] }, "syncError": null }
 ```
-语义：只刷新**远端清单**（写 `<DSH_HOME>/skill-console/repository-cache/`），
-**不碰本地已安装技能**。之后由用户逐项确认安装/更新。
+语义：刷新**远端清单**（写 `<DSH_HOME>/skill-console/repository-cache/`），并**顺带同步进可用仓库**
+（0.8.0 起，`fetchAndSync`；同步失败只回 `syncError`，不推翻这次拉取）。
+**不碰任何技能根**：本地已装技能一个字节不变，装不装由用户另说（面板已不再提供安装入口）。
 
 ## 11. `GET /repositories/detail?id=<owner/name>`
 
@@ -292,7 +308,10 @@ kind: 'prefix'   path: '/api/skill-console'
                           { "path": "extra.md", "change": "added" } ],
         "files": 7, "bytes": 48213,              // 远端清单里的规模（files 不含目录）
         "conflict": false,                        // 本地已有同名技能，但不属于本订阅
-        "requiresConfirm": false }                // conflict || (update-available && localModified)
+        "requiresConfirm": false,                 // conflict || (update-available && localModified)
+        "library": { "state": "synced",           // 可用仓库里那份的状态（0.7.0）；
+                                                    // missing / synced / modified / outdated / orphan(清单里已没有)
+                     "commit": "def5678", "syncedAt": 1789… } }
     ],
     "fetched": true                               // 远端清单是否存在过（与 skills 为空是两件事）
   }
@@ -338,11 +357,17 @@ kind: 'prefix'   path: '/api/skill-console'
 - 安装完成后宿主会让技能注册表失效（下一次 `agent/pre-step` 就能看到新目录）。
 - 想一次把清单里能用的技能都取到本地、**不碰任何技能根**（只给角色当候选与复制来源）时，用 §13 的
   `POST /repositories/sync`——安装是「装进技能根」，同步是「放进可用仓库」，两者互不影响。
+- **0.8.0 起面板不再暴露这个端点**：仓库卡上的「安装到…」选择器、逐项勾选与安装按钮整块撤掉
+  （往项目里放技能改走角色切换；全局技能根由「移到可用仓库」往外搬）。端点与它的测试仍在。
 
 ## 13. `POST /repositories/sync`  ← 同步到可用仓库（0.7.0）
 
 把一个订阅**当前清单里的全部合法技能**落到**可用仓库**（`<DSH_HOME>/skill-console/library/`）——
 角色的候选与复制来源就是它（见 §16）。**一次同步整个清单，不接受技能名列表。**
+
+> 0.8.0 起这是**补齐用的端点**：`POST /repositories/add`、`POST /repositories/update`（分支/子目录真的变了时）
+> 与 `POST /repositories/fetch` 都会自动同步（`fetchAndSync`），它们的响应里带 `sync` / `syncError`。
+> 只有「库里的文件被手工删掉 / 之前同步失败 / 想显式确认覆盖」时才需要直接调它。
 
 ```jsonc
 // 请求：id 必填；confirm 省略 = false
@@ -550,24 +575,28 @@ kind: 'prefix'   path: '/api/skill-console'
 - **技能根本身永远不会被删**（删除目标只可能来自扫描到的发现文件）。
 - 成功 200；恢复走 `GET /backups` + `POST /restore`。
 
-## 23. `POST /skills/move-to-project`  ← 全局技能搬到当前工作区（破坏性，先备份）
+## 23. `POST /skills/move-to-library`  ← 把技能搬进可用仓库（破坏性，先备份）
 
 ```jsonc
-// 请求：必须是全局技能根里的发现文件路径；project 指定搬进哪个工作区（工作区目录路径；没给才按请求头解析）
+// 请求：全局技能根或当前工作区项目技能根里的发现文件路径；project 只在来源是项目技能时才有意义
 { "path": "/Users/…/.dsh/skills/tdd/SKILL.md", "project": "/Users/…/proj-a" }
 // data
-{ "name": "tdd", "from": "/Users/…/.dsh/skills", "to": "/Users/…/proj/.dsh/skills",
-  "kind": "directory", "backup": "…/backups/tdd/1789…", "globalRemoved": true }
-// 删全局失败时：{ …, "globalRemoved": false, "warning": "项目里已经就位，但全局那份没删掉：…" }
+{ "name": "tdd", "from": "/Users/…/.dsh/skills/tdd/SKILL.md", "to": "/Users/…/library/tdd",
+  "kind": "directory", "backup": "…/backups/tdd/1789…", "sourceRemoved": true }
+// 删原处失败时：{ …, "sourceRemoved": false, "warning": "库里已经就位，但原处那份没删掉：…" }
 ```
 语义：
-- 只允许全局 → 项目：非全局来源 400 `error.transfer.notGlobal`；软链接 400 `error.transfer.symlink`；项目里已有同名技能 409 `error.transfer.exists`（**按技能名判**，不按目标路径；不覆盖、不备份、不动手）。
-- 搬进**哪个工作区**由请求体 `project`（**工作区目录路径**）决定，给了就只认它（无效 → 400 `error.workspace.invalid`）；
-  没给才按 `x-skill-console-session` 头严格解析，解析不出项目根 400 `error.role.noProject`，**不会回落到「最近一个会话」**。
-- 顺序：① 备份全局那份（失败 → 500 `error.delete.backup`，什么都不移）② 复制进项目 ③ 删全局那份。
-- **③ 失败不回滚**：项目里那份留着，响应 `globalRemoved:false` + `warning` 如实报告；再点一次「删除」即可清掉全局那份。
-- 复制失败时按复制自身的错误码上抛（`error.copy.exists` 409 / `error.transfer.symlink` 400 / `error.skill.notFound` 404），此时全局那份没动。
-- `from` 是全局技能根、`to` 是当前工作区的项目技能根；`kind` 是源技能形态（`directory` / `flat`）。
+- 来源**两个技能根都行**（全局或当前工作区项目技能根）——0.7.0 之前这条只允许全局 → 项目，0.8.0 起
+  统一成「搬进可用仓库」。软链接 400 `error.transfer.symlink`；**库里已有同名技能名** 409
+  `error.transfer.exists`（**按技能名判**，不按目标路径；不覆盖、不备份、不动手）。
+- 落进**哪个工作区**由请求体 `project`（**工作区目录路径**）决定（来源是项目技能时必需），给了就只认它
+  （无效 → 400 `error.workspace.invalid`）；没给才按 `x-skill-console-session` 头严格解析，解析不出项目根
+  400 `error.role.noProject`，**不会回落到「最近一个会话」**。
+- 顺序：① 备份原处那份（失败 → 500 `error.delete.backup`，什么都不移）② 复制进库 ③ 删原处那份。
+- **③ 失败不回滚**：库里那份留着，响应 `sourceRemoved:false` + `warning` 如实报告；再点一次「删除」即可清掉原处那份。
+- 复制失败时按复制自身的错误码上抛（`error.copy.exists` 409 / `error.transfer.symlink` 400 / `error.skill.notFound` 404），此时原处没动。
+- `to` 是**目标技能路径**（目录包给目录、扁平给 `.md` 文件）；`from` 是原发现文件路径；`kind` 是源技能形态（`directory` / `flat`）。
+- 面板上这个按钮**有条件出现**（0.8.0）：技能已在当前角色里（`inRole`）或已在可用仓库里（`inLibrary`）时不显示。
 
 ---
 
@@ -595,8 +624,7 @@ kind: 'prefix'   path: '/api/skill-console'
 | `error.role.noProject` | 写接口**没给** `project`，且请求头会话也解析不出（会话 id 不存在 / 拿不到 cwd，**绝不回落到最近会话**），或角色只能落在项目根上却没有项目目录：提示先打开 / 选对一个工作区 |
 | `error.delete.backup` | 删除/移动前的备份失败：**什么都没改**，提示看日志后重试 |
 | `error.copy.exists` | 复制/移动的目标位置已有同名技能，拒绝覆盖 |
-| `error.transfer.notGlobal` | 只能把**全局**技能移到项目；项目技能请用「删除」 |
-| `error.transfer.exists` | 项目里已有同名技能，移动拒绝覆盖（先自己决定留哪一份） |
+| `error.transfer.exists` | **可用仓库**里已有同名技能，移动拒绝覆盖（先自己决定留哪一份） |
 | `error.transfer.symlink` | 软链接技能不能复制/移动（会动到链接目标） |
 | `error.internal` | 后端抛异常（未改动任何文件）；提示看 DSH 日志的 web-server 警告 |
 | `error.endpointMissing` | **不是服务端码**：客户端在响应体不是 JSON 壳时自行合成，说明请求没走到本插件（插件未加载 / 未重启） |
@@ -631,13 +659,13 @@ kind: 'prefix'   path: '/api/skill-console'
 
 1. 技能根里的**发现文件重命名**（`SKILL.md` ↔ `SKILL.md.disabled`、`*.md` ↔ `*.md.disabled`）：
    两个技能根（项目根、全局根）都能做，但 `/roles/activate` **只写项目根**——全局根在角色链路上既不读也不写
-2. 仓库安装/更新的目标：缺省 `<DSH_HOME>/skills/<name>/`；`target:'project'` 时是当前工作区的项目根下的 `.dsh/skills/<name>/`（根不存在会随写入创建）
-2.1. `POST /repositories/sync` 的目标：`<DSH_HOME>/skill-console/library/<name>/`（可用仓库；只被角色读到、DSH 不加载）
+2. 仓库安装/更新的目标（`/repositories/install`，0.8.0 起面板不再调用）：缺省 `<DSH_HOME>/skills/<name>/`；`target:'project'` 时是当前工作区的项目根下的 `.dsh/skills/<name>/`（根不存在会随写入创建）
+2.1. 自动同步与 `POST /repositories/sync` 的目标：`<DSH_HOME>/skill-console/library/<name>/`（可用仓库；只被角色读到、DSH 不加载）
 3. `<DSH_HOME>/skill-console/repositories.json`（订阅与安装快照）
 4. `<DSH_HOME>/skill-console/roles.json`（角色定义 + 每个项目激活了哪个角色；`/roles/save`、`/roles/remove`、`/roles/deactivate` **只写这一个文件**，不动任何技能）
 5. `<DSH_HOME>/skill-console/repository-cache/` 与 `backups/`
 6. `POST /skills/delete`：先整份备份，再删发现文件所在的整包（目录包）／那个文件（扁平）／链接本身（软链接）；技能根本身永远不删
-7. `POST /skills/move-to-project`：先备份全局那份 → 复制进项目根 → 删全局那份；删全局失败不回滚（项目里那份留着，如实报 `warning`）
+7. `POST /skills/move-to-library`：先备份原处那份 → 复制进可用仓库 → 删原处那份；删原处失败不回滚（库里那份留着，如实报 `warning`）
 8. `POST /repositories/install` 的 `target:'project'`：只写当前工作区的项目技能根 `<projectRoot>/.dsh/skills/`，不更新订阅快照
 9. `POST /repositories/sync`：只写可用仓库 `<DSH_HOME>/skill-console/library/` 与订阅状态里的 `record.library` 台账；**不写任何技能根**，也不让技能注册表失效
 

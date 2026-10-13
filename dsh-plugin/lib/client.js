@@ -164,27 +164,25 @@ window.__ModuleLoader__.load({
 				'skills.toggled': '「{name}」已{state}。',
 				'skills.stateOn': '启用',
 				'skills.stateOff': '停用',
-				'skills.batchEnable': '全部启用',
-				'skills.batchDisable': '全部停用',
-				'skills.batchResult': '已更新 {changed} 项。',
-				'skills.batchFailed': '{failed} 项失败',
+				'skills.tagInRole': '当前角色',
+				'skills.tagInLibrary': '可用仓库',
 				'skills.expand': '展开',
 				'skills.collapse': '收起',
-				'skills.batchEnableAria': '全部启用「{label}」里的技能',
-				'skills.batchDisableAria': '全部停用「{label}」里的技能',
 				'skills.delete': '删除',
 				'skills.deleteConfirm': '删除{form}技能「{name}」（{root}）？会先整份备份，之后可以从备份恢复。',
 				'skills.deleteSymlinkHint': '这是一个软链接：只删这个链接，不动它指向的技能。',
 				'skills.deleteGlobalHint': '删的是全局技能，删掉后所有项目都不再加载它。',
 				'skills.deleteDone': '已删除「{name}」，已先整份备份，可以从备份恢复',
 				'skills.deleteFailed': '删除失败',
-				'skills.move': '移到项目',
-				'skills.moveConfirm': '把全局技能「{name}」移到当前项目（{project}）？全局那份会消失；项目里已有同名技能时会拒绝，不覆盖。',
-				'skills.moveDone': '已把「{name}」移到当前项目技能根',
-				// 宿主 `skillsMoveToProject` 已经把整句话写好了（含失败原因），这里只做透传，
-				// 否则会渲染成「项目里已经就位，但全局那份没删掉：项目里已经就位，但全局那份没删掉：…」。
+				'skills.move': '移到可用仓库',
+				'skills.moveConfirm': '把「{name}」（{root}）收进可用仓库？会先整份备份，原处那份随后删除；可用仓库里已有同名技能时拒绝，不覆盖。',
+				'skills.moveDone': '已把「{name}」收进可用仓库',
+				// 宿主 `skillsMoveToLibrary` 已经把整句话写好了（含失败原因），这里只做透传，
+				// 否则会渲染成「库里已经就位，但原处那份没删掉：库里已经就位，但原处那份没删掉：…」。
 				'skills.movePartial': '{warning}',
 				'skills.moveFailed': '移动失败',
+				'skills.moveInRole': '已由当前角色管理',
+				'skills.moveInLibrary': '已在可用仓库',
 				'skills.formFlat': '扁平文件',
 				'skills.formDirectory': '目录包',
 				'skills.formSymlink': '软链接',
@@ -227,8 +225,8 @@ window.__ModuleLoader__.load({
 				'repos.tokenOn': '已配置 GitHub token',
 				'repos.tokenOff': '未配置 GitHub token',
 				'repos.empty': '还没有订阅任何仓库。在下面填 owner/name 或 GitHub 链接即可添加（添加时会立刻做一次首次拉取）。',
-				'repos.statusLine': '共 {total}：未安装 {notInstalled} · 已安装 {installed} · 可更新 {updateAvailable} · 上游已删除 {upstreamDeleted}',
-				'repos.statusExtra': '另有 frontmatter 异常 {invalid} · 本地冲突 {conflict}',
+				'repos.statusLine': '可用仓库：共 {total} 个技能 · 已同步 {synced} · 待更新 {outdated} · 上游已删除 {orphan}',
+				'repos.statusExtra': '另有 frontmatter 异常 {invalid} 个',
 				'repos.ref': '分支 {ref}',
 				'repos.refDefault': '默认分支',
 				'repos.subdir': '子目录 {path}',
@@ -236,16 +234,11 @@ window.__ModuleLoader__.load({
 				'repos.lastFetchLine': '{commit} · {time} · {count} 个技能',
 				'repos.lastFetchError': '上次拉取失败：{error}',
 				'repos.fetch': '拉取最新',
-				'repos.fetchTitle': '手动操作：只刷新远端清单，不会改动本地已安装技能',
-				'repos.fetchHint': '「拉取最新」永远是你手动点的：它只把远端清单缓存到 DSH_HOME/skill-console/repository-cache，不碰本地技能文件。装什么、什么时候装，都由你逐项确认。',
-				'repos.fetchDone': '已刷新「{id}」的远端清单。',
-				'repos.sync': '同步到可用仓库',
-				'repos.syncTitle': '手动操作：把这份清单里能用的技能全部同步到「可用仓库」；不改任何技能根，覆盖前一律备份',
-				'repos.syncHint': '「可用仓库」是角色挑选技能的地方（DSH_HOME/skill-console/library），DSH 不会加载它。同步只动这个目录：已存在且没被本地改过的不动，本地改过的默认跳过，确认覆盖前先备份。',
-				'repos.syncDone': '已同步到可用仓库：更新 {updated} 个、无变化 {unchanged} 个、跳过 {skipped} 个。',
+				'repos.fetchTitle': '手动操作：刷新远端清单，并把它同步进「可用仓库」——DSH 不加载库，技能根一个字节都不动',
+				'repos.fetchHint': '「拉取最新」永远是你手动点的：刷新远端清单缓存，并把清单里能用的技能同步进可用仓库（DSH_HOME/skill-console/library）——角色就从这里挑技能。库里已有的、没被本地改过的不动；被本地改过的默认跳过，确认覆盖前先备份。技能根里的东西一个都不动。',
+				'repos.fetchDone': '已刷新「{id}」的远端清单，并同步进可用仓库。',
+				'repos.syncDone': '同步到可用仓库：更新 {updated} 个、无变化 {unchanged} 个、跳过 {skipped} 个。',
 				'repos.syncFailed': '同步到可用仓库失败',
-				'repos.libraryLine': '可用仓库：{count} 个',
-				'repos.libraryOutdated': '，其中 {count} 个与最新清单不一致',
 				'repos.remove': '移除订阅',
 				'repos.removeConfirm': '移除订阅 {id}？已安装到本地的技能会原样保留（卸载订阅 ≠ 删除技能）。继续？',
 				'repos.removed': '已移除订阅 {id}，本地保留 {count} 个技能。',
@@ -266,29 +259,14 @@ window.__ModuleLoader__.load({
 				'repos.detailNoSkills': '这个仓库里没找到技能。仓库根目录下的 .md（README、CONTRIBUTING 之类）本身不算技能——如果技能放在子目录里，用「编辑」把子目录填对（例如 skills）。',
 				'repos.detailLoading': '正在读取仓库技能…',
 				'repos.skillCount': '{count} 个技能',
-				'repos.skill.not-installed': '未安装',
-				'repos.skill.installed': '已安装',
-				'repos.skill.update-available': '可更新',
-				'repos.skill.upstream-deleted': '上游已删除',
-				'repos.skill.invalid': 'frontmatter 不合法',
-				'repos.localModified': '本地有修改',
-				'repos.conflict': '本地同名已存在',
-				'repos.changedFiles': '变更',
-				'repos.change.modified': '改',
-				'repos.change.added': '增',
-				'repos.change.removed': '删',
-				'repos.change.unknown': '?',
+				'repos.library.synced': '已同步',
+				'repos.library.outdated': '待更新',
+				'repos.library.missing': '未同步',
+				'repos.library.modified': '库里有本地修改',
+				'repos.library.orphan': '上游已删除（仍在库）',
+				'repos.library.invalid': 'frontmatter 不合法',
 				'repos.meta': '{files} 个文件 · {size}',
-				'repos.install': '安装/更新选中',
-				'repos.installNone': '先勾选要安装或更新的技能。',
-				'repos.confirmOverwrite': '这些技能在本地有改动，安装会覆盖它们（覆盖前整份备份）：{names}。继续？',
-				'repos.installResult': '安装结果',
-				'repos.installedRow': '{name} · {state}',
-				'repos.installedStateNew': '已安装',
-				'repos.installedStateUpdated': '已更新',
-				'repos.installedBackup': '备份：{path}',
 				'repos.skippedRow': '{name} · 已跳过：{reason}',
-				'repos.installDone': '已处理 {count} 个技能。',
 				'repos.restore': '恢复上一版',
 				'repos.restoreConfirm': '用备份（{time}）覆盖「{name}」的当前版本？当前版本会先再备份一次。',
 				'repos.restoreNone': '「{name}」没有可恢复的备份。',
@@ -304,13 +282,6 @@ window.__ModuleLoader__.load({
 				'repos.adding': '正在添加并首次拉取…',
 				'repos.added': '已订阅「{id}」。',
 				'repos.addFetchError': '订阅已添加，但首次拉取失败：{error}',
-				'repos.selectAll': '全选可更新',
-				'repos.selectNone': '全不选',
-				'repos.selected': '已选 {count} 个',
-				'repos.installTarget': '安装到工作区',
-				'repos.targetGlobal': '全局技能根',
-				'repos.targetProject': '项目技能根',
-				'repos.targetProjectHint': '装到当前工作区时，全局技能根不会被动；项目技能根里已有同名技能需要确认才覆盖。',
 			},
 			en: {
 				'section.label': 'Skill console',
@@ -398,26 +369,24 @@ window.__ModuleLoader__.load({
 				'skills.toggled': '"{name}" is now {state}.',
 				'skills.stateOn': 'enabled',
 				'skills.stateOff': 'disabled',
-				'skills.batchEnable': 'Enable all',
-				'skills.batchDisable': 'Disable all',
-				'skills.batchResult': '{changed} updated.',
-				'skills.batchFailed': '{failed} failed',
+				'skills.tagInRole': 'current role',
+				'skills.tagInLibrary': 'library',
 				'skills.expand': 'expand',
 				'skills.collapse': 'collapse',
-				'skills.batchEnableAria': 'Enable every skill in "{label}"',
-				'skills.batchDisableAria': 'Disable every skill in "{label}"',
 				'skills.delete': 'Delete',
 				'skills.deleteConfirm': 'Delete the {form} skill "{name}" ({root})? It is backed up in full first and can be restored from the backup.',
 				'skills.deleteSymlinkHint': 'This is a symlink: only the link is deleted, the skill it points to is untouched.',
 				'skills.deleteGlobalHint': 'This is a global skill; removing it stops every project from loading it.',
 				'skills.deleteDone': 'Deleted "{name}"; a full backup was taken and can be restored',
 				'skills.deleteFailed': 'Delete failed',
-				'skills.move': 'Move to project',
-				'skills.moveConfirm': 'Move the global skill "{name}" into the current project ({project})? The global copy will disappear; an existing same-named project skill makes this refuse rather than overwrite.',
-				'skills.moveDone': 'Moved "{name}" into the current project skill root',
-				// 宿主 `skillsMoveToProject` 已经把整句话写好了（含失败原因），这里只做透传。
+				'skills.move': 'Move to library',
+				'skills.moveConfirm': 'Move "{name}" ({root}) into the available library? It is backed up in full first and the original is deleted afterwards; a same-named skill already in the library makes this refuse rather than overwrite.',
+				'skills.moveDone': 'Moved "{name}" into the available library',
+				// 宿主 `skillsMoveToLibrary` 已经把整句话写好了（含失败原因），这里只做透传。
 				'skills.movePartial': '{warning}',
 				'skills.moveFailed': 'Move failed',
+				'skills.moveInRole': 'Managed by the active role',
+				'skills.moveInLibrary': 'Already in the library',
 				'skills.formFlat': 'flat file',
 				'skills.formDirectory': 'directory package',
 				'skills.formSymlink': 'symlink',
@@ -460,8 +429,8 @@ window.__ModuleLoader__.load({
 				'repos.tokenOn': 'GitHub token configured',
 				'repos.tokenOff': 'No GitHub token configured',
 				'repos.empty': 'No repository is subscribed yet. Enter owner/name or a GitHub URL below to add one (adding performs one initial fetch).',
-				'repos.statusLine': '{total} total: {notInstalled} not installed · {installed} installed · {updateAvailable} update available · {upstreamDeleted} upstream deleted',
-				'repos.statusExtra': 'plus {invalid} invalid frontmatter · {conflict} local conflicts',
+				'repos.statusLine': 'Library: {total} skills · {synced} synced · {outdated} update available · {orphan} deleted upstream',
+				'repos.statusExtra': 'plus {invalid} invalid frontmatter',
 				'repos.ref': 'Ref {ref}',
 				'repos.refDefault': 'Default branch',
 				'repos.subdir': 'Subdirectory {path}',
@@ -469,16 +438,11 @@ window.__ModuleLoader__.load({
 				'repos.lastFetchLine': '{commit} · {time} · {count} skills',
 				'repos.lastFetchError': 'Last fetch failed: {error}',
 				'repos.fetch': 'Fetch latest',
-				'repos.fetchTitle': 'Manual action: only refreshes the remote manifest, never touches installed skills',
-				'repos.fetchHint': '"Fetch latest" only ever runs when you click it: it caches the remote manifest under DSH_HOME/skill-console/repository-cache and never touches local skill files. What to install, and when, stays your per-skill decision.',
-				'repos.fetchDone': 'Refreshed the remote manifest of "{id}".',
-				'repos.sync': 'Sync to library',
-				'repos.syncTitle': 'Manual action: sync every usable skill in this manifest into the available library; no skill root is touched, and every overwrite is backed up first',
-				'repos.syncHint': 'The available library is where roles pick skills from (DSH_HOME/skill-console/library); DSH never loads it. Sync only writes that directory: existing untouched copies stay as they are, locally modified ones are skipped unless you confirm, and anything overwritten is backed up first.',
+				'repos.fetchTitle': 'Manual action: refreshes the remote manifest and syncs it into the available library — DSH never loads the library and no skill root is touched',
+				'repos.fetchHint': '"Fetch latest" only ever runs when you click it: it refreshes the cached remote manifest and syncs every usable skill into the available library (DSH_HOME/skill-console/library) — the pool roles pick skills from. Untouched copies already in the library stay as they are; locally modified ones are skipped unless you confirm, and anything overwritten is backed up first. Nothing inside a skill root is touched.',
+				'repos.fetchDone': 'Refreshed the remote manifest of "{id}" and synced it into the available library.',
 				'repos.syncDone': 'Synced to the available library: {updated} updated, {unchanged} unchanged, {skipped} skipped.',
 				'repos.syncFailed': 'Syncing to the available library failed',
-				'repos.libraryLine': 'Available library: {count}',
-				'repos.libraryOutdated': ' ({count} behind the latest manifest)',
 				'repos.remove': 'Remove subscription',
 				'repos.removeConfirm': 'Remove the subscription {id}? Skills already installed locally are kept (removing a subscription is not deleting skills). Continue?',
 				'repos.removed': 'Removed the subscription {id}; {count} skills stay installed locally.',
@@ -499,29 +463,14 @@ window.__ModuleLoader__.load({
 				'repos.detailNoSkills': 'No skill found in this repository. Top-level .md files (README, CONTRIBUTING and the like) are not skills by themselves — if the skills live in a subdirectory, use "Edit" to point the subdirectory at it (for example skills).',
 				'repos.detailLoading': 'Loading repository skills…',
 				'repos.skillCount': '{count} skills',
-				'repos.skill.not-installed': 'Not installed',
-				'repos.skill.installed': 'Installed',
-				'repos.skill.update-available': 'Update available',
-				'repos.skill.upstream-deleted': 'Deleted upstream',
-				'repos.skill.invalid': 'Invalid frontmatter',
-				'repos.localModified': 'Modified locally',
-				'repos.conflict': 'Same name exists locally',
-				'repos.changedFiles': 'Changes',
-				'repos.change.modified': 'M',
-				'repos.change.added': 'A',
-				'repos.change.removed': 'D',
-				'repos.change.unknown': '?',
+				'repos.library.synced': 'Synced',
+				'repos.library.outdated': 'Update available',
+				'repos.library.missing': 'Not synced',
+				'repos.library.modified': 'Modified in the library',
+				'repos.library.orphan': 'Deleted upstream (still in the library)',
+				'repos.library.invalid': 'Invalid frontmatter',
 				'repos.meta': '{files} files · {size}',
-				'repos.install': 'Install / update selected',
-				'repos.installNone': 'Select the skills you want to install or update first.',
-				'repos.confirmOverwrite': 'These skills have local modifications and will be overwritten (each one is backed up first): {names}. Continue?',
-				'repos.installResult': 'Install result',
-				'repos.installedRow': '{name} · {state}',
-				'repos.installedStateNew': 'installed',
-				'repos.installedStateUpdated': 'updated',
-				'repos.installedBackup': 'Backup: {path}',
 				'repos.skippedRow': '{name} · skipped: {reason}',
-				'repos.installDone': 'Processed {count} skills.',
 				'repos.restore': 'Restore previous',
 				'repos.restoreConfirm': 'Overwrite "{name}" with the backup from {time}? The current version is backed up again first.',
 				'repos.restoreNone': '"{name}" has no backup to restore.',
@@ -537,13 +486,6 @@ window.__ModuleLoader__.load({
 				'repos.adding': 'Adding and fetching for the first time…',
 				'repos.added': 'Subscribed to "{id}".',
 				'repos.addFetchError': 'The subscription was added, but the first fetch failed: {error}',
-				'repos.selectAll': 'Select installable',
-				'repos.selectNone': 'Select none',
-				'repos.selected': '{count} selected',
-				'repos.installTarget': 'Install into workspace',
-				'repos.targetGlobal': 'Global skill root',
-				'repos.targetProject': 'Project skill root',
-				'repos.targetProjectHint': 'Installing into the current workspace never writes the global skill root; an existing same-named project skill needs confirmation to overwrite.',
 			},
 		}
 
@@ -1003,9 +945,9 @@ window.__ModuleLoader__.load({
 			return lines.join('\n')
 		}
 
-		/** 移动确认框：只有全局技能才该被问到。 */
-		function moveConfirmText(t, skill, projectName) {
-			return t('skills.moveConfirm', { name: (skill && skill.name) || '', project: projectName || '' })
+		/** 移动确认框：说清楚动的是哪个技能、它在哪个技能根（库里的东西一个都不动）。 */
+		function moveConfirmText(t, skill) {
+			return t('skills.moveConfirm', { name: (skill && skill.name) || '', root: rootLabel(t, skill && skill.root, '') })
 		}
 
 		/**
@@ -1126,12 +1068,6 @@ window.__ModuleLoader__.load({
 				}
 				return `${label}（${paths[index]}）`
 			})
-		}
-
-		/** 项目在界面上的显示名：只有末段目录名，拿不到就用一个中性占位符。 */
-		function projectNameOf(project) {
-			const name = baseName(project && (project.root || project.cwd))
-			return name === '' ? '—' : name
 		}
 
 		/**
@@ -1437,6 +1373,8 @@ window.__ModuleLoader__.load({
 							? h('span', { className: 'sc-hint', title: t('skills.nameFromDirectory') }, 'ⓘ')
 							: null,
 						statusTag,
+						skill.inRole === true ? h(UiTag, { tone: 'success' }, t('skills.tagInRole')) : null,
+						skill.inLibrary === true ? h(UiTag, { tone: 'quiet' }, t('skills.tagInLibrary')) : null,
 					),
 					sourceLine,
 					diagnostics.map((entry, index) =>
@@ -1592,18 +1530,10 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 把一组技能收敛成 `/toggle-batch` 的入参：只留**需要变**的项（不可勾、已是目标态、
-		 * 路径不是字符串的都不要）。返回空数组时调用方直接返回，一个字节都不发给宿主。
-		 */
-		function batchItems(skills, enabled) {
-			return (Array.isArray(skills) ? skills : []).filter((skill) => skill.toggleable !== false && skill.enabled !== enabled && typeof skill.path === 'string').map((skill) => ({ path: skill.path, enabled }))
-		}
-
-		/**
-		 * 一个根下面的一个仓库组：组头可折叠，组头自带「按仓库批量启停」。
+		 * 一个根下面的一个仓库组：组头可折叠。
 		 *
-		 * 批量范围**恰好是这一组**。今天组头按钮动的是整根，用户点的是「这个仓库」——
-		 * 范围说大不大、说小不小，这才是意外操作的来源。
+		 * 组头**不再有批量启停**：角色页签已经是「谁生效」的唯一入口，技能页签只留逐项的
+		 * 一开一关，避免同一件事有两个范围不同的批量按钮。
 		 */
 		function SkillRepoGroup(props) {
 			const t = props.t
@@ -1611,9 +1541,6 @@ window.__ModuleLoader__.load({
 			const group = props.group
 			const skills = Array.isArray(group.skills) ? group.skills : []
 			const label = group.label === null ? t('skills.sourceLocal') : group.label
-			const existing = skills.filter((skill) => skill.toggleable !== false)
-			const canEnable = existing.some((skill) => skill.enabled !== true)
-			const canDisable = existing.some((skill) => skill.enabled === true)
 			const collapsed = props.collapsed === true
 			return h(
 				'div',
@@ -1637,22 +1564,6 @@ window.__ModuleLoader__.load({
 					h('span', { className: 'sc-repogroup-title' }, label),
 					h('span', { className: 'sc-hint' }, t('skills.groupCount', { count: skills.length })),
 					h('span', { className: 'sc-spacer' }),
-					h(UiButton, {
-						variant: 'ghost',
-						size: 'sm',
-						'aria-label': t('skills.batchEnableAria', { label }),
-						disabled: props.busy || !canEnable,
-						onClick: () => props.onBatch(skills, true, label),
-						children: t('skills.batchEnable'),
-					}),
-					h(UiButton, {
-						variant: 'ghost',
-						size: 'sm',
-						'aria-label': t('skills.batchDisableAria', { label }),
-						disabled: props.busy || !canDisable,
-						onClick: () => props.onBatch(skills, false, label),
-						children: t('skills.batchDisable'),
-					}),
 				),
 				collapsed
 					? null
@@ -1662,8 +1573,8 @@ window.__ModuleLoader__.load({
 								t,
 								skill,
 								busy: props.busyPath === skill.path,
-								// 只有全局根里的普通技能能被搬到项目（软链接不碰）
-								canMove: root.key === 'user-dsh' && skill.toggleable === true,
+								// 能不能收进可用仓库：不是软链、当前角色没在用、库里也还没有同名。
+								canMove: skill.toggleable === true && skill.inRole !== true && skill.inLibrary !== true,
 								rootName: rootLabel(t, root.key, root.label),
 								onDelete: props.onDelete,
 								onMove: props.onMove,
@@ -1674,16 +1585,13 @@ window.__ModuleLoader__.load({
 			)
 		}
 
-		/** 一个技能根（分组）：标题 + 根名 + 根内按仓库分组（两级都可折叠） + 整根批量启停。 */
+		/** 一个技能根（分组）：标题 + 根名 + 根内按仓库分组（两级都可折叠）。 */
 		function SkillGroup(props) {
 			const t = props.t
 			const root = props.root || {}
 			const skills = Array.isArray(root.skills) ? root.skills : []
 			const groups = groupSkillsByRepo(skills)
 			const label = rootLabel(t, root.key, root.label)
-			const existing = skills.filter((skill) => skill.toggleable !== false)
-			const canEnable = existing.some((skill) => skill.enabled !== true)
-			const canDisable = existing.some((skill) => skill.enabled === true)
 			const collapsedRepos = props.collapsedRepos ?? {}
 			// 两层折叠共用一个字典：根用 root.key，仓库用 root.key + ':' + repoKey（规格 §4）。
 			const collapsed = collapsedRepos[root.key] === true
@@ -1711,24 +1619,6 @@ window.__ModuleLoader__.load({
 					root.exists === false ? h(UiTag, { tone: 'warning' }, t('skills.groupMissing')) : null,
 					h('span', { className: 'sc-spacer' }),
 					h('span', { className: 'sc-hint' }, t('skills.groupCount', { count: skills.length })),
-					// 根头这一对仍然作用于**整根**：这是「一键处理这个技能根」的入口。
-					// 折叠根不影响它们（用户不必先展开再批量）。
-					h(UiButton, {
-						variant: 'ghost',
-						size: 'sm',
-						'aria-label': t('skills.batchEnableAria', { label }),
-						disabled: props.busy || !canEnable,
-						onClick: () => props.onBatch(skills, true, label),
-						children: t('skills.batchEnable'),
-					}),
-					h(UiButton, {
-						variant: 'ghost',
-						size: 'sm',
-						'aria-label': t('skills.batchDisableAria', { label }),
-						disabled: props.busy || !canDisable,
-						onClick: () => props.onBatch(skills, false, label),
-						children: t('skills.batchDisable'),
-					}),
 				),
 				collapsed
 					? null
@@ -1746,7 +1636,6 @@ window.__ModuleLoader__.load({
 									busyPath: props.busyPath,
 									collapsed: collapsedRepos[collapseKey] === true,
 									onToggleRepo: () => props.onToggleRepo(collapseKey),
-									onBatch: props.onBatch,
 									onOpen: props.onOpen,
 									onToggle: props.onToggle,
 									onDelete: props.onDelete,
@@ -1819,7 +1708,6 @@ window.__ModuleLoader__.load({
 			const [notice, setNotice] = react.useState(null)
 			const [actionFail, setActionFail] = react.useState(null)
 			const [busyPath, setBusyPath] = react.useState(null)
-			const [batchBusy, setBatchBusy] = react.useState(false)
 			// 折叠状态分两层：sessionStorage 是**记忆**（按工作区 + 根记，切页签、刷新页面都还记得），
 			// 这个 state 只是「本次挂载的覆盖层」——用户刚点的那一下立刻生效，不必等存储读回来。
 			const [collapsedRepos, setCollapsedRepos] = react.useState({})
@@ -1892,29 +1780,7 @@ window.__ModuleLoader__.load({
 					.finally(() => setBusyPath(null))
 			}
 
-			/** 一组（一个技能根，或一个根里的一个仓库）的批量启停：只发需要变的项（宿主上限 200）。 */
-			const batch = (skills, enabled, label) => {
-				const items = batchItems(skills, enabled)
-				if (items.length === 0) {
-					setNotice(t('skills.toggled', { name: label, state: t(enabled ? 'skills.stateOn' : 'skills.stateOff') }))
-					return
-				}
-				setBatchBusy(true)
-				setActionFail(null)
-				setNotice(null)
-				apiPost('/toggle-batch', withProject(project, { items }), sessionId)
-					.then((data) => {
-						const results = data && Array.isArray(data.results) ? data.results : []
-						const failed = results.filter((entry) => entry && entry.ok !== true)
-						const changed = data && typeof data.changed === 'number' ? data.changed : items.length - failed.length
-						setNotice(failed.length > 0 ? t('skills.batchResult', { changed }) + '，' + t('skills.batchFailed', { failed: failed.length }) : t('skills.batchResult', { changed }))
-						bumpCatalog()
-					})
-					.catch((error) => setActionFail(actionError(t, error)))
-					.finally(() => setBatchBusy(false))
-			}
-
-			// 删除 / 移到项目之后，详情与目录都可能过期，一起重来。
+			// 删除 / 移进可用仓库之后，详情与目录都可能过期，一起重来。
 			const reloadAfterAction = () => {
 				setDetail(null)
 				loadCatalog()
@@ -1936,21 +1802,15 @@ window.__ModuleLoader__.load({
 					.then(() => setBusyPath(null))
 			}
 
-			// 宿主为这次 /catalog 实际解析出来的项目。只剩一个用途：给「移到项目」的确认文案兜底项目名。
-			// 「宿主悄悄回落到别的项目」的提示归节顶的工作区条（WorkspaceBar），不在这里重复播报。
-			const catalogProject = catalog.data && catalog.data.project ? catalog.data.project : null
-
-			const moveSkillToProject = (skill) => {
+			const moveSkillToLibrary = (skill) => {
 				if (busyPath !== null) return
-				// 项目名兜底：`activeName` 在项目上下文还没解析出来时是空串，而文案里的（{project}）
-				// 是无条件拼上去的——空串会渲染成一个空的「（）」。用 /catalog 解析出的项目名兜底。
-				if (!askConfirm(moveConfirmText(t, skill, project.activeName || projectNameOf(catalogProject)))) return
+				if (!askConfirm(moveConfirmText(t, skill))) return
 				setBusyPath(skill.path)
 				setNotice(null)
 				setActionFail(null)
-				apiPost('/skills/move-to-project', withProject(project, { path: skill.path }), sessionId)
+				apiPost('/skills/move-to-library', withProject(project, { path: skill.path }), sessionId)
 					.then((data) => {
-						if (data.globalRemoved === false) setNotice(t('skills.movePartial', { warning: data.warning ?? '' }))
+						if (data.sourceRemoved === false) setNotice(t('skills.movePartial', { warning: data.warning ?? '' }))
 						else setNotice(t('skills.moveDone', { name: data.name || skill.name || '' }))
 						reloadAfterAction()
 					})
@@ -2016,15 +1876,14 @@ window.__ModuleLoader__.load({
 						key: root.key || root.path || '',
 						t,
 						root,
-						busy: batchBusy,
+						busy: busyPath !== null,
 						busyPath,
 						collapsedRepos: collapsedReposView,
 						onToggleRepo: toggleRepo,
 						onOpen: loadDetail,
 						onToggle: toggle,
-						onBatch: batch,
 						onDelete: removeSkillFile,
-						onMove: moveSkillToProject,
+						onMove: moveSkillToLibrary,
 					}),
 				),
 				// 目录里没有项目根 = 还没选工作区（或那条工作区解析不到项目根）。
@@ -2044,7 +1903,7 @@ window.__ModuleLoader__.load({
 							h('div', { className: 'sc-empty' }, t('skills.noSessions')),
 						)
 					: null,
-				roots.length > 0 && batchBusy ? h('div', { className: 'sc-hint' }, t('common.loading')) : null,
+				roots.length > 0 && busyPath !== null ? h('div', { className: 'sc-hint' }, t('common.loading')) : null,
 			)
 		}
 
@@ -2165,20 +2024,16 @@ window.__ModuleLoader__.load({
 							count: typeof lastFetch.skillCount === 'number' ? lastFetch.skillCount : 0,
 						})
 				: t('repos.lastFetchNever')
+			// 这一行说的是「可用仓库」里这份订阅的存量：订阅的落点就是库（角色候选的唯一
+			// 来源），所以不再报「装到技能根几个」。`repo.library` 由后端 list() 现算；缺了就
+			// 用行的状态兜底，不显示假数字。
+			const library = repo.library && typeof repo.library === 'object' ? repo.library : {}
 			const statusLine = t('repos.statusLine', {
-				total: numberOr(status.total, 0),
-				notInstalled: numberOr(status.notInstalled, 0),
-				installed: numberOr(status.installed, 0),
-				updateAvailable: numberOr(status.updateAvailable, 0),
-				upstreamDeleted: numberOr(status.upstreamDeleted, 0),
+				total: numberOr(library.count, 0),
+				synced: numberOr(library.synced, 0),
+				outdated: numberOr(library.outdated, 0),
+				orphan: numberOr(library.orphan, 0),
 			})
-			// 可用仓库里这份订阅的存量：`repo.library` 是后端 list() 按库目录现算的，
-			// 不是安装快照（`status` 那行说的是技能根）。没有这个字段就不显示这行。
-			const library = repo.library && typeof repo.library === 'object' ? repo.library : null
-			const libraryLine = library === null
-				? null
-				: t('repos.libraryLine', { count: numberOr(library.count, 0) })
-					+ (numberOr(library.outdated, 0) > 0 ? t('repos.libraryOutdated', { count: numberOr(library.outdated, 0) }) : '')
 			return h(
 				'div',
 				{ className: 'sc-repo' + (expanded ? ' is-open' : '') },
@@ -2213,14 +2068,12 @@ window.__ModuleLoader__.load({
 						),
 						h('span', { className: 'sc-desc' }, fetchLine),
 						h('span', { className: 'sc-hint' }, statusLine),
-						numberOr(status.invalid, 0) + numberOr(status.conflict, 0) > 0
-							? h('span', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, t('repos.statusExtra', { invalid: numberOr(status.invalid, 0), conflict: numberOr(status.conflict, 0) })))
+						numberOr(status.invalid, 0) > 0
+							? h('span', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, t('repos.statusExtra', { invalid: numberOr(status.invalid, 0) })))
 							: null,
-						// 这一行说的是「可用仓库」里这份订阅的存量：它是角色候选的唯一来源，
-						// 与上面「技能根里装了几个」是两回事。
-						libraryLine === null ? null : h('span', { className: 'sc-hint' }, libraryLine),
 					),
-					// 四个管理动作并列：编辑设置 / 更新（拉取最新）/ 同步到可用仓库 / 删除订阅。
+					// 三个管理动作并列：编辑设置 / 拉取最新（顺带同步进库）/ 删除订阅。
+					// 「同步」不是一个单独的动作：订阅的落点就是可用仓库。
 					h(
 						'div',
 						{ className: 'sc-row-actions' },
@@ -2244,17 +2097,6 @@ window.__ModuleLoader__.load({
 								children: t('repos.fetch'),
 							}),
 						}),
-						h(UiTooltip, {
-							label: t('repos.syncTitle'),
-							side: 'top',
-							children: h(UiButton, {
-								variant: 'outline',
-								size: 'sm',
-								disabled: props.busy,
-								onClick: stop(() => props.onSync(repo)),
-								children: t('repos.sync'),
-							}),
-						}),
 						h(UiButton, { variant: 'danger', size: 'sm', icon: UiIcon('IconTrashOutline16', 14), disabled: props.busy, onClick: stop(() => props.onRemove(repo)), children: t('repos.remove') }),
 					),
 				),
@@ -2274,16 +2116,7 @@ window.__ModuleLoader__.load({
 							t,
 							busy: props.busy,
 							detail: props.detail,
-							picked: props.picked,
-							installResult: props.installResult,
 							emptyDetailKey: props.emptyDetailKey,
-							installTarget: props.installTarget,
-							project: props.project,
-							onInstallTarget: props.onInstallTarget,
-							onTogglePick: props.onTogglePick,
-							onSelectAll: props.onSelectAll,
-							onClearPicked: props.onClearPicked,
-							onInstall: props.onInstall,
 							onRestore: props.onRestore,
 						})
 					: null,
@@ -2291,19 +2124,15 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 展开后的技能明细：勾选 + 安装/更新 + 恢复上一版 + 空态 / 加载 / 错误 / 安装结果。
+		 * 展开后的技能明细：这份清单里每个技能**在可用仓库里的状态** + 恢复上一版。
 		 *
-		 * 每个仓库各持一份明细与勾选：勾选不会因为展开另一个仓库、或刷新列表而丢。
+		 * 这里没有勾选/安装：订阅的落点就是可用仓库（拉取时自动同步），技能到不到
+		 * 技能根由角色决定（见「角色」页签）。所以这一块只回答「库里有没有、是不是最新」。
 		 */
 		function RepoSkills(props) {
 			const t = props.t
 			const detail = props.detail && typeof props.detail === 'object' ? props.detail : {}
-			const picked = props.picked && typeof props.picked === 'object' ? props.picked : {}
 			const skills = detail.data && Array.isArray(detail.data.skills) ? detail.data.skills : []
-			const pickedNames = skills.filter((skill) => picked[skill.name] === true).map((skill) => skill.name)
-			const installResult = props.installResult && typeof props.installResult === 'object' ? props.installResult : null
-			const installedRows = installResult && Array.isArray(installResult.installed) ? installResult.installed : []
-			const skippedRows = installResult && Array.isArray(installResult.skipped) ? installResult.skipped : []
 			return h(
 				'div',
 				{ className: 'sc-repo-body' },
@@ -2312,20 +2141,6 @@ window.__ModuleLoader__.load({
 					{ className: 'sc-bar' },
 					h('span', { className: 'sc-group-title' }, t('repos.detailTitle')),
 					h('span', { className: 'sc-hint' }, t('repos.skillCount', { count: skills.length })),
-					h('span', { className: 'sc-spacer' }),
-					h('span', { className: 'sc-hint' }, t('repos.selected', { count: pickedNames.length })),
-					h(UiButton, { variant: 'ghost', size: 'sm', disabled: props.busy || skills.length === 0, onClick: props.onSelectAll, children: t('repos.selectAll') }),
-					h(UiButton, { variant: 'ghost', size: 'sm', disabled: props.busy || pickedNames.length === 0, onClick: props.onClearPicked, children: t('repos.selectNone') }),
-					h(UiButton, { variant: 'primary', disabled: props.busy || pickedNames.length === 0, icon: UiIcon('IconDownloadOutline16', 14), onClick: props.onInstall, children: t('repos.install') }),
-				),
-				// 安装目标：全局技能根（缺省）或当前项目技能根。缺省 global 时这一行照样显示，只是高亮在全局。
-				h(
-					'div',
-					{ className: 'sc-bar' },
-					h('span', { className: 'sc-hint' }, t('repos.installTarget')),
-					h(UiPill, { active: props.installTarget !== 'project', onClick: () => props.onInstallTarget('global'), children: t('repos.targetGlobal') }),
-					h(UiPill, { active: props.installTarget === 'project', onClick: () => props.onInstallTarget('project'), children: t('repos.targetProject') }),
-					props.installTarget === 'project' ? h('span', { className: 'sc-hint' }, t('repos.targetProjectHint')) : null,
 				),
 				detail.error ? h('div', { className: 'sc-err', role: 'alert' }, detail.error) : null,
 				detail.loading ? h('div', { className: 'sc-hint' }, t('repos.detailLoading')) : null,
@@ -2339,29 +2154,9 @@ window.__ModuleLoader__.load({
 									key: skill.sourcePath || skill.name || '',
 									t,
 									skill,
-									selected: picked[skill.name] === true,
 									busy: props.busy,
-									onSelect: props.onTogglePick,
 									onRestore: props.onRestore,
 								}),
-							),
-						)
-					: null,
-				installResult
-					? h(
-							'div',
-							{ className: 'sc-stack' },
-							h('span', { className: 'sc-group-title' }, t('repos.installResult')),
-							installedRows.map((entry, index) =>
-								h(
-									'div',
-									{ key: 'installed-' + index, className: 'sc-ok' },
-									t('repos.installedRow', { name: entry.name, state: t(entry.updated ? 'repos.installedStateUpdated' : 'repos.installedStateNew') }),
-									entry.backup ? h('div', { className: 'sc-hint' }, t('repos.installedBackup', { path: baseName(entry.backup) })) : null,
-								),
-							),
-							skippedRows.map((entry, index) =>
-								h('div', { key: 'skipped-' + index, className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, t('repos.skippedRow', { name: entry.name, reason: entry.reason || '' }))),
 							),
 						)
 					: null,
@@ -2422,18 +2217,17 @@ window.__ModuleLoader__.load({
 			)
 		}
 
-		/** 仓库里的一个技能行：状态 + 本地改动 + 变更文件 + 勾选 + 恢复备份。 */
+		/** 仓库里的一个技能行：**它在可用仓库里的状态** + 恢复上一版。 */
 		function RepoSkillRow(props) {
 			const t = props.t
 			const skill = props.skill || {}
-			const status = typeof skill.status === 'string' ? skill.status : ''
-			const statusKey = STATUS_KEYS[status] || 'repos.skill.invalid'
-			const statusTone = status === 'installed' ? 'success' : status === 'update-available' || status === 'invalid' ? 'warning' : status === 'upstream-deleted' ? 'danger' : 'quiet'
-			const installable = typeof skill.name === 'string' && skill.name !== '' && skill.valid !== false
-			const changed = Array.isArray(skill.changedFiles) ? skill.changedFiles : []
+			const library = skill.library && typeof skill.library === 'object' ? skill.library : {}
+			const state = typeof library.state === 'string' ? library.state : 'missing'
+			const stateKey = LIBRARY_KEYS[state] || 'repos.library.missing'
+			const stateTone = state === 'synced' ? 'success' : state === 'outdated' || state === 'modified' ? 'warning' : state === 'orphan' ? 'danger' : 'quiet'
 			return h(
 				'div',
-				{ className: 'sc-row' },
+				{ className: 'sc-row', 'data-library-state': state },
 				h(
 					'div',
 					{ className: 'sc-row-main' },
@@ -2441,12 +2235,8 @@ window.__ModuleLoader__.load({
 						'div',
 						{ className: 'sc-row-head' },
 						h('span', { className: 'sc-name' }, skill.name || skill.sourcePath || '—'),
-						h(UiTag, { tone: statusTone }, t(statusKey)),
-						skill.localModified ? h(UiTag, { tone: 'warning' }, t('repos.localModified')) : null,
-						// conflict 与 localModified 是两个正交标记：前者是「本地有同名技能但不属于本订阅」，
-						// 后者是「本地内容与安装快照不一致」。requiresConfirm 是两者的并集，不能拿来当标签。
-						skill.conflict === true ? h(UiTag, { tone: 'danger' }, t('repos.conflict')) : null,
-						status === 'upstream-deleted' ? h(UiTag, { tone: 'quiet' }, skill.sourcePath || '') : null,
+						h(UiTag, { tone: stateTone }, t(stateKey)),
+						state === 'orphan' ? h(UiTag, { tone: 'quiet' }, skill.sourcePath || '') : null,
 					),
 					h('span', { className: 'sc-desc' }, skill.description || t('skills.noDescription')),
 					h(
@@ -2455,32 +2245,10 @@ window.__ModuleLoader__.load({
 						skill.sourcePath || '',
 						typeof skill.files === 'number' ? ' · ' + t('repos.meta', { files: skill.files, size: bytesText(skill.bytes) }) : '',
 					),
-					changed.length > 0
-						? h(
-								'div',
-								{ className: 'sc-changed' },
-								h('span', { className: 'sc-hint' }, t('repos.changedFiles') + '：'),
-								changed.map((entry, index) =>
-									h(
-										'span',
-										{ key: 'change-' + index, className: 'sc-change', 'data-change': entry && entry.change ? entry.change : 'unknown', title: entry && entry.path ? entry.path : '' },
-										changeMark(t, entry && entry.change) + ' ' + (entry && entry.path ? entry.path : ''),
-									),
-								),
-							)
-						: null,
 				),
 				h(
 					'div',
 					{ className: 'sc-actions-col sc-row-actions' },
-					installable
-						? h(UiSwitch, {
-								checked: props.selected === true,
-								disabled: props.busy,
-								label: t('skills.toggleAria', { name: skill.name }),
-								onChange: (next) => props.onSelect(skill, next),
-							})
-						: h(UiTag, { tone: 'danger' }, t('repos.skill.invalid')),
 					// 只有真的属于本订阅（不是本地同名冲突）的已安装技能才谈得上「恢复上一版」。
 					skill.installedPath && skill.conflict !== true
 						? h(UiButton, {
@@ -2496,12 +2264,13 @@ window.__ModuleLoader__.load({
 			)
 		}
 
-		/** 上游状态 → 字典键。 */
-		const STATUS_KEYS = {
-			'not-installed': 'repos.skill.not-installed',
-			installed: 'repos.skill.installed',
-			'update-available': 'repos.skill.update-available',
-			'upstream-deleted': 'repos.skill.upstream-deleted',
+		/** 「这个技能在可用仓库里是什么状态」→ 字典键（宿主 `detail` 里的 `library.state`）。 */
+		const LIBRARY_KEYS = {
+			synced: 'repos.library.synced',
+			outdated: 'repos.library.outdated',
+			missing: 'repos.library.missing',
+			modified: 'repos.library.modified',
+			orphan: 'repos.library.orphan',
 		}
 
 		/**
@@ -2519,14 +2288,6 @@ window.__ModuleLoader__.load({
 			return lastFetch !== null && !lastFetch.error ? 'repos.detailNoSkills' : 'repos.detailEmpty'
 		}
 
-		/** 变更类型 → 单字标记（表头里有完整说明，这里只做紧凑标记）。 */
-		function changeMark(t, change) {
-			if (change === 'added') return t('repos.change.added')
-			if (change === 'removed') return t('repos.change.removed')
-			if (change === 'modified') return t('repos.change.modified')
-			return t('repos.change.unknown')
-		}
-
 		/** 数字兜底。 */
 		function numberOr(value, fallback) {
 			return typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -2541,22 +2302,14 @@ window.__ModuleLoader__.load({
 		function ReposPanel(props) {
 			const t = props.t
 			const sessionId = props.sessionId
-			// 「装到项目」的落点：项目来自 section 的共享上下文，安装行要就地显示它。
-			const project = props.project
 			const [list, setList] = react.useState({ loading: true, data: null, error: null })
 			// 展开状态 `id -> true`：每个订阅各自独立，可以同时展开好几个。
 			const [open, setOpen] = react.useState({})
 			// 明细 `id -> { loading, data, error }`：展开哪个仓库就只读那个仓库。
 			const [details, setDetails] = react.useState({})
-			// 勾选 `id -> { 技能名: true }`：展开另一个仓库不该把这里的勾选弄丢。
-			const [picked, setPicked] = react.useState({})
 			const [busy, setBusy] = react.useState(false)
 			const [notice, setNotice] = react.useState(null)
 			const [actionFail, setActionFail] = react.useState(null)
-			// 安装结果 `id -> { installed, skipped }`，跟着它所属的那个仓库显示。
-			const [installResult, setInstallResult] = react.useState({})
-			// 安装目标：全局技能根（缺省）还是当前项目技能根。
-			const [installTarget, setInstallTarget] = react.useState('global')
 			const [form, setForm] = react.useState({ url: '', ref: '', subdirectory: '' })
 			// 正在编辑的订阅：`id === ''` 表示没有行处于编辑态。
 			const [edit, setEdit] = react.useState({ id: '', form: { ref: '', subdirectory: '' } })
@@ -2601,13 +2354,11 @@ window.__ModuleLoader__.load({
 
 			react.useEffect(() => {
 				// 会话一换，整页的身份就换了：把「自动展开过没有」和挂在各个仓库上的
-				// 展开 / 明细 / 勾选 / 结果全部复位，免得把上一个工作区的状态带过来。
+				// 展开 / 明细全部复位，免得把上一个工作区的状态带过来。
 				// 这里不拉取：刷新也要重读列表，但绝不能顺手复位（见下面那条 effect）。
 				autoOpen.current = false
 				setOpen({})
 				setDetails({})
-				setPicked({})
-				setInstallResult({})
 				setEdit({ id: '', form: { ref: '', subdirectory: '' } })
 				// eslint-disable-next-line react-hooks/exhaustive-deps -- 只在会话变化时复位一次；拉取交给下面那条 effect。
 			}, [sessionId])
@@ -2638,18 +2389,6 @@ window.__ModuleLoader__.load({
 			const repositories = list.data && Array.isArray(list.data.repositories) ? list.data.repositories : []
 			const openedCount = Object.keys(open).filter((id) => open[id] === true).length
 
-			/** 某个订阅当前的技能清单（明细没到就是空数组）。 */
-			const skillsOf = (id) => {
-				const entry = details[id]
-				return entry && entry.data && Array.isArray(entry.data.skills) ? entry.data.skills : []
-			}
-
-			/** 某个订阅当前勾中的技能名（按清单过滤，避免留下已经消失的名字）。 */
-			const pickedNamesOf = (id) => {
-				const marks = picked[id] && typeof picked[id] === 'object' ? picked[id] : {}
-				return skillsOf(id).filter((skill) => marks[skill.name] === true).map((skill) => skill.name)
-			}
-
 			const run = (fn) => {
 				setBusy(true)
 				setActionFail(null)
@@ -2674,22 +2413,14 @@ window.__ModuleLoader__.load({
 					return undefined
 				}
 				setOpen((previous) => ({ ...previous, [id]: true }))
-				// 上一轮的安装结果跟着它那次操作结束，重新展开时不该继续挂着。
-				setInstallResult((previous) => {
-					if (!(id in previous)) return previous
-					const next = { ...previous }
-					delete next[id]
-					return next
-				})
 				return loadDetail(id)
 			}
 
 			const collapseAll = () => {
 				setOpen({})
-				setInstallResult({})
 			}
 
-			/** 订阅没了：把挂在它身上的展开 / 明细 / 勾选 / 结果一并清掉，避免留下孤儿状态。 */
+			/** 订阅没了：把挂在它身上的展开 / 明细一并清掉，避免留下孤儿状态。 */
 			const forgetRepo = (id) => {
 				const drop = (previous) => {
 					if (!(id in previous)) return previous
@@ -2699,48 +2430,28 @@ window.__ModuleLoader__.load({
 				}
 				setOpen(drop)
 				setDetails(drop)
-				setPicked(drop)
-				setInstallResult(drop)
 				delete detailTokens.current[id]
 			}
 
 			/**
-			 * 「拉取最新」——用户点名要的那个手动动作。只刷新远端清单；
-			 * 宿主不碰本地技能文件，界面也不替用户顺手安装。
+			 * 「拉取最新」——用户点名要的那个手动动作。刷新远端清单，并**顺手同步进可用
+			 * 仓库**：订阅的落点就是库（角色候选的唯一来源），面板上不再有单独的同步按钮。
+			 *
+			 * 拉取成功但同步有跳过项（多半是库里那份被本地改过）时不推翻回执：把原因摊开。
 			 */
 			const fetchLatest = (repo) =>
 				run(() =>
 					apiPost('/repositories/fetch', { id: repo.id }, sessionId).then((data) => {
-						setNotice(t('repos.fetchDone', { id: repo.id }))
+						const sync = data && data.sync && typeof data.sync === 'object' ? data.sync : null
+						const synced = sync && Array.isArray(sync.synced) ? sync.synced.length : 0
+						const unchanged = sync && Array.isArray(sync.unchanged) ? sync.unchanged.length : 0
+						const skipped = sync && Array.isArray(sync.skipped) ? sync.skipped : []
+						setNotice(sync === null ? t('repos.fetchDone', { id: repo.id }) : t('repos.fetchDone', { id: repo.id }) + ' ' + t('repos.syncDone', { updated: synced, unchanged, skipped: skipped.length }))
+						if (data && data.syncError) setActionFail(t('repos.syncFailed') + '\n' + String(data.syncError))
+						if (skipped.length > 0) setActionFail(t('repos.syncFailed') + '\n' + skipped.map((item) => t('repos.skippedRow', { name: item.name, reason: item.reason || '' })).join('\n'))
 						setOpen((previous) => ({ ...previous, [repo.id]: true }))
-						setPicked((previous) => ({ ...previous, [repo.id]: {} }))
 						setDetails((previous) => ({ ...previous, [repo.id]: { loading: false, data, error: null } }))
 						return loadList()
-					}),
-				)
-
-			/**
-			 * 「同步到可用仓库」——手动批量：把这份清单里能用的技能整份同步进
-			 * `<DSH_HOME>/skill-console/library`，也就是角色挑选技能的池子。
-			 *
-			 * 不带 `withProject`：可用仓库是全局的，一个库服务所有工作区。
-			 * 不做二次确认弹窗（批量动作要一次点完）；本地被改过的项默认跳过，
-			 * 宿主在回执里逐名说明原因。
-			 */
-			const syncLibrary = (repo) =>
-				run(() =>
-					apiPost('/repositories/sync', { id: repo.id }, sessionId).then((data) => {
-						const updated = Array.isArray(data.synced) ? data.synced.length : 0
-						const unchanged = Array.isArray(data.unchanged) ? data.unchanged.length : 0
-						const skipped = Array.isArray(data.skipped) ? data.skipped.length : 0
-						setNotice(t('repos.syncDone', { updated, unchanged, skipped }))
-						return loadList().then((dataAfter) => {
-							// 有跳过项时把原因摊开（多半是「本地改过」或「清单里没有」）。
-							if (skipped === 0) return dataAfter
-							const reasons = data.skipped.map((item) => `${item.name}：${item.reason}`).join('\n')
-							setActionFail(t('repos.syncFailed') + '\n' + reasons)
-							return dataAfter
-						})
 					}),
 				)
 
@@ -2760,12 +2471,6 @@ window.__ModuleLoader__.load({
 			const startEdit = (repo) => {
 				setNotice(null)
 				setActionFail(null)
-				setInstallResult((previous) => {
-					if (!(repo.id in previous)) return previous
-					const next = { ...previous }
-					delete next[repo.id]
-					return next
-				})
 				setEdit({ id: repo.id, form: { ref: repo.ref || '', subdirectory: repo.subdirectory || '' } })
 			}
 
@@ -2782,7 +2487,6 @@ window.__ModuleLoader__.load({
 						setNotice(t(data && data.changed === false ? 'repos.editUnchanged' : 'repos.edited', { id }))
 						if (data && data.fetchError) setActionFail(t('repos.editFetchError', { error: String(data.fetchError) }))
 						cancelEdit()
-						setPicked((previous) => ({ ...previous, [id]: {} }))
 						if (data && data.repository) setDetails((previous) => ({ ...previous, [id]: { loading: false, data: { repository: data.repository, skills: data.skills || [] }, error: null } }))
 						return loadList()
 					}),
@@ -2798,62 +2502,11 @@ window.__ModuleLoader__.load({
 						// 刚加的订阅直接展开：用户添加它就是为了看里面有什么技能。
 						if (added !== '') {
 							setOpen((previous) => ({ ...previous, [added]: true }))
-							setPicked((previous) => ({ ...previous, [added]: {} }))
 							setDetails((previous) => ({ ...previous, [added]: { loading: false, data: { repository: data.repository, skills: data.skills || [] }, error: null } }))
 						}
 						return loadList()
 					}),
 				)
-
-			const togglePick = (id, skill, next) => {
-				if (typeof skill.name !== 'string' || skill.name === '') return
-				setPicked((previous) => ({ ...previous, [id]: { ...(previous[id] || {}), [skill.name]: next } }))
-			}
-
-			const selectAll = (id) => {
-				const next = {}
-				for (const skill of skillsOf(id)) {
-					if (typeof skill.name === 'string' && skill.name !== '' && skill.valid !== false && skill.status !== 'installed' && skill.status !== 'upstream-deleted') {
-						next[skill.name] = true
-					}
-				}
-				setPicked((previous) => ({ ...previous, [id]: next }))
-			}
-
-			const clearPicked = (id) => setPicked((previous) => ({ ...previous, [id]: {} }))
-
-			/** 安装/更新选中：有本地改动就先让用户确认，再带 confirm:true 重发。 */
-			const install = (id) => {
-				const names = pickedNamesOf(id)
-				if (names.length === 0) {
-					setActionFail(t('repos.installNone'))
-					return undefined
-				}
-				const marks = picked[id] && typeof picked[id] === 'object' ? picked[id] : {}
-				const needsConfirm = skillsOf(id).filter((skill) => marks[skill.name] === true && skill.requiresConfirm === true)
-				let confirm = false
-				if (needsConfirm.length > 0) {
-					const listed = needsConfirm.map((skill) => skill.name).join('、')
-					if (!askConfirm(t('repos.confirmOverwrite', { names: listed }))) return undefined
-					confirm = true
-				}
-				return run(() =>
-					apiPost('/repositories/install', withProject(project, { id, skills: names, confirm, target: installTarget }), sessionId).then((data) => {
-						setInstallResult((previous) => ({
-							...previous,
-							[id]: {
-								installed: data && Array.isArray(data.installed) ? data.installed : [],
-								skipped: data && Array.isArray(data.skipped) ? data.skipped : [],
-							},
-						}))
-						setNotice(t('repos.installDone', { count: names.length }))
-						setPicked((previous) => ({ ...previous, [id]: {} }))
-						// 技能目录确实变了：让技能标签页也跟着重读。
-						bumpCatalog()
-						return loadDetail(id).then(() => loadList())
-					}),
-				)
-			}
 
 			/**
 			 * 恢复上一版：先问宿主有哪些备份，用最近一次做确认提示，用户点了才写。
@@ -2914,24 +2567,14 @@ window.__ModuleLoader__.load({
 									editing: edit.id === repo.id,
 									editForm: edit.form,
 									detail: details[repo.id],
-									picked: picked[repo.id],
-									installResult: installResult[repo.id],
 									emptyDetailKey: emptyDetailKeyFor(repo),
-									installTarget,
-									project,
-									onInstallTarget: setInstallTarget,
 									onToggle: toggleRepo,
 									onFetch: fetchLatest,
-									onSync: syncLibrary,
 									onRemove: removeRepo,
 									onEdit: startEdit,
 									onEditField: (key, value) => setEdit((previous) => ({ ...previous, form: { ...previous.form, [key]: value } })),
 									onEditSave: saveEdit,
 									onEditCancel: cancelEdit,
-									onTogglePick: (skill, next) => togglePick(repo.id, skill, next),
-									onSelectAll: () => selectAll(repo.id),
-									onClearPicked: () => clearPicked(repo.id),
-									onInstall: () => install(repo.id),
 									onRestore: (skill) => restore(repo.id, skill),
 								}),
 							),
@@ -3463,6 +3106,7 @@ window.__ModuleLoader__.load({
 		exports.sourceRepoOf = sourceRepoOf
 		exports.SkillRow = SkillRow
 		exports.SkillGroup = SkillGroup
+		exports.RepoSkillRow = RepoSkillRow
 		exports.groupSkillsByRepo = groupSkillsByRepo
 		exports.SkillRepoGroup = SkillRepoGroup
 		exports.RepoRow = RepoRow
@@ -3487,7 +3131,6 @@ window.__ModuleLoader__.load({
 		exports.collisionRowOf = collisionRowOf
 		exports.SkillDetail = SkillDetail
 		exports.missingSkillsOf = missingSkillsOf
-		exports.batchItems = batchItems
 		return module.exports
 	},
 })
