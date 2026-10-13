@@ -103,7 +103,7 @@ DSH_HOME="$HOME/Library/Application Support/dsh-desktop/harness" \
 node skill-console/dsh-plugin/test/contract.mjs
 ```
 
-覆盖 738 项，守的是「重启之前就能确定」的事：
+覆盖 744 项，守的是「重启之前就能确定」的事：
 
 - **四份身份标识一致**：`package.json` 包名 / `cordis.patch.yml` insert id / 宿主 `name` / 客户端 bundle id。对不上时插件会**静默不加载**（DSH 不报错），所以必须机器守。
 - **扫描与启停**：发现规则（只扫一层、大小写敏感、跳过 `.`）、`.disabled` 语义、同名覆盖、软链接只读、越界拒绝、409 冲突、批量逐项结果。

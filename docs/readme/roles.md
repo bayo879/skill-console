@@ -219,7 +219,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ## 9. 测试覆盖（沿用现有三层）
 
-**`test/contract.mjs`（离线；0.6.0 收尾时全量 738 项）**
+**`test/contract.mjs`（离线；0.6.0 收尾时全量 744 项）**
 
 - 角色 CRUD；`roles.json` 损坏时拒绝写入且原文件不动；角色数/技能数上限；重名 409；名字非法 400。
 - `planRole` 纯函数：`copy` / `localKept` / `missing` / `disable` / 软链进 `skipped` / 同名双副本一起处置 / 连切两次第二次全 `noop` / `stats.total = copy+enable+disable+noop+skipped` 且 `localKept` 不计入。
