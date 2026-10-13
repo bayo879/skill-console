@@ -1836,9 +1836,13 @@ window.__ModuleLoader__.load({
 
 			// 换工作区时把上一轮的结果提示收起来（重拉目录时**不能**清，
 			// 否则启停成功后刚显示的 takeover 提示会被紧随其后的刷新抹掉）。
+			// 折叠覆盖层也一起清：它是**本次挂载的内存态、键是裸键**（每个工作区一模一样），
+			// 不清就会把 A 的收起状态漏给 B；在 B 上点一下展开，还会把 A 存在 sessionStorage
+			// 里的记忆静默写成展开。长期记忆只认存储（键带工作区），内存层换工作区即作废。
 			react.useEffect(() => {
 				setNotice(null)
 				setActionFail(null)
+				setCollapsedRepos({})
 			}, [project.active])
 
 			const loadDetail = (skill) => {
@@ -1944,8 +1948,9 @@ window.__ModuleLoader__.load({
 			const collisions = catalog.data && Array.isArray(catalog.data.collisions) ? catalog.data.collisions : []
 			const warnings = catalog.data && Array.isArray(catalog.data.warnings) ? catalog.data.warnings : []
 			const roots = catalog.data && Array.isArray(catalog.data.roots) ? catalog.data.roots : []
-			// 折叠记忆：存储里读到的（记忆）+ 本次挂载的覆盖层（用户刚点的那一下优先）。
-			// 键按「工作区 + 根」算，换工作区就换一批键——A 工作区收起过的仓库不影响 B。
+			// 折叠记忆：存储里读到的（记忆，键按「工作区 + 根」算，所以 A 的收起不会影响 B）
+			// + 本次挂载的覆盖层（键是裸键，用户刚点的那一下优先）。
+			// 覆盖层只活这一次挂载：换工作区的 effect 会把它清空，否则裸键会跨工作区串味。
 			const collapseKeys = collapseKeysOf(roots)
 			const collapsedReposView = { ...collapsedOf(storageOf(), project.active, collapseKeys), ...collapsedRepos }
 			const toggleRepo = (key) => {
@@ -3447,6 +3452,7 @@ window.__ModuleLoader__.load({
 		exports.collapsedOf = collapsedOf
 		exports.persistCollapsed = persistCollapsed
 		exports.collisionOf = collisionOf
+		exports.collisionRowOf = collisionRowOf
 		exports.SkillDetail = SkillDetail
 		exports.missingSkillsOf = missingSkillsOf
 		exports.batchItems = batchItems

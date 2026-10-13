@@ -2995,10 +2995,44 @@ try {
 }
 check('存储不可用时静默降级（不抛）', degradedQuiet && typeof exposed.collapsedOf === 'function' && typeof exposed.persistCollapsed === 'function')
 
+// §4-4 覆盖层是**本次挂载**的内存态、键是裸键（每个工作区一模一样）：换工作区必须清掉它。
+// 不清的后果是①A 收起的根/仓库漏到 B，②在 B 上点展开会把 A 存在 sessionStorage 里的记忆
+// 静默写成展开（覆盖层压过存储）。react 替身跑不了 effect，所以这条与上面「仓库页签订阅节顶
+// 刷新」同路数——**源码级断言**：换工作区那条 effect（deps 是标量 project.active，不违反约束 4）
+// 里必须出现 setCollapsedRepos({})。渲染级 RED 不存在，靠下面报告里的 mutation 证非空洞。
+check('换工作区的 effect 会清掉折叠覆盖层（源码级，防跨工作区串味）', (() => {
+	const from = clientSource.indexOf('function SkillsPanel')
+	const to = clientSource.indexOf('function ReposPanel')
+	if (from < 0 || to <= from) return false
+	const region = clientSource.slice(from, to)
+	const blocks = []
+	let at = region.indexOf('}, [project.active])')
+	while (at >= 0) {
+		const start = region.lastIndexOf('react.useEffect(() => {', at)
+		if (start >= 0) blocks.push(region.slice(start, at))
+		at = region.indexOf('}, [project.active])', at + 1)
+	}
+	return blocks.length > 0 && blocks.some((body) => body.includes('setCollapsedRepos({})'))
+})())
+
 // §4-5 技能详情里的优先级：命中 / 被谁盖住。
 check('导出 collisionOf 供契约测试直接打', typeof exposed.collisionOf === 'function')
 const collisionsFixture = [{ name: 'dup', winner: { root: 'user-dsh', path: '/g/dup/SKILL.md' }, shadowed: [{ root: 'project-dsh', path: '/p/dup/SKILL.md' }] }]
 check('按技能名取到冲突条目', collisionOfOf(collisionsFixture, 'dup')?.winner?.root === 'user-dsh' && collisionOfOf(collisionsFixture, 'other') === null)
+// 光能取到条目不够：winner / shadowed 到「标签」的**映射本身**也要断言。
+// 喂真实的 /catalog 结构（roots 带 key + label，collisions 条目带 winner / shadowed），
+// 标签必须从这份 data 里翻出来，而不是自造字符串。
+const collisionRowOfOf = fnOr('collisionRowOf', () => null)
+const collisionData = {
+	roots: [
+		{ key: 'user-dsh', label: '全局 DSH' },
+		{ key: 'project-dsh', label: '/x/proj' },
+		{ key: 'workspace-dsh', label: '/x/other' },
+	],
+	collisions: [{ name: 'dup', winner: { root: 'user-dsh', path: '/g/dup/SKILL.md' }, shadowed: [{ root: 'project-dsh', path: '/p/dup/SKILL.md' }, { root: 'workspace-dsh', path: '/o/dup/SKILL.md' }] }],
+}
+const collisionRow = collisionRowOfOf(tStub, collisionData, 'dup')
+check('导出 collisionRowOf，且 winner 与 shadowed 两侧都从 roots 翻成标签（无冲突时不编造行）', typeof exposed.collisionRowOf === 'function' && collisionRow !== null && collisionRow.name === 'dup' && collisionRow.winner === '全局 DSH' && collisionRow.shadowed === '/x/proj、/x/other' && collisionRowOfOf(tStub, collisionData, 'other') === null && collisionRowOfOf(tStub, null, 'dup') === null, JSON.stringify(collisionRow))
 check('导出 SkillDetail 供契约测试直接渲染', typeof exposed.SkillDetail === 'function')
 const detailTree = SkillDetailOf({ t: tStub, state: { loading: false, error: null, data: { name: 'dup', enabled: true, frontmatter: '', body: '' } }, collision: { name: 'dup', winner: '全局技能', shadowed: '项目技能' }, onClose: () => {} })
 const detailTexts = collectTexts(detailTree).join('|')
