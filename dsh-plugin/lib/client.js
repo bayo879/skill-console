@@ -1283,7 +1283,8 @@ window.__ModuleLoader__.load({
 		 * 同一个东西在三个地方各出现一次，用户每换个页签就得重新找它在哪。
 		 *
 		 * 回落必须在**这里**说一次：解析不到会话的工作区、或这个目录不在工作区列表里，
-		 * 都直说到底在用哪个目录，绝不装作没事。
+		 * 都直说到底在用哪个目录，绝不装作没事。用户自己挑过工作区之后就不再播报——
+		 * 那时候写请求带的是他挑的那个，回落只解释了「默认是哪个目录」。
 		 */
 		function WorkspaceBar(props) {
 			const t = props.t
@@ -1295,7 +1296,7 @@ window.__ModuleLoader__.load({
 				h('span', { className: 'sc-hint' }, t('skills.project')),
 				h(ProjectSelect, { t, context }),
 				context.loading ? h('span', { className: 'sc-hint' }, t('common.loading')) : null,
-				selected !== null && selected.fallback === true && context.sessionOption === ''
+				selected !== null && context.picked === null && selected.fallback === true && context.sessionOption === ''
 					? h('span', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, t(context.selectedPath === '' ? 'skills.projectFallbackUnknown' : 'skills.projectFallback', { name: context.activeName })))
 					: null,
 				context.sessionOption !== ''
@@ -3104,6 +3105,10 @@ window.__ModuleLoader__.load({
 			const t = props.t
 			// 角色是「一个项目的目标态」：项目来自 section 的共享上下文，切换/取消都作用于它。
 			const project = props.project
+			// 节顶那份唯一的刷新推的是 catalogRevisionStore（client.js:779-782）：这里必须订阅，
+			// 否则在角色页签点刷新只会重拉 /state，角色列表不动。这条 effect 只重拉、不复位草稿，
+			// 所以把版本号放进依赖是安全的（与仓库页签的两条 effect 不同）。
+			const revision = useStore(catalogRevisionStore)
 			const [data, setData] = react.useState(null)
 			const [draft, setDraft] = react.useState(null)
 			const [busy, setBusy] = react.useState(false)
@@ -3120,7 +3125,7 @@ window.__ModuleLoader__.load({
 					})
 					.catch((failure) => setError(actionError(t, failure)))
 					.then(() => setBusy(false))
-			}, [props.sessionId, project.active, t])
+			}, [props.sessionId, project.active, t, revision])
 
 			react.useEffect(() => {
 				load()

@@ -1898,6 +1898,16 @@ host.apply({
 const nonArrayRegistryState = await callRouteOrReport(nonArrayRegistryRoute, { path: '/api/skill-console/state' })
 check('注册表 list() 返回非数组 → /state 200 且退回活着的会话', nonArrayRegistryState.status === 200 && nonArrayRegistryState.json.data?.workspacesFrom === 'sessions', `${nonArrayRegistryState.status} ${nonArrayRegistryState.threw ?? JSON.stringify(nonArrayRegistryState.json?.data?.workspacesFrom)}`)
 
+// ④ 注册表里同一个目录出现两次（身份就是路径）：只留第一条，否则下拉里会冒出两个同值选项。
+let dupRegistryRoute = null
+host.apply({
+	...pluginCtx,
+	get: (serviceName) => (serviceName === 'workspaceRegistry' ? { list: () => [{ id: 'dup-1', path: projectDir, title: '重名' }, { id: 'dup-2', path: projectDir, title: '重名' }] } : undefined),
+	webServer: { register: (route) => { dupRegistryRoute = route; return () => {} } },
+})
+const dupRegistryState = await callRouteOrReport(dupRegistryRoute, { path: '/api/skill-console/state' })
+check('注册表里同一个目录出现两次 → /state 只留一条（工作区身份就是目录路径）', dupRegistryState.status === 200 && dupRegistryState.json.data?.workspaces?.length === 1 && dupRegistryState.json.data?.workspaces?.[0]?.path === projectDir, `${dupRegistryState.status} ${JSON.stringify(dupRegistryState.json.data?.workspaces?.map((entry) => entry.path))}`)
+
 // ── 4g. 技能目录缺省就是全貌（0.6.0）────────────────────────────────────
 
 section('技能目录：缺省就是一个工作区的全貌（全局 + 项目两个源）')
@@ -2902,6 +2912,20 @@ check('仓库页签订阅节顶刷新，靠独立 effect 重拉列表且不碰�
 	return ['setInstallResult', 'setPicked', 'setOpen', 'setDetails', 'autoOpen.current'].every((name) => !reload.includes(name))
 })())
 
+// 同一份刷新在角色页签也必须真的重拉角色列表。与仓库页签不同，这条回调只重拉、
+// 不复位任何状态（角色草稿是用户正在编辑的东西），所以版本号可以直接进依赖。
+check('角色页签订阅节顶刷新（否则刷新只重拉 /state，角色列表不动）', (() => {
+	const region = clientSource.slice(clientSource.indexOf('function RolesPanel'), clientSource.indexOf('function SkillConsoleSection'))
+	if (!region.includes('useStore(catalogRevisionStore)')) return false
+	const at = region.indexOf('const load = react.useCallback')
+	if (at < 0) return false
+	const depsAt = region.indexOf('}, [', at)
+	if (depsAt < 0) return false
+	const deps = region.slice(depsAt, region.indexOf(']', depsAt))
+	if (!deps.includes('revision')) return false
+	return !region.slice(at, depsAt).includes('setDraft(')
+})())
+
 // 纯组件可以真渲染：工作区条 + 下拉必须带 aria、选中当前工作区、列出全部选项。
 check('导出 WorkspaceBar 供契约测试直接渲染', typeof exposed.WorkspaceBar === 'function')
 const markT = (key, params) => (params === undefined ? `«${key}»` : `«${key}:${JSON.stringify(params)}»`)
@@ -2921,6 +2945,10 @@ check('下拉列出全部工作区，标签来自标题', collectTexts(barSelect
 check('工作区条里有刷新按钮', collect(barTree, (element) => element.props !== undefined && element.props.children === '«common.refresh»').length === 1)
 const badBarTree = barOf(ctxFor({ loading: false, error: null, data: { ...twoWorkspaces.data, selected: { ...twoWorkspaces.data.selected, fallback: true } } }, null, 's-1'))
 check('宿主回落时必须直说', collectTexts(badBarTree).some((text) => text.startsWith('«skills.projectFallback')))
+// 用户自己挑过之后，写请求带的就是他挑的那个：这时候再播报「会话解析不到、暂用某个目录」
+// 会把标签上那个工作区名挂在一条不再成立的解释上。
+const pickedFallbackBarTree = barOf(ctxFor({ loading: false, error: null, data: { ...twoWorkspaces.data, selected: { ...twoWorkspaces.data.selected, fallback: true } } }, { value: '/Users/x/code/proj-b', root: '/Users/x/code/proj-b' }, 's-1'))
+check('用户自己挑过工作区后，回落播报收起来', !collectTexts(pickedFallbackBarTree).some((text) => text.startsWith('«skills.projectFallback')) && barSelectOf(pickedFallbackBarTree).props.value === '/Users/x/code/proj-b', JSON.stringify(collectTexts(pickedFallbackBarTree)))
 const looseBarTree = barOf(ctxFor(unregisteredState, null, 's-9'))
 check('当前目录不在列表里时也直说', collectTexts(looseBarTree).some((text) => text.startsWith('«workspace.session')))
 const emptyBarTree = barOf(ctxFor({ loading: true, data: null, error: null }, null, ''))

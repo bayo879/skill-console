@@ -161,9 +161,14 @@ export function workspacesOf(ctx) {
 		// 非数组（老版本 / 被改坏的实现）等同注册表不可用：退回会话，别让 `/state` 500。
 		if (Array.isArray(raw)) {
 			const list = []
+			// 工作区的身份就是绝对目录路径：注册表里同一个目录出现两次时只留第一条。
+			// 不去重的话下拉里会冒出两个同值选项（`ProjectSelect` 的 option key 就是路径）。
+			const seen = new Set()
 			for (const item of raw) {
 				const workspacePath = typeof item?.path === 'string' ? item.path : ''
 				if (workspacePath === '') continue
+				if (seen.has(workspacePath)) continue
+				seen.add(workspacePath)
 				const workspaceId = item?.id ?? item?.workspaceId
 				list.push({
 					workspaceId: workspaceId === undefined || workspaceId === null ? workspacePath : String(workspaceId),
