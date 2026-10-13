@@ -14,6 +14,7 @@
  * 备份失败一律 500 `error.delete.backup`，一个字节都不改；路径语义与围栏仍在 `roots.js`。
  */
 
+import { existsSync } from 'node:fs'
 import { basename } from 'node:path'
 
 import { copySkillIntoRoot, findCollisions, planRemoval, readSkill, removeSkill, scanRoot, toggleSkill } from './roots.js'
@@ -131,6 +132,33 @@ export function createRouteHandlers(deps) {
 	const librarySkillsOf = () => (libraryDir === '' ? [] : scanRoot(libraryRootOf()).skills)
 
 	/**
+	 * 可用仓库那一块：形状与技能根同块，但**不是**技能根。
+	 *
+	 * 它不进 `findCollisions`（库不参与加载，混进去会造出假冲突），也不进 `roots`：
+	 * 客户端的折叠键 `${root.key}:${group.key}` 照样能用，因为 `key` 是 `library`。
+	 * `exists` 得自己算——根那块的 `exists` 是 `resolveRoots()` 给的。
+	 */
+	const libraryBlockOf = (project) => {
+		if (libraryDir === '') return { key: 'library', label: '可用仓库', exists: false, skills: [], warning: null }
+		const root = libraryRootOf()
+		const { skills, warning } = scanRoot(root)
+		const installed = repositories.libraryIndex()
+		const flags = sourceFlagsOf(project)
+		return {
+			key: root.key,
+			label: root.label,
+			exists: existsSync(libraryDir),
+			skills: skills.map((skill) => ({
+				...skill,
+				installed: installed.get(skill.name) ?? null,
+				inRole: flags.inRole.has(skill.name),
+				inLibrary: true,
+			})),
+			warning: warning ?? null,
+		}
+	}
+
+	/**
 	 * 技能的两个「来源」标记，技能页签用它决定动作与标签：
 	 * - `inRole`：当前工作区的角色正在管它（角色切换会复制/启停它）→ 不提供「移动到可用仓库」。
 	 * - `inLibrary`：可用仓库里已经有同名技能 → 不必再搬（搬也会被同名拒绝）。
@@ -229,7 +257,16 @@ export function createRouteHandlers(deps) {
 						inLibrary: flags.inLibrary.has(skill.name),
 					})),
 				}))
-			return { scope, project: scope === 'global' ? null : project, roots: rows, collisions: findCollisions(scanned), warnings }
+			// 库只进缺省的「全貌」；显式收窄（global/project）的响应一个字段都不多——
+			// 老调用方与文档里的用例行为不变。
+			return {
+				scope,
+				project: scope === 'global' ? null : project,
+				roots: rows,
+				...(scope === 'all' ? { library: libraryBlockOf(project) } : {}),
+				collisions: findCollisions(scanned),
+				warnings,
+			}
 		},
 
 		async skill(req, url) {

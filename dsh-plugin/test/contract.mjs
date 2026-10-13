@@ -2035,6 +2035,25 @@ const catalogGlobalOnly = await callRouteOrReport(wsRoute, { path: '/api/skill-c
 // 「一个根都没回来」这种最该炸的回归会被判成绿。全局根由 `resolveRoots` 无条件给出，所以这里是 1 条。
 check('scope=global 仍然只回全局（文档/老调用方不破）', catalogGlobalOnly.status === 200 && catalogGlobalOnly.json.data.roots.length === 1 && catalogGlobalOnly.json.data.roots[0].key === 'user-dsh' && catalogGlobalOnly.json.data.roots.every((root) => root.scope === 'global'), JSON.stringify(catalogGlobalOnly.json.data?.roots?.map((root) => root.key)))
 
+// ── 4h. 可用仓库进技能页签（0.9.0）────────────────────────────────────
+section('可用仓库：技能目录里平行多一块（只读分发源）')
+
+// 路由层的 DSH_HOME 是 `home`（contract.mjs:1190），所以库就在它下面。
+const routeLibrary = join(home, 'skill-console', 'library')
+placeSkill(routeLibrary, 'lib-only', true)
+
+const catalogWithLibrary = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog', headers: { 'x-skill-console-session': fakeSession.id } })
+const libraryBlock = catalogWithLibrary.json?.data?.library
+check('缺省 /catalog 平行多回一块 library', libraryBlock?.key === 'library' && libraryBlock.label === '可用仓库' && libraryBlock.exists === true, JSON.stringify(libraryBlock))
+const libRow = (libraryBlock?.skills ?? []).find((skill) => skill.name === 'lib-only')
+check('库行与根内技能同形（root/scope/installed/inRole/inLibrary）', libRow !== undefined && libRow.root === 'library' && libRow.scope === 'global' && 'installed' in libRow && 'inRole' in libRow && 'inLibrary' in libRow && libRow.enabled === true, JSON.stringify(libRow))
+check('手工放进库的技能没有来源（installed 为 null）', libRow?.installed === null, JSON.stringify(libRow?.installed))
+
+const catalogGlobalNoLibrary = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog?scope=global' })
+check('scope=global 的收窄响应里没有 library（老调用方行为不变）', catalogGlobalNoLibrary.status === 200 && catalogGlobalNoLibrary.json?.data?.library === undefined, JSON.stringify(Object.keys(catalogGlobalNoLibrary.json?.data ?? {})))
+const catalogProjectNoLibrary = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog?scope=project' })
+check('scope=project 的收窄响应里也没有 library', catalogProjectNoLibrary.status === 200 && catalogProjectNoLibrary.json?.data?.library === undefined, JSON.stringify(Object.keys(catalogProjectNoLibrary.json?.data ?? {})))
+
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
 section('浏览器半边（模块表 / slot 契约 / 降级）')

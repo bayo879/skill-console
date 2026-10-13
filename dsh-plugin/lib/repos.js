@@ -631,5 +631,31 @@ export function createRepositoryManager(options) {
 			}
 			return index
 		},
+
+		/**
+		 * 技能名 → 库内那份的订阅来源（技能页签与角色候选显示「所属仓库」用）。
+		 *
+		 * 与 `installedIndex()` 分开：那是「装进技能根」的台账（`record.skills`），
+		 * 0.8.0 订阅默认同步之后基本是空的；库的来源只记在 `record.library` 里。
+		 *
+		 * `record.library[name]` 里**没有** owner/name（身份在订阅记录本身），
+		 * 而界面拼「owner/name」恰恰要它，所以两处都取。
+		 */
+		libraryIndex() {
+			const index = new Map()
+			for (const record of store.load().repositories) {
+				for (const [name, snapshot] of Object.entries(record.library ?? {})) {
+					index.set(name, {
+						id: record.id,
+						owner: record.owner,
+						name: record.name,
+						commit: snapshot.commit ?? null,
+						sourcePath: snapshot.sourcePath ?? null,
+						syncedAt: snapshot.syncedAt ?? null,
+					})
+				}
+			}
+			return index
+		},
 	}
 }
