@@ -2838,6 +2838,24 @@ for (const key of [
 	check(`词典 zh / en 都有 ${key}`, typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string', `zh=${typeof dictionaryZh[key]} en=${typeof dictionaryEn[key]}`)
 }
 
+// Task 8.3b：三处用户可见的「项目」文案收口成「工作区」口径。
+// 有意不动三样：术语「项目技能根」（工作区里的 `.dsh/skills`，是文件系统概念，指的就是它）、
+// 错误码 `error.role.noProject` 本身、API 字段名 `project`——所以这里钉的是后两个键的**文案**。
+section('文案收口：角色回落、安装提示、错误说明不再把工作区叫项目')
+for (const key of ['roles.fallback', 'error.roleNoProject']) {
+	const zh = String(dictionaryZh[key] ?? '')
+	const en = String(dictionaryEn[key] ?? '')
+	check(`${key} 的 zh 文案改叫工作区`, zh.includes('工作区') && !zh.includes('项目'), zh)
+	check(`${key} 的 en 文案改叫工作区`, /workspace/i.test(en) && !/project/i.test(en), en)
+}
+{
+	// 这一条不同：`repos.targetProjectHint` 说的就是项目技能根那个目录，术语必须留着。
+	const zh = String(dictionaryZh['repos.targetProjectHint'] ?? '')
+	const en = String(dictionaryEn['repos.targetProjectHint'] ?? '')
+	check('repos.targetProjectHint 的 zh 文案说「当前工作区」、保留「项目技能根」', zh.includes('工作区') && !zh.includes('当前项目') && zh.includes('项目技能根'), zh)
+	check('repos.targetProjectHint 的 en 文案说 current workspace（不再说 current project）', /workspace/i.test(en) && !/current project/i.test(en), en)
+}
+
 section('工作区：共享上下文按目录路径，三个页签读同一份')
 
 check('整个控制台只在一处拉 /state（工作区单点）', (clientSource.match(/apiGet\('\/state'/g) ?? []).length === 1)

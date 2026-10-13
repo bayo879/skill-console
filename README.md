@@ -103,7 +103,7 @@ DSH_HOME="$HOME/Library/Application Support/dsh-desktop/harness" \
 node skill-console/dsh-plugin/test/contract.mjs
 ```
 
-覆盖 732 项，守的是「重启之前就能确定」的事：
+覆盖 738 项，守的是「重启之前就能确定」的事：
 
 - **四份身份标识一致**：`package.json` 包名 / `cordis.patch.yml` insert id / 宿主 `name` / 客户端 bundle id。对不上时插件会**静默不加载**（DSH 不报错），所以必须机器守。
 - **扫描与启停**：发现规则（只扫一层、大小写敏感、跳过 `.`）、`.disabled` 语义、同名覆盖、软链接只读、越界拒绝、409 冲突、批量逐项结果。
@@ -112,6 +112,7 @@ node skill-console/dsh-plugin/test/contract.mjs
 - **角色**：`roles.json` 的原子写 / 损坏拒写 / 上限 / 重名（id 归一化后再比）、`planRole` 的 copy/enable/disable/noop/skipped/localKept/missing 分类、`applyRole` 复制只落项目根且**全局根结构上不可达**，全局候选与项目候选**同形状、都可勾选**（勾上 = 切换时复制进项目；「全局只读」那套字段已不存在，能不能勾只看 `toggleable`，软链的只读原因单独一个字段），以及 6 个角色端点的状态码、围栏与 405。
 - **工作区身份 = 目录路径（0.6.0）**：`/state` 的 `workspaces` 逐条对齐 DSH 注册表（含**没有会话**的那条，顺序也一致），`workspacesFrom` 说清列表是注册表还是退回的会话，`selected.workspaceId` 认领当前会话落在哪条上（先按**目录路径**、再退回项目根，同一仓库里的多个工作区不会认错）；注册表抛异常或 `list()` 没返回数组时退回会话且不炸。七个写接口给了 `project` 就只认它、无效即 400 `error.workspace.invalid`（含给了非字符串）并**绝不回落到请求头会话**，`project` 缺席才退回请求头会话的严格解析（`resolveProjectStrict` 对未知 / 空会话 id 返回 `null`，400 `error.role.noProject`）——两条路都不写盘，**按目录路径写时请求头会话指的那个工作区一个字节没动**。`resolveWorkspaceStrict` 单独覆盖相对路径 / 空串 / 不存在路径一律 `null`，且**不要求目录在注册表里**（今天经会话头能写的目录，0.6.0 不收紧）。读接口给了 `project` 同样按目录路径严格校验（无效即 400），没给才按会话宽松解析。
 - **项目上下文与技能分组（0.5.0）**：整个控制台只在**一处**拉 `/state`（三个页签共享同一个当前工作区，换页签不重拉）；技能按仓库分组（仓库名有序、组内保持宿主顺序、本地组固定最后），根与仓库**两级折叠**（折叠只隐藏行，组头批量按钮仍可用），根头批量作用于整根、仓库组头批量只作用于该仓库。
+- **工作区身份这一版（0.6.0）**：工作区列表改读 DSH 的 `workspaceRegistry`（**没有会话的工作区也在**；注册表不可用时退回「活着的会话」并置 `workspacesFrom: 'sessions'`）；写接口的 `project` 是**工作区目录路径**（`body.project` 优先于请求头，给了但解析不出 → 400 `error.workspace.invalid` 且**一个字节不写**，绝不回落）；节顶**唯一**一个工作区条（下拉 + 回落提示 + 刷新）技能 / 仓库 / 角色三个页签共用；技能页签一屏看**两个源块**（全局技能 / 项目技能，各带两级折叠），同一版删掉了页签自己的「范围」开关，折叠状态按工作区记在 `sessionStorage`。功能口径见上文「技能 tab」与「四条设计边界」。
 - **删除 / 移动到项目 / 安装目标**：`POST /skills/delete` 先备份再删、删完能从备份原样恢复、技能根永不被删、根外路径 400；`POST /skills/move-to-project` 只允许全局→项目，非全局 400 / 同名 409 / 软链 400，删全局失败时不回滚并如实带 `warning`；`POST /repositories/install` 的 `target:'project'` 端到端证明落进项目技能根、缺省仍落全局根、解析不出项目根 400 而不退回全局。
 - **浏览器半边**：模块表注册、`inject` 面、`settings.section` 契约、降级边界、缺 primitives / 缺 slots / 缺 locale 都不崩；受控输入框的 `onChange` 按**原生事件**取值（角色的名字输入框必须交出字符串，不能把 Event 当名字）。
 
@@ -139,6 +140,10 @@ node skill-console/dsh-plugin/test/contract.mjs
 其中「名称行没被 `flex-wrap` 撑成两行」这条**不量高度**（真折行整行只有 59px，而单行 26px，
 用高度阈值会放过折行），改成数 head 的直接子元素落在几个横向带上（按**中线**分带：空 `sc-spacer`
 高度为 0、它的 `top` 落在行的中线上，拿 `top` 比会把单行误判成两行）。
+0.6.0 又加了 2 条（全量 12 条），量的是需求②「节顶唯一工作区条 + 技能页签两块源」：工作区下拉只长在
+节头里、三个页签体内都不再自带一个，以及技能页签确实是两块源块、每块标题左侧都有折叠 caret。
+同一次运行还把三个页签上工作区条的 `top` 打成诊断值（现场是 `[914.5, 914.5, 914.5]`）——那行只印不断言，
+真正钉住「三页签位置一致」的是「下拉只在节头里」这条。
 
 ### 现场冒烟测试（需要装好并重启过的 DSH）
 
@@ -205,7 +210,7 @@ DSH_HOME="$HOME/Library/Application Support/dsh-desktop/harness" \
 
 宿主 API 面：`docs/HTTP-API.md`（22 个端点，冻结契约）。
 
-角色（技能组合）：`docs/readme/roles.md` —— 「角色」标签页已实现（`dsh-skill-console@0.5.0`）。
+角色（技能组合）：`docs/readme/roles.md` —— 「角色」标签页已实现（`dsh-skill-console@0.6.0`）。
 
 技能根与写盘语义（复制 / 删除 / 移动到项目的围栏）：`docs/readme/roots.md`。
 
@@ -246,7 +251,7 @@ DSH_HOME="$HOME/Library/Application Support/dsh-desktop/harness" \
 - **仓库根不是技能根**。`subdirectory` 必须指到放技能的那一层（含 `<name>/SKILL.md` 或 `<name>.md`）；指向单个技能目录会得到空清单（DSH 也不把根级 `SKILL.md` 当技能）。
 - **根级 `.md` 文档不算技能**。扁平候选（基目录下深度 1 的 `<name>.md`）只有 frontmatter 合法才收进清单：一个 `.md` 说明不了它是技能，订阅 monorepo 根时 `README.md` / `CONTRIBUTING.md` / `CLAUDE.md` 之类会全被卷进来，装不了也删不掉（现场事故：`juliusbrussee/caveman` 的 11 个根级文档刷出一屏「frontmatter 不合法」）。目录候选不受影响——真有 `SKILL.md` 就是真技能，它坏了要留在清单里让人看见，那是上游的问题。拉取成功却 0 技能时，详情区会直接提示「技能可能在子目录里」。
 - **围栏不是认证，而且它是这条路由上唯一的门**。DSH 的 `/api` RPC 通道本身有「绑定 authority 的签名 cookie」鉴权，但 `webServer` 是**最长前缀优先**，所以 `/api/skill-console` 会盖过 `/api` 的那道 cookie 门（已装的其他插件同样如此，已实测：无 cookie 直接 `curl /api/<plugin>/...` 会拿到 200）。也就是说本插件的写接口靠的是自己的回环 + `Host`/`Origin`/`sec-fetch-site` 校验加写操作标记头，防的是 DNS-rebinding 与跨站请求，**不是**身份认证。把 DSH 用 `--host 0.0.0.0` 暴露到局域网时，任何能连上的人都能调这些接口——那时不要依赖这道围栏。
-- **工作区下拉里只显示工作区名，不显示绝对路径**（README 第 28 行那条「面板不显示任何目录地址」的延伸，也是从现场问题来的：一排一模一样的绝对路径根本没法选）。重名时补上**最短能区分的目录尾段**——先试最后一段，还不够就往上加，所以括号里**可能不止一段**（`/x/one/shared` 与 `/y/two/shared` 会显示成 `shared（one/shared）`、`shared（two/shared）`）。只补到能分开为止，地址仍然不整条给；节顶工作区条上依旧只有一个名字，区分只发生在下拉里。
+- **工作区下拉里只显示工作区名，不显示绝对路径**（上文技能 tab「两个技能根全都可见可写」那条「面板上不显示任何具体目录地址」的延伸，也是从现场问题来的：一排一模一样的绝对路径根本没法选）。重名时补上**最短能区分的目录尾段**——先试最后一段，还不够就往上加，所以括号里**可能不止一段**（`/x/one/shared` 与 `/y/two/shared` 会显示成 `shared（one/shared）`、`shared（two/shared）`）。只补到能分开为止（加满 7 段仍分不开的极端情形才退回整条路径），地址平时不整条给；节顶工作区条上依旧只有一个名字，区分只发生在下拉里。
 - **另一个技能管理器用的是「策略停用」，本插件用的是「改名」**。本机活动 profile 里，`dsh-skill-filesystem` 被 `dsh-web-app` 的补丁 `disabled: true` 关掉了，实际在提供技能的是 `@michengai/dsh-skills-manager` 自己的 provider（`dsh-skills-manager-external`）。它停用技能是往自己的状态文件里写策略（日志原话「本地策略，源文件不变」），本插件则是把 `SKILL.md` 改名成 `SKILL.md.disabled`。两种机制**可以叠加**：改名之后它的 provider 根本扫不到 `SKILL.md`，所以技能确实不会被 DSH 加载（它的发现规则也是「目录里得有 `SKILL.md`」，已核对实现）。但两边的**显示**会不一致——它按策略停用的技能，在本插件看来仍是「已启用」（因为文件没动）。这是两个独立管理器共存时无法消除的差异，刻意不读它的私有状态文件去对齐。
 - **GitHub token 只用于提高限流额度**：`DSH_SKILL_CONSOLE_GITHUB_TOKEN` 或 `GITHUB_TOKEN`。面板只回报「有没有配」，不回显值。
 - **角色排除不掉全局技能**。角色只能管项目技能根：全局技能可以勾进角色（勾上 = 复制一份进项目），但**不勾也照样生效**——一个只在全局的技能，角色没办法让它不生效。真正的坑在同名：停用项目的同名副本后，**全局那份会接管生效**——角色想让某个技能彻底不生效却做不到（除非去技能 tab 手工关全局那份）。`/roles/activate` 会把这种情况逐条报在 `takeover` 里，但不代为处理。

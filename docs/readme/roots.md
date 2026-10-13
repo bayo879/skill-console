@@ -1,6 +1,6 @@
 # 技能根与写盘语义（`lib/roots.js`）
 
-状态：**已实现**（`dsh-skill-console@0.5.0`）。本文件描述 `dsh-plugin/lib/roots.js` **当前**的行为：两个技能根的解析、发现规则，以及三个写盘入口的围栏与软链接处置。端点级契约见 `docs/HTTP-API.md`；角色那条线见 `docs/readme/roles.md`。
+状态：**已实现**（`dsh-skill-console@0.6.0`）。本文件描述 `dsh-plugin/lib/roots.js` **当前**的行为：两个技能根的解析、发现规则，以及三个写盘入口的围栏与软链接处置。端点级契约见 `docs/HTTP-API.md`；角色那条线见 `docs/readme/roles.md`。
 
 ---
 

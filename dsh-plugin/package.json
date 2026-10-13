@@ -1,6 +1,6 @@
 {
 	"name": "dsh-skill-console",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"description": "DSH 插件：全局/项目技能开启与关闭 + GitHub 技能仓库订阅与手动更新（设置 →「技能控制台」）",
 	"type": "module",
 	"engines": {

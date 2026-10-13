@@ -65,7 +65,7 @@ kind: 'prefix'   path: '/api/skill-console'
 {
   "ok": true,
   "data": {
-    "version": "0.5.0",              // 插件版本（package.json 的 version）；配置页头部显示它
+    "version": "0.6.0",              // 插件版本（package.json 的 version）；配置页头部显示它
     "dshHome": "/Users/…/harness",
     "token": false,                    // 是否配了 GitHub token（只报存在性，不回显值）
     "roots": [
