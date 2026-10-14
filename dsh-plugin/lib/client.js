@@ -146,6 +146,10 @@ window.__ModuleLoader__.load({
 				'skills.projectName': '当前工作区：{name}',
 				'skills.noSessions': '还没选工作区，列不出项目技能。请在节顶选一个工作区，再刷新。',
 				'skills.empty': '这个技能根还是空的。去「技能仓库」页签订阅一个仓库，装几个技能进来。',
+				'skills.syncToProject': '同步到项目',
+				'skills.libraryHint': '库里的技能 DSH 不加载；用「同步到项目」放进当前工作区。',
+				'skills.libraryEmpty': '可用仓库里还没有技能。去「技能仓库」页签订阅一个仓库，或把技能「移到可用仓库」。',
+				'skills.libraryNoWorkspace': '先在工作区条里选一个工作区，才能把技能同步进项目。',
 				'skills.noDescription': '未提供简介',
 				'skills.nameFromDirectory': 'frontmatter 没写 name，这里显示的是目录/文件名',
 				'skills.status.enabled': '已启用',
@@ -351,6 +355,10 @@ window.__ModuleLoader__.load({
 				'skills.projectName': 'Current workspace: {name}',
 				'skills.noSessions': 'No workspace is selected, so project skills cannot be listed. Pick one in the workspace bar, then refresh.',
 				'skills.empty': 'This skill root is empty. Subscribe to a repository in the Repositories tab and install a few skills.',
+				'skills.syncToProject': 'Sync to project',
+				'skills.libraryHint': 'DSH does not load skills in the library. Use "Sync to project" to copy one into the current workspace.',
+				'skills.libraryEmpty': 'The library is empty. Subscribe to a repository in the Repositories tab, or move a skill into the library.',
+				'skills.libraryNoWorkspace': 'Pick a workspace in the workspace bar first, then sync skills into the project.',
 				'skills.noDescription': 'No description provided',
 				'skills.nameFromDirectory': 'Frontmatter has no name; the folder/file name is shown instead',
 				'skills.status.enabled': 'Enabled',
@@ -1307,21 +1315,16 @@ window.__ModuleLoader__.load({
 			return typeof installed.id === 'string' && installed.id !== '' ? installed.id : null
 		}
 
-		/** 一个技能行。可点开详情；启停只走 /toggle，绝不为软链接发请求。 */
-		function SkillRow(props) {
+		/**
+		 * 「来源」那一行 + 悬停简介：技能行与角色候选行共用一份（0.9.0）。
+		 *
+		 * 简介只在气泡可见时才构造（`Tooltip.label` 支持「仅当气泡可见时求值」的解析函数）。
+		 * 明细行本身显示**所属仓库**：订阅装的显示 owner/name，本地技能显示「本地（非订阅）」。
+		 */
+		function SkillSourceLine(props) {
 			const t = props.t
 			const skill = props.skill || {}
-			const diagnostics = normalizeDiagnostics(skill.diagnostics)
 			const installed = skill.installed && typeof skill.installed === 'object' ? skill.installed : null
-			const readOnly = readOnlyText(t, skill)
-			const statusKey = diagnostics.length > 0 ? 'skills.status.invalid' : skill.enabled ? 'skills.status.enabled' : 'skills.status.disabled'
-			const statusTone = diagnostics.length > 0 ? 'warning' : skill.enabled ? 'success' : 'quiet'
-			const statusTag = h(UiTag, { tone: statusTone }, t(statusKey))
-
-			/**
-			 * 简介只在气泡可见时才构造（`Tooltip.label` 支持「仅当气泡可见时求值」的解析函数）。
-			 * 明细行本身显示**所属仓库**：订阅装的显示 owner/name，本地技能显示「本地（非订阅）」。
-			 */
 			const descriptionTip = () =>
 				h(
 					'div',
@@ -1336,8 +1339,7 @@ window.__ModuleLoader__.load({
 							)
 						: null,
 				)
-
-			const sourceLine = h(
+			return h(
 				UiTooltip,
 				{ label: descriptionTip, side: 'top', delayMs: 120, maxWidth: 380 },
 				h(
@@ -1347,6 +1349,24 @@ window.__ModuleLoader__.load({
 					h('span', { className: 'sc-source-value' }, sourceRepoOf(skill) ?? t('skills.sourceLocal')),
 				),
 			)
+		}
+
+		/** 一个技能行。可点开详情；启停只走 /toggle，绝不为软链接发请求。 */
+		function SkillRow(props) {
+			const t = props.t
+			const skill = props.skill || {}
+			const isLibrary = props.mode === 'library'
+			const diagnostics = normalizeDiagnostics(skill.diagnostics)
+			const readOnly = readOnlyText(t, skill)
+			const statusKey = diagnostics.length > 0 ? 'skills.status.invalid' : skill.enabled ? 'skills.status.enabled' : 'skills.status.disabled'
+			const statusTone = diagnostics.length > 0 ? 'warning' : skill.enabled ? 'success' : 'quiet'
+			const statusTag = h(UiTag, { tone: statusTone }, t(statusKey))
+
+			// 直接调用（不写成 `h(SkillSourceLine, …)`）：契约测试的 `createElement` 替身
+			// **不展开函数组件**，而「明细行显示 owner/name」这条断言读的就是这里的文本；
+			// 写成组件元素会让它连子树都进不去（contract.mjs:2411/2423 会红）。
+			// 这个 helper 不用任何 hook，当纯渲染函数调用是安全的。
+			const sourceLine = SkillSourceLine({ t, skill })
 
 			return h(
 				'div',
@@ -1374,7 +1394,8 @@ window.__ModuleLoader__.load({
 							: null,
 						statusTag,
 						skill.inRole === true ? h(UiTag, { tone: 'success' }, t('skills.tagInRole')) : null,
-						skill.inLibrary === true ? h(UiTag, { tone: 'quiet' }, t('skills.tagInLibrary')) : null,
+						// 库块里每一行都在库里，「库里有」标签是噪音，只在技能根里显示。
+						skill.inLibrary === true && isLibrary !== true ? h(UiTag, { tone: 'quiet' }, t('skills.tagInLibrary')) : null,
 					),
 					sourceLine,
 					diagnostics.map((entry, index) =>
@@ -1389,39 +1410,38 @@ window.__ModuleLoader__.load({
 				h(
 					'div',
 					{ className: 'sc-row-actions', onClick: stop() },
-					props.onDelete
+					// 库是**只读分发源**：没有启停（库不是技能根，/toggle 在库上结构性不成立），
+					// 也没有删除 / 移到可用仓库（那是「技能仓库」页签的事）。
+					isLibrary !== true && props.onDelete
+						? h(UiButton, { variant: 'ghost', size: 'sm', onClick: () => props.onDelete(skill, props.rootName), children: t('skills.delete') })
+						: null,
+					isLibrary !== true && props.canMove === true && props.onMove
+						? h(UiButton, { variant: 'ghost', size: 'sm', onClick: () => props.onMove(skill, props.rootName), children: t('skills.move') })
+						: null,
+					isLibrary === true
 						? h(UiButton, {
 								variant: 'ghost',
 								size: 'sm',
-								onClick: () => props.onDelete(skill, props.rootName),
-								children: t('skills.delete'),
+								disabled: props.busy || props.canSync !== true,
+								title: props.canSync === true ? undefined : t('skills.libraryNoWorkspace'),
+								onClick: () => props.onSync(skill),
+								children: t('skills.syncToProject'),
 							})
 						: null,
-					props.canMove === true && props.onMove
-						? h(UiButton, {
-								variant: 'ghost',
-								size: 'sm',
-								onClick: () => props.onMove(skill, props.rootName),
-								children: t('skills.move'),
-							})
-						: null,
-					h(UiButton, {
-						variant: 'ghost',
-						size: 'sm',
-						onClick: () => props.onOpen(skill),
-						children: t('common.detail'),
-					}),
-					h(UiTooltip, {
-						label: readOnly || t('skills.toggle') + ' ' + (skill.name || ''),
-						side: 'top',
-						children: h(UiSwitch, {
-							checked: skill.enabled === true,
-							disabled: props.busy || readOnly !== null,
-							label: t('skills.toggleAria', { name: skill.name || '' }),
-							title: readOnly || undefined,
-							onChange: (next) => props.onToggle(skill, next),
-						}),
-					}),
+					h(UiButton, { variant: 'ghost', size: 'sm', onClick: () => props.onOpen(skill), children: t('common.detail') }),
+					isLibrary === true
+						? null
+						: h(UiTooltip, {
+								label: readOnly || t('skills.toggle') + ' ' + (skill.name || ''),
+								side: 'top',
+								children: h(UiSwitch, {
+									checked: skill.enabled === true,
+									disabled: props.busy || readOnly !== null,
+									label: t('skills.toggleAria', { name: skill.name || '' }),
+									title: readOnly || undefined,
+									onChange: (next) => props.onToggle(skill, next),
+								}),
+							}),
 				),
 			)
 		}
@@ -1575,6 +1595,9 @@ window.__ModuleLoader__.load({
 								busy: props.busyPath === skill.path,
 								// 能不能收进可用仓库：不是软链、当前角色没在用、库里也还没有同名。
 								canMove: skill.toggleable === true && skill.inRole !== true && skill.inLibrary !== true,
+								mode: props.mode ?? 'root',
+								canSync: props.canSync === true,
+								onSync: props.onSync,
 								rootName: rootLabel(t, root.key, root.label),
 								onDelete: props.onDelete,
 								onMove: props.onMove,
@@ -1620,10 +1643,14 @@ window.__ModuleLoader__.load({
 					h('span', { className: 'sc-spacer' }),
 					h('span', { className: 'sc-hint' }, t('skills.groupCount', { count: skills.length })),
 				),
+				// 库块的说明行：库不是技能根，DSH 不加载它；没有项目根时改说「先选工作区」。
+				props.mode === 'library'
+					? h('div', { className: 'sc-hint' }, t(props.canSync === true ? 'skills.libraryHint' : 'skills.libraryNoWorkspace'))
+					: null,
 				collapsed
 					? null
 					: skills.length === 0
-						? h('div', { className: 'sc-empty' }, t('skills.empty'))
+						? h('div', { className: 'sc-empty' }, t(props.mode === 'library' ? 'skills.libraryEmpty' : 'skills.empty'))
 						: groups.map((group) => {
 								// 折叠键带上根：两个根里可能有同名仓库。
 								const collapseKey = (root.key || '') + ':' + group.key
@@ -1632,6 +1659,9 @@ window.__ModuleLoader__.load({
 									t,
 									root,
 									group,
+									mode: props.mode ?? 'root',
+									canSync: props.canSync === true,
+									onSync: props.onSync,
 									busy: props.busy,
 									busyPath: props.busyPath,
 									collapsed: collapsedRepos[collapseKey] === true,
@@ -3104,6 +3134,7 @@ window.__ModuleLoader__.load({
 		exports.RoleRow = RoleRow
 		exports.RoleEditor = RoleEditor
 		exports.sourceRepoOf = sourceRepoOf
+		exports.SkillSourceLine = SkillSourceLine
 		exports.SkillRow = SkillRow
 		exports.SkillGroup = SkillGroup
 		exports.RepoSkillRow = RepoSkillRow

@@ -2574,6 +2574,41 @@ check('本地技能气泡里没有 commit 行', !collectTexts(localTip?.props?.l
 
 // 面板上不出现任何具体目录地址（技能根 / 项目根 / 技能文件 / 备份目录）。
 const exposed = loaded.factory(requireFor(true))
+
+section('技能页签：库行是只读分发源（mode 只换行动作集）')
+
+const libraryRowTree = exposed.SkillRow({
+	t: tStub,
+	busy: false,
+	mode: 'library',
+	canSync: true,
+	skill: { name: 'lib-only', description: DESCRIPTION, enabled: true, diagnostics: [], declaredName: 'lib-only', installed: null, root: 'library', scope: 'global' },
+	onOpen: () => {},
+	onSync: () => {},
+})
+const libraryRowTexts = collectTexts(libraryRowTree)
+check('库行有「同步到项目」', collect(libraryRowTree, (element) => element.props !== undefined && element.props.children === 'skills.syncToProject').length === 1, JSON.stringify(libraryRowTexts))
+check('库行仍有「详情」', collect(libraryRowTree, (element) => element.props !== undefined && element.props.children === 'common.detail').length === 1)
+check('库行不渲染启停开关（库不是技能根）', !JSON.stringify(libraryRowTree).includes('skills.toggleAria'))
+check('库行不渲染删除 / 移到可用仓库', collect(libraryRowTree, (element) => element.props !== undefined && (element.props.children === 'skills.delete' || element.props.children === 'skills.move')).length === 0)
+check('库行来源行照旧（技能行与角色候选行共用一处）', libraryRowTexts.includes('本地（非订阅）') && tCalls.includes('skills.source'))
+
+const libraryRepoGroupTree = exposed.SkillRepoGroup({
+	t: tStub,
+	root: { key: 'library', label: '可用仓库', exists: true, skills: [] },
+	group: { key: 'o/r', label: 'o/r', skills: [{ name: 'lib-only', path: '/l/lib-only/SKILL.md', enabled: true, diagnostics: [], installed: null }] },
+	mode: 'library',
+	canSync: true,
+	busy: false,
+	busyPath: null,
+	collapsed: false,
+	onToggleRepo: () => {},
+	onOpen: () => {},
+	onSync: () => {},
+})
+const rowElement = collect(libraryRepoGroupTree, (element) => element.type === exposed.SkillRow)[0]
+check('mode 与 onSync 一路透传到库行', rowElement !== undefined && rowElement.props.mode === 'library' && typeof rowElement.props.onSync === 'function' && rowElement.props.canSync === true, JSON.stringify(rowElement?.props ?? null))
+
 check('导出 missingSkillsOf：可用仓库能找到就不算缺', typeof exposed.missingSkillsOf === 'function' && exposed.missingSkillsOf(['a', 'b'], [{ name: 'a' }, { name: 'b' }], []).length === 0)
 check('项目技能根里有一份也算找得到（切换时复制的就是它）', exposed.missingSkillsOf(['a'], [], [{ name: 'a' }]).length === 0)
 check('两处都找不到才算缺', exposed.missingSkillsOf(['a', 'gone'], [{ name: 'a' }], []).join(',') === 'gone')
