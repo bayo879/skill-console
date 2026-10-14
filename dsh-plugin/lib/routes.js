@@ -599,6 +599,46 @@ export function createRouteHandlers(deps) {
 				...(warning === undefined ? {} : { warning }),
 			}
 		},
+
+		/**
+		 * 把库里的一个技能**复制**进当前工作区的项目技能根（分发）。
+		 *
+		 * 与 `/repositories/install` 的分工：那个是「从订阅清单重下到技能根」，
+		 * 这个是「把库里现成的那份放进项目」，一个字节都不下载。
+		 *
+		 * 恒写项目根：全局根是角色切换的领域（README 边界 #4），所以不收 `target`。
+		 * 从不覆盖：项目已有同名（启用或停用都算）就原样保留、如实报告。没有可确认的动作，
+		 * 因此也不收 `confirm`。第二次点必然走 `localKept`，天然幂等。
+		 */
+		async libraryInstall(req) {
+			const body = await readJsonBody(req)
+			const filePath = String(body.path ?? '')
+			if (filePath === '') throw httpError(400, 'error.proto.missingPath', '缺少 path')
+			if (libraryDir === '') throw httpError(500, 'error.internal', '可用仓库目录没有配置')
+			const { project, projectRoot, code } = roleContextOfRequest(req, body)
+			if (project === null || projectRoot === null) throw httpError(400, code, '解析不出项目技能根，无法分发')
+			// 源以库的扫描结果为准（客户端看到的也是它）：路径不在库里就没得谈。
+			// 先按库根读一次，让围栏/不存在抛它们该抛的码，再回 404。
+			const source = librarySkillsOf().find((skill) => skill.path === filePath)
+			if (source === undefined) {
+				readSkill(filePath, { roots: [libraryRootOf()] })
+				throw httpError(404, 'error.skill.notFound', `可用仓库里没有这个技能：${filePath}`)
+			}
+			const existing = projectSkillsOf(projectRoot).find((skill) => skill.name === source.name)
+			if (existing !== undefined) {
+				return {
+					copied: false,
+					reason: 'localKept',
+					kept: { name: existing.name, path: existing.path, enabled: existing.enabled === true, kind: existing.kind },
+				}
+			}
+			// 软链在这一步被 `copySkillIntoRoot` 挡下（400 error.transfer.symlink）；
+			// 并发下同名冒出来时由它的 409 error.copy.exists 兜底。
+			const copied = copySkillIntoRoot(projectRoot, source)
+			refreshSkills()
+			notifyFileChanged(copied.path)
+			return { copied: true, name: copied.name, targetPath: copied.path, kind: copied.kind }
+		},
 	}
 }
 
@@ -635,6 +675,7 @@ const WRITE_ROUTES = {
 	'/repositories/fetch': 'repositoryFetch',
 	'/repositories/install': 'repositoryInstall',
 	'/repositories/sync': 'repositorySync',
+	'/library/install': 'libraryInstall',
 	'/restore': 'restore',
 	'/skills/delete': 'skillsDelete',
 	'/skills/move-to-library': 'skillsMoveToLibrary',

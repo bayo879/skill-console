@@ -2071,6 +2071,27 @@ const sourceIndex = sourceManager.libraryIndex().get('lib-only')
 check('libraryIndex 认的是 record.library：订阅同步来的那条带 owner/name/commit/syncedAt', sourceIndex?.owner === 'o' && sourceIndex?.name === 'r' && sourceIndex?.commit === 'deadbeef' && sourceIndex?.syncedAt === '2026-01-01T00:00:00.000Z', JSON.stringify(sourceIndex ?? null))
 check('同一份状态里 installedIndex 是空的（库的来源 ≠ 装进技能根的台账）', sourceManager.installedIndex().size === 0, JSON.stringify([...sourceManager.installedIndex().keys()]))
 
+section('从可用仓库分发到项目（POST /library/install）')
+
+const installBody = { path: join(routeLibrary, 'lib-only', 'SKILL.md'), project: projectDir }
+const installResponse = await callRouteOrReport(wsRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: installBody })
+check('分发成功：库里的那份被复制进项目技能根', installResponse.status === 200 && installResponse.json?.data?.copied === true && installResponse.json.data.name === 'lib-only', `${installResponse.status} ${JSON.stringify(installResponse.json)}`)
+check('落点是项目根，不是全局根', existsSync(join(projectDir, '.dsh', 'skills', 'lib-only', 'SKILL.md')) && !existsSync(join(globalRoot, 'lib-only', 'SKILL.md')))
+check('库里那份原样留在库里（分发是复制，不是搬）', existsSync(join(routeLibrary, 'lib-only', 'SKILL.md')))
+
+const againResponse = await callRouteOrReport(wsRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: installBody })
+check('连点第二次是 localKept（磁盘只有一份，天然幂等）', againResponse.status === 200 && againResponse.json?.data?.copied === false && againResponse.json.data.reason === 'localKept', JSON.stringify(againResponse.json))
+check('localKept 把项目那份一起回给界面', againResponse.json?.data?.kept?.name === 'lib-only' && againResponse.json.data.kept.enabled === true, JSON.stringify(againResponse.json?.data?.kept))
+
+const outsideSource = await callRouteOrReport(wsRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(globalRoot, 'alpha', 'SKILL.md'), project: projectDir } })
+check('源不在库里 → 400 error.path.outsideRoots（写不进来路不明的路径）', outsideSource.status === 400 && outsideSource.json?.code === 'error.path.outsideRoots', `${outsideSource.status} ${JSON.stringify(outsideSource.json)}`)
+
+const missingSource = await callRouteOrReport(wsRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(routeLibrary, 'gone', 'SKILL.md'), project: projectDir } })
+check('库内那条已被外部删掉 → 404 error.skill.notFound', missingSource.status === 404 && missingSource.json?.code === 'error.skill.notFound', `${missingSource.status} ${JSON.stringify(missingSource.json)}`)
+
+const noPath = await callRouteOrReport(wsRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: projectDir } })
+check('缺 path → 400 error.proto.missingPath', noPath.status === 400 && noPath.json?.code === 'error.proto.missingPath', `${noPath.status} ${JSON.stringify(noPath.json)}`)
+
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
 section('浏览器半边（模块表 / slot 契约 / 降级）')
