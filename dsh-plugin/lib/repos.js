@@ -411,6 +411,15 @@ export function createRepositoryManager(options) {
 		}
 	}
 
+	/** 一条订阅台账项 → 界面要的来源形状（两个索引共用，避免字面量漂移）。 */
+	const sourceEntryOf = (record, snapshot) => ({
+		id: record.id,
+		owner: record.owner,
+		name: record.name,
+		commit: snapshot.commit ?? null,
+		sourcePath: snapshot.sourcePath ?? null,
+	})
+
 	/** 调一次 mutation 钩子（钩子抛错不该影响已经落盘的结果）。 */
 	function afterWrite(what) {
 		try {
@@ -620,13 +629,7 @@ export function createRepositoryManager(options) {
 			const index = new Map()
 			for (const record of store.load().repositories) {
 				for (const [name, snapshot] of Object.entries(record.skills ?? {})) {
-					index.set(name, {
-						id: record.id,
-						owner: record.owner,
-						name: record.name,
-						commit: snapshot.commit ?? null,
-						sourcePath: snapshot.sourcePath ?? null,
-					})
+					index.set(name, sourceEntryOf(record, snapshot))
 				}
 			}
 			return index
@@ -639,20 +642,13 @@ export function createRepositoryManager(options) {
 		 * 0.8.0 订阅默认同步之后基本是空的；库的来源只记在 `record.library` 里。
 		 *
 		 * `record.library[name]` 里**没有** owner/name（身份在订阅记录本身），
-		 * 而界面拼「owner/name」恰恰要它，所以两处都取。
+		 * 而界面拼「owner/name」恰恰要它，所以 `sourceEntryOf` 两个都取。
 		 */
 		libraryIndex() {
 			const index = new Map()
 			for (const record of store.load().repositories) {
 				for (const [name, snapshot] of Object.entries(record.library ?? {})) {
-					index.set(name, {
-						id: record.id,
-						owner: record.owner,
-						name: record.name,
-						commit: snapshot.commit ?? null,
-						sourcePath: snapshot.sourcePath ?? null,
-						syncedAt: snapshot.syncedAt ?? null,
-					})
+					index.set(name, { ...sourceEntryOf(record, snapshot), syncedAt: snapshot.syncedAt ?? null })
 				}
 			}
 			return index

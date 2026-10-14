@@ -956,6 +956,9 @@ check('自动同步一个字节都不碰技能根', !existsSync(join(libSkillsDi
 const firstSync = await libManager.sync({ id: 'o/r' })
 check('添加之后再手动同步是幂等的', firstSync.synced.length === 0 && firstSync.unchanged.length === 3, JSON.stringify(firstSync))
 check('卡片能报出可用仓库存量', libManager.list().repositories[0].library.count === 3 && libManager.list().repositories[0].library.synced === 3, JSON.stringify(libManager.list().repositories[0].library))
+// 库来源的**真实写入**路径（订阅同步写 `record.library`）——与 4h 那条手写状态文件的断言互补：
+// 这条走真链路（stubGithub + add），证明 `libraryIndex()` 读的就是同步实际落盘的那份。
+check('真同步写进 record.library 之后，libraryIndex 能报出来源', libManager.libraryIndex().get('alpha')?.owner === 'o' && libManager.libraryIndex().get('alpha')?.commit === 'c0ffee1234567890', JSON.stringify(libManager.libraryIndex().get('alpha') ?? null))
 
 // 幂等：台账与清单一致时既不下载也不写盘（连 mtime 都不该动）
 const libAlpha = join(libDir, 'alpha', 'SKILL.md')
@@ -2044,10 +2047,10 @@ placeSkill(routeLibrary, 'lib-only', true)
 
 const catalogWithLibrary = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog', headers: { 'x-skill-console-session': fakeSession.id } })
 const libraryBlock = catalogWithLibrary.json?.data?.library
-check('缺省 /catalog 平行多回一块 library', libraryBlock?.key === 'library' && libraryBlock.label === '可用仓库' && libraryBlock.exists === true, JSON.stringify(libraryBlock))
+check('缺省 /catalog 平行多回一块 library', libraryBlock?.key === 'library' && libraryBlock.label === '可用仓库' && libraryBlock.exists === true, JSON.stringify(libraryBlock ?? null))
 const libRow = (libraryBlock?.skills ?? []).find((skill) => skill.name === 'lib-only')
-check('库行与根内技能同形（root/scope/installed/inRole/inLibrary）', libRow !== undefined && libRow.root === 'library' && libRow.scope === 'global' && 'installed' in libRow && 'inRole' in libRow && 'inLibrary' in libRow && libRow.enabled === true, JSON.stringify(libRow))
-check('手工放进库的技能没有来源（installed 为 null）', libRow?.installed === null, JSON.stringify(libRow?.installed))
+check('库行与根内技能同形（root/scope/installed/inRole/inLibrary）', libRow !== undefined && libRow.root === 'library' && libRow.scope === 'global' && 'installed' in libRow && 'inRole' in libRow && 'inLibrary' in libRow && libRow.enabled === true, JSON.stringify(libRow ?? null))
+check('手工放进库的技能没有来源（installed 为 null）', libRow?.installed === null, JSON.stringify(libRow?.installed ?? null))
 
 const catalogGlobalNoLibrary = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog?scope=global' })
 check('scope=global 的收窄响应里没有 library（老调用方行为不变）', catalogGlobalNoLibrary.status === 200 && catalogGlobalNoLibrary.json?.data?.library === undefined, JSON.stringify(Object.keys(catalogGlobalNoLibrary.json?.data ?? {})))
@@ -2058,13 +2061,14 @@ check('scope=project 的收窄响应里也没有 library', catalogProjectNoLibra
 // **真实** fetch（桩只在第一个 ctx 的 apply 窗口里注入过），联网不可用。
 // 直接喂一份状态文件：`record.library` 里有、`record.skills` 里没有——所以只有从
 // `record.library` 取数才会报出来源，两个索引因此**不是一回事**（同一份状态上互证）。
+// 库目录本身不必落盘：`libraryIndex()` 只读状态文件（这一点与路由层那块不同）。
 const sourceHome = tempDir('sc-library-source')
 const sourceStateDir = join(sourceHome, 'skill-console')
-placeSkill(join(sourceStateDir, 'library'), 'lib-only', true)
+mkdirSync(sourceStateDir, { recursive: true })
 writeFileSync(join(sourceStateDir, 'repositories.json'), `${JSON.stringify({ version: 1, repositories: [{ id: 'o/r', owner: 'o', name: 'r', ref: '', subdirectory: 'skills', addedAt: '2026-01-01T00:00:00.000Z', skills: {}, library: { 'lib-only': { sourcePath: 'skills/lib-only', kind: 'flat', commit: 'deadbeef', syncedAt: '2026-01-01T00:00:00.000Z', files: {} } } }] }, null, 2)}\n`)
 const sourceManager = reposModule.createRepositoryManager({ stateDir: sourceStateDir, skillsDir: join(sourceHome, 'skills'), libraryDir: join(sourceStateDir, 'library'), log: () => {} })
 const sourceIndex = sourceManager.libraryIndex().get('lib-only')
-check('libraryIndex 认的是 record.library：订阅同步来的那条带 owner/name/commit/syncedAt', sourceIndex?.owner === 'o' && sourceIndex?.name === 'r' && sourceIndex?.commit === 'deadbeef' && sourceIndex?.syncedAt === '2026-01-01T00:00:00.000Z', JSON.stringify(sourceIndex))
+check('libraryIndex 认的是 record.library：订阅同步来的那条带 owner/name/commit/syncedAt', sourceIndex?.owner === 'o' && sourceIndex?.name === 'r' && sourceIndex?.commit === 'deadbeef' && sourceIndex?.syncedAt === '2026-01-01T00:00:00.000Z', JSON.stringify(sourceIndex ?? null))
 check('同一份状态里 installedIndex 是空的（库的来源 ≠ 装进技能根的台账）', sourceManager.installedIndex().size === 0, JSON.stringify([...sourceManager.installedIndex().keys()]))
 
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────

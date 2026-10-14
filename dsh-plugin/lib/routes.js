@@ -132,18 +132,19 @@ export function createRouteHandlers(deps) {
 	const librarySkillsOf = () => (libraryDir === '' ? [] : scanRoot(libraryRootOf()).skills)
 
 	/**
-	 * 可用仓库那一块：形状与技能根同块，但**不是**技能根。
+	 * 可用仓库那一块：技能行与技能根内同形，但**块本身更窄**（没有 path/scope/writable，
+	 * 那些是 `publicRoot` 给的）——**它不是**技能根。
 	 *
 	 * 它不进 `findCollisions`（库不参与加载，混进去会造出假冲突），也不进 `roots`：
 	 * 客户端的折叠键 `${root.key}:${group.key}` 照样能用，因为 `key` 是 `library`。
 	 * `exists` 得自己算——根那块的 `exists` 是 `resolveRoots()` 给的。
+	 * `flags`（`sourceFlagsOf` 的产物）由调用方传进来，避免同一个请求里重复扫描。
 	 */
-	const libraryBlockOf = (project) => {
+	const libraryBlockOf = (project, flags) => {
 		if (libraryDir === '') return { key: 'library', label: '可用仓库', exists: false, skills: [], warning: null }
 		const root = libraryRootOf()
 		const { skills, warning } = scanRoot(root)
 		const installed = repositories.libraryIndex()
-		const flags = sourceFlagsOf(project)
 		return {
 			key: root.key,
 			label: root.label,
@@ -263,7 +264,7 @@ export function createRouteHandlers(deps) {
 				scope,
 				project: scope === 'global' ? null : project,
 				roots: rows,
-				...(scope === 'all' ? { library: libraryBlockOf(project) } : {}),
+				...(scope === 'all' ? { library: libraryBlockOf(project, flags) } : {}),
 				collisions: findCollisions(scanned),
 				warnings,
 			}
