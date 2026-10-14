@@ -23,7 +23,7 @@ kind: 'prefix'   path: '/api/skill-console'
   拿到当前会话 id 后带上）。宿主把会话解析成它的 `header.cwd`。
   **读宽松、写严格**：
   - **写接口**（`/repositories/install`、`/roles/activate`、`/roles/deactivate`、`/skills/move-to-library`、
-    `/toggle`、`/toggle-batch`、`/skills/delete`）：
+    `/toggle`、`/toggle-batch`、`/skills/delete`、`/library/install`）：
     请求体 `project` 优先于请求头；给了 `project` 就**只认它**——必须是**存在的工作区目录**，
     相对路径 / 不存在的路径 / 不是目录 / **不是字符串**都是 400 `error.workspace.invalid`，**绝不回落到请求头会话**
     （否则界面上选着工作区 B、写却落到 A）。只有 `project` **缺席**（或空串 `"project": ""`）时才按
@@ -152,7 +152,7 @@ kind: 'prefix'   path: '/api/skill-console'
                     "path": "…/skill-console/library/tdd/SKILL.md", "kind": "directory",
                     "enabled": true, "inRole": false, "inLibrary": true,
                     "installed": { "id": "obra/superpowers", "owner": "obra", "name": "superpowers",
-                                   "commit": "abc1234", "sourcePath": "skills/tdd" } } ],  // 非订阅为 null
+                                   "commit": "abc1234", "sourcePath": "skills/tdd", "syncedAt": "2026-01-01T00:00:00.000Z" } } ],  // 查 libraryIndex()，带 syncedAt；非订阅为 null
       "warning": null            // 库目录读不动时 { code, message }；message 带绝对路径，界面不许显示
     }
   }
@@ -469,7 +469,7 @@ kind: 'prefix'   path: '/api/skill-console'
     // 候选 = 可用仓库里的技能（0.7.0 起是**平面数组**，不再分 project/global）
     "candidates": [ { "name": "g", "path": "…/library/g", "enabled": true, "toggleable": true, "readOnlyReason": null,
                       "description": "…", "installed": { "id": "obra/superpowers", "owner": "obra", "name": "superpowers",
-                                      "commit": "abc1234", "sourcePath": "skills/g" }|null } ],   // 后两个字段 0.9.0 补
+                                      "commit": "abc1234", "sourcePath": "skills/g", "syncedAt": "2026-01-01T00:00:00.000Z" }|null } ],   // 后两个字段 0.9.0 补；installed 查 libraryIndex()，带 syncedAt
     // 本项目技能根现状，只用于算「● 已启用 / ○」与数量，**不参与勾选与对齐**
     "projectSkills": [ { "name": "a", "path": "…/.dsh/skills/a", "enabled": true, "toggleable": true, "readOnlyReason": null,
                          "description": "…", "installed": null } ],

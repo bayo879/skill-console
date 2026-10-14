@@ -142,8 +142,8 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
   `enabled` 是「库里那份文件是否启用」（同步进来的都是启用态，所以基本恒为 `true`），能不能勾一律由
   `toggleable` 表达：软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`。
 - **`description` 与 `installed` 是 0.9.0 补的**（两个数组同一套 `candidateOf`，所以形状一致）：`description`
-  是 frontmatter 的简介（缺失时空串），`installed` 是订阅安装快照 `{id, owner, name, commit, sourcePath}`、
-  非订阅为 `null`——角色编辑页靠这两个字段在候选行上显示**所属仓库**与明细。
+  是 frontmatter 的简介（缺失时空串），`installed` 是订阅安装快照 `{id, owner, name, commit, sourcePath, syncedAt}`
+  （查的是 `libraryIndex()`，所以带 `syncedAt`）、非订阅为 `null`——角色编辑页靠这两个字段在候选行上显示**所属仓库**与明细。
 - **`projectSkills` 是本项目现状**，形状与候选逐字段相同（同一套 `candidateOf`），只用来算行首 `●`（同名已启用）/ `○`（没有或没启用）与界面上的数量——它**不参与勾选**。库为空时 `candidates` 是空数组，界面给「去技能仓库页签同步」的引导。
 - `stats.enable` / `stats.disable` / `stats.copy` 就是这次切换的落盘动作数（直接来自 `planRole`）：界面用 `disable` 讲「切换会停用 N 个」、用 `copy` 讲「会从可用仓库复制 N 个进来」。
 - `stats.localKept` 与顶层 `localKept` 是「项目里已有同名」的条目：**保留项目那份，绝不被库里那份覆盖**；它不计入 `stats.total`。
@@ -227,7 +227,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ## 9. 测试覆盖（沿用现有三层）
 
-**`test/contract.mjs`（离线；0.9.0 收尾时全量 880 项）**
+**`test/contract.mjs`（离线；0.9.0 收尾时全量 883 项）**
 
 - 角色 CRUD；`roles.json` 损坏时拒绝写入且原文件不动；角色数/技能数上限；重名 409；名字非法 400。
 - `planRole` 纯函数：`copy` / `localKept` / `missing` / `disable` / 软链进 `skipped` / 同名双副本一起处置 / 连切两次第二次全 `noop` / `stats.total = copy+enable+disable+noop+skipped` 且 `localKept` 不计入。
