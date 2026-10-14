@@ -2101,6 +2101,35 @@ symlinkSync(join(installLinkRoot, 'lib-link'), join(routeLibrary, 'lib-link'))
 const symlinkSource = await callRouteOrReport(wsRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(routeLibrary, 'lib-link', 'SKILL.md'), project: projectDir } })
 check('库里的软链技能被拒（400 error.transfer.symlink）', symlinkSource.status === 400 && symlinkSource.json?.code === 'error.transfer.symlink', `${symlinkSource.status} ${JSON.stringify(symlinkSource.json)}`)
 
+// ── 4i. 库进页面 ≠ 库成根（0.9.0）───────────────────────────────────────
+
+section('库进页面 ≠ 库成根（承重墙回归）')
+
+const libraryRead = await callRouteOrReport(wsRoute, { path: `/api/skill-console/skill?path=${encodeURIComponent(join(routeLibrary, 'lib-only', 'SKILL.md'))}` })
+check('/skill 能读库路径并回 frontmatter + body（角色编辑页要看明细）', libraryRead.status === 200 && typeof libraryRead.json?.data?.frontmatter === 'string' && typeof libraryRead.json?.data?.body === 'string', `${libraryRead.status} ${JSON.stringify(Object.keys(libraryRead.json?.data ?? {}))}`)
+
+// 库里放一个与全局根同名的技能：它是分发源，不参与加载，也就不该出现在同名覆盖清单里。
+placeSkill(routeLibrary, 'alpha', true)
+const catalogWithShadow = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog', headers: { 'x-skill-console-session': fakeSession.id } })
+// 先钉死「清单非空」：单独写 `every(side.root !== 'library')` 时，覆盖清单一旦整体为空，
+// 这条会**空真通过**——「库被混进 findCollisions」反而测不出来。
+// 现场锚点是 proj-only（全局根 + 项目根各一份）；注意**不能**拿 alpha 当锚点：
+// 本章前面 `roles/activate` 会把项目里不在角色内的技能（含项目版 alpha）停用，
+// 所以 alpha 在 DSH 两根本身并不构成覆盖，它只是「库里与全局根同名」的那个影子。
+const shadowNames = (catalogWithShadow.json?.data?.collisions ?? []).map((entry) => entry.name)
+check('前提：同名覆盖清单非空（proj-only 由全局 + 项目两份构成，否则下一条是空真）', shadowNames.includes('proj-only'), JSON.stringify(shadowNames))
+check('库里的同名技能不进 /catalog.collisions', (catalogWithShadow.json?.data?.collisions ?? []).every((entry) => [entry.winner, ...(entry.shadowed ?? [])].every((side) => side?.root !== 'library')), JSON.stringify(catalogWithShadow.json?.data?.collisions))
+check('库块自己照常看得见这个同名技能', (catalogWithShadow.json?.data?.library?.skills ?? []).some((skill) => skill.name === 'alpha'))
+
+const libraryToggle = await callRouteOrReport(wsRoute, {
+	method: 'POST',
+	path: '/api/skill-console/toggle',
+	headers: { ...ROLE_WRITE, ...roleSession },
+	body: { path: join(routeLibrary, 'lib-only', 'SKILL.md'), enabled: false, project: projectDir },
+})
+check('启停围栏仍看不见库：/toggle 拿库内路径 400 error.path.outsideRoots', libraryToggle.status === 400 && libraryToggle.json?.code === 'error.path.outsideRoots', `${libraryToggle.status} ${JSON.stringify(libraryToggle.json)}`)
+check('被拒之后库里那份一个字节没动', existsSync(join(routeLibrary, 'lib-only', 'SKILL.md')) && !existsSync(join(routeLibrary, 'lib-only', 'SKILL.md.disabled')))
+
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
 section('浏览器半边（模块表 / slot 契约 / 降级）')

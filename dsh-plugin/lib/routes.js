@@ -275,7 +275,9 @@ export function createRouteHandlers(deps) {
 			const path = url.searchParams.get('path')
 			if (path === null || path.trim() === '') throw httpError(400, 'error.proto.missingPath', '缺少 path 参数')
 			const { project, roots } = readProjectOfRequest(req, url)
-			const skill = readSkill(path, { roots, withBody: true })
+			// 详情要看得见库里的那份，所以**读**围栏临时加上库根；
+			// 写路径（启停 / 删除 / 移动 / 分发）一个字不改，它们仍只喂 `resolveRoots()`。
+			const skill = readSkill(path, { roots: [...roots, libraryRootOf()], withBody: true })
 			const flags = sourceFlagsOf(project)
 			return {
 				...skill,
