@@ -2136,7 +2136,8 @@ section('角色候选带所属仓库与明细（角色编辑页要显示来源�
 
 // 不用 `/repositories/add`：`wsRoute` 的 manager 在 `apply` 时抓的是**真实** fetch（桩只在第一个
 // ctx 的 apply 窗口里注入过），联网不可用。自建一份 DSH_HOME + 手写的状态文件：`record.library`
-// 里有条目、`record.skills` 为空——所以来源只可能来自 `record.library`。
+// 里只有 `lib-sourced`，`record.skills` 里只有**不在库里**的 `proj-local`——所以候选的来源只可能
+// 来自 `record.library`，项目技能的来源只可能来自 `record.skills`，两张表各自可辨。
 //
 // ⚠️ 简报 bug（最小修，见 task-4-report.md §5）：简报原文的 `sourceHome` / `sourceStateDir`
 // 在本文件 4h 节（contract.mjs:2065-2066）**已经被声明**，照抄会在解析期抛
