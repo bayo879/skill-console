@@ -611,11 +611,12 @@ window.__ModuleLoader__.load({
 .sc-repogroup { border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 /* 首个仓库组紧跟在根组头下面：根组头自己已有 border-bottom，再画一条就是双线。 */
 .sc-group-head + .sc-repogroup { border-top: 0; }
-/* 说明行夹在组头和首个仓库组之间，会让 .sc-group-head + .sc-repogroup 失配
-   （首个仓库组重新长出 1px 上边框，与组头的下边框叠成双线）。 */
-.sc-group-head + .sc-library-hint + .sc-repogroup { border-top: 0; }
-/* 有 warning 时说明行有两行，上面那条会失配（首个仓库组的前一个是 warn 行）——
-   用「紧跟任一说明行」兜住，避免首个仓库组又出现双线。 */
+/* 说明行夹在组头和首个仓库组之间，会让上面的 .sc-group-head + .sc-repogroup 失配
+   （首个仓库组重新长出 1px 上边框，与组头的下边框叠成双线）。
+   这条按「紧跟任一说明行」写，一条覆盖两种状态：没有 warning 时前一个是提示行，
+   有 warning 时前一个是固定的警示行——两个都带 .sc-library-hint。
+   （原先并列的那条「组头 + 说明行 + 仓库组」选择器被这条完全吃掉：
+   无 warning 时它对同一节点给出相同声明，有 warning 时它根本匹配不上。） */
 .sc-library-hint + .sc-repogroup { border-top: 0; }
 .sc-repogroup-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.03)); }
 .sc-repogroup.is-open > .sc-repogroup-head { border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }

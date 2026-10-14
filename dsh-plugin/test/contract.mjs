@@ -2597,6 +2597,30 @@ check('库行仍有「详情」', collect(libraryRowTree, (element) => element.p
 check('库行不渲染启停开关（库不是技能根）', !JSON.stringify(libraryRowTree).includes('skills.toggleAria'))
 check('库行不渲染删除 / 移到可用仓库', collect(libraryRowTree, (element) => element.props !== undefined && (element.props.children === 'skills.delete' || element.props.children === 'skills.move')).length === 0)
 check('库行来源行照旧（技能行与角色候选行共用一处）', libraryRowTexts.includes('本地（非订阅）') && tCalls.includes('skills.source'))
+// 「同步到项目」按钮有两半用户可见行为：disabled（点不动）与 title（为什么点不动）。
+// 评审 M18：只改这两半、别处不动，仍然 862/862 全绿——「没选工作区所以按钮是灰的」这条
+// 最容易静默失效的路径当时没有任何墙。这里在渲染层各钉一条，两半必须能各自独立变红。
+const librarySyncButton = (overrides) =>
+	collect(
+		exposed.SkillRow({
+			t: tStub,
+			busy: false,
+			mode: 'library',
+			skill: { name: 'lib-only', description: DESCRIPTION, enabled: true, diagnostics: [], declaredName: 'lib-only', installed: null, root: 'library', scope: 'global' },
+			onDelete: () => {},
+			onMove: () => {},
+			canMove: true,
+			onOpen: () => {},
+			onSync: () => {},
+			...overrides,
+		}),
+		(element) => element.props !== undefined && element.props.children === 'skills.syncToProject',
+	)[0]
+const noWorkspaceButton = librarySyncButton({ canSync: false })
+check('没有项目根时「同步到项目」真的 disabled（漏了是静默禁用，最危险的一种）', noWorkspaceButton !== undefined && noWorkspaceButton.props.disabled === true, JSON.stringify(noWorkspaceButton?.props ?? null))
+check('disabled 时必须给出「先选工作区」的 title（只说灰不解释等于没提示）', noWorkspaceButton !== undefined && noWorkspaceButton.props.title === 'skills.libraryNoWorkspace', JSON.stringify(noWorkspaceButton?.props ?? null))
+const workspaceButton = librarySyncButton({ canSync: true })
+check('选了工作区后同一个按钮不再 disabled（canSync 判据不能恒真）', workspaceButton !== undefined && workspaceButton.props.disabled === false && workspaceButton.props.title === undefined, JSON.stringify(workspaceButton?.props ?? null))
 
 const libraryRepoGroupTree = exposed.SkillRepoGroup({
 	t: tStub,
@@ -3279,13 +3303,26 @@ check('库扫描有 warning 时给固定文案行，且绝不渲染宿主原文�
 	return texts.join('|')
 })())
 // ④ 库块说明行的专属 class 与 CSS。渲染级断言看不见样式，只能钉源码字面量：
-//    `sc-hint` 是通用说明行，库块改回它会让「双线」修复失配；两条 CSS 是那个修复的另一半。
+//    `sc-hint` 是通用说明行，库块改回它会让「双线」修复失配；CSS 是那个修复的另一半。
 check('库块说明行用专属 class sc-library-hint', clientSource.includes("className: 'sc-library-hint'"))
 check('sc-library-hint 自带内边距', /\.sc-library-hint\s*\{[^}]*padding:/.test(clientSource))
-check('说明行不破 .sc-group-head + .sc-repogroup 的相邻选择器（否则首个仓库组双线）', clientSource.includes('.sc-group-head + .sc-library-hint + .sc-repogroup'))
-// 注意锚点必须带行首 `\n`：`.sc-library-hint + .sc-repogroup { border-top: 0; }` 是上面那条
-// `.sc-group-head + .sc-library-hint + .sc-repogroup { … }` 的**子串**，不带行首锚的
-// `includes` 会被长规则满足，删掉新规则也不变红（半空真检查）。
+// warning 行是**渲染出来的那一行**，所以直接盯它的 className 而不是源码字面量：
+// 评审 M7/M23——把 `sc-library-hint` 从这行摘掉，别处不动，862/862 全绿，而「紧跟说明行」
+// 那条相邻选择器（下面的 3313）在 warning 状态下再也匹配不上，首个仓库组会重新长出双线。
+// 只断言「两个 class 都在」，不断言完整字符串，将来加 class 不会误红。
+// 说明 `h('div', { className }, t('…'))` 的第三个参数落在 element.children（不是 props.children），
+// 所以这里按 className 找那一行，而不是按子文本找。
+const libraryWarnRow = collect(
+	exposed.SkillGroup({ t: tStub, mode: 'library', canSync: true, collapsedRepos: {}, root: { key: 'library', label: '可用仓库', exists: true, skills: [], warning: '读 /Users/someone/.dsh/skill-console/library 失败' } }),
+	(element) => element.props !== undefined && typeof element.props.className === 'string' && element.props.className.includes('sc-library-warn'),
+)[0]
+check('warning 行同时带 sc-library-hint 与 sc-library-warn（丢前者会让双线修复失配）', libraryWarnRow !== undefined && String(libraryWarnRow.props.className).includes('sc-library-hint') && String(libraryWarnRow.props.className).includes('sc-library-warn') && collectTexts(libraryWarnRow).includes('skills.libraryWarning'), String(libraryWarnRow?.props?.className ?? null))
+check('CSS 里真有 .sc-library-warn 规则（丢了警示色静默消失，没人察觉）', /\.sc-library-warn\s*\{[^}]*color:/.test(clientSource))
+// 注意锚点必须带行首 `\n`：`.sc-library-hint + .sc-repogroup { border-top: 0; }` 是任何
+// `.sc-group-head + …` 长规则的**子串**，不带行首锚的 `includes` 会被长规则满足，
+// 删掉规则也不变红（半空真检查，本计划实测过）。
+// 这条是「首个仓库组不出现双线」在 **warning 状态下**的唯一墙：warning 行是提示行的兄弟，
+// `.sc-group-head + .sc-repogroup` 与 `.sc-group-head + .sc-library-hint + …` 都会失配。
 check('说明行加 warning 行后相邻选择器仍成立（否则首个仓库组又双线）', /\n\.sc-library-hint \+ \.sc-repogroup \{ border-top: 0; \}/.test(clientSource))
 // ⑤ 同步动作的行为钉在 `syncToProject` 函数体这个窗口里，不用全文 includes。
 //    窗口切到「同缩进的下一个声明」为止，比「取 N 个字符」更难悄悄漏掉尾部。
@@ -3295,7 +3332,10 @@ const syncBody = (() => {
 	const end = clientSource.slice(at).indexOf('\n\t\t\tconst ')
 	return end < 0 ? clientSource.slice(at) : clientSource.slice(at, at + end)
 })()
-check('同步动作窗口切到了完整函数体（切错会让下面几条一起假绿）', syncBody.startsWith('const syncToProject = (skill) =>') && syncBody.trimEnd().endsWith('}') && syncBody.includes('apiPost('), syncBody.slice(0, 60))
+// 窗口右界是「同缩进的下一个声明」——评审认为可接受：切错时下面这条守卫会**大声**变红，
+// 而不是让后续几条悄悄假绿。这里再把「花括号收支平衡」加进守卫（零成本）：
+// 窗口真切在函数末尾时收支必然相等，截在函数中间则几乎必然不等。
+check('同步动作窗口切到了完整函数体（切错会让下面几条一起假绿）', syncBody.startsWith('const syncToProject = (skill) =>') && syncBody.trimEnd().endsWith('}') && syncBody.includes('apiPost(') && (syncBody.match(/\{/g) || []).length === (syncBody.match(/\}/g) || []).length, syncBody.slice(0, 60))
 check('同步载荷带 path（不是空对象）', syncBody.includes('withProject(project, { path: skill.path })'), syncBody.slice(0, 200))
 check('两态回执分别接 skills.syncDone / skills.syncLocalKept', syncBody.includes("t('skills.syncDone'") && syncBody.includes("t('skills.syncLocalKept'"))
 check('以 copied === false 判 localKept（不是恒真/恒假）', /data\.copied === false/.test(syncBody))
