@@ -141,10 +141,10 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 - **`candidates` 是平面数组，唯一来源是可用仓库**（0.7.0）。项目技能与全局技能都**不在**候选里；候选里的
   `enabled` 是「库里那份文件是否启用」（同步进来的都是启用态，所以基本恒为 `true`），能不能勾一律由
   `toggleable` 表达：软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`。
-- **`description` 与 `installed` 是 0.9.0 补的**（两个数组同一套 `candidateOf`，所以形状一致）：`description`
+- **`description` 与 `installed` 是 0.9.0 补的**（两个数组同一套 `candidateOf`）：`description`
   是 frontmatter 的简介（缺失时空串），`installed` 是订阅安装快照 `{id, owner, name, commit, sourcePath, syncedAt}`
   （查的是 `libraryIndex()`，所以带 `syncedAt`）、非订阅为 `null`——角色编辑页靠这两个字段在候选行上显示**所属仓库**与明细。
-- **`projectSkills` 是本项目现状**，形状与候选逐字段相同（同一套 `candidateOf`），只用来算行首 `●`（同名已启用）/ `○`（没有或没启用）与界面上的数量——它**不参与勾选**。库为空时 `candidates` 是空数组，界面给「去技能仓库页签同步」的引导。
+- **`projectSkills` 是本项目现状**，同一套 `candidateOf`，只用来算行首 `●`（同名已启用）/ `○`（没有或没启用）与界面上的数量——它**不参与勾选**。它与候选的唯一字段差别在 `installed`：查的是 `installedIndex()`（`record.skills` 台账），那份快照**没有 `syncedAt`**。库为空时 `candidates` 是空数组，界面给「去技能仓库页签同步」的引导。
 - `stats.enable` / `stats.disable` / `stats.copy` 就是这次切换的落盘动作数（直接来自 `planRole`）：界面用 `disable` 讲「切换会停用 N 个」、用 `copy` 讲「会从可用仓库复制 N 个进来」。
 - `stats.localKept` 与顶层 `localKept` 是「项目里已有同名」的条目：**保留项目那份，绝不被库里那份覆盖**；它不计入 `stats.total`。
 - `status` 由 `planRole` 推导：无激活角色 → `unassigned`；`steps` 为空 → `matched`；否则 → `drifted`。注意 `missing` **不影响** `status`——角色里的名字在可用仓库与本项目都找不到时只是没得管，不算「磁盘偏离角色」；它由 `stats.missing` 单独讲。

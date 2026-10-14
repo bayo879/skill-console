@@ -486,8 +486,9 @@ kind: 'prefix'   path: '/api/skill-console'
   缺失时空串；`installed` 是订阅安装快照、非订阅为 `null`，角色编辑页用它显示「所属仓库」）；
   勾选的含义是「切换时把**库里那份复制进项目**」。能不能操作一律由 `toggleable` 表达
   （软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`）。**项目技能与全局技能都不在候选里。**
-- `projectSkills` 是本项目技能根的现状（同形状，**0.9.0 起同样带 `description` / `installed`**；项目侧
-  那份不是订阅装来的时 `installed` 为 `null`）：界面只用它算行首的 `●`（本项目已启用）/ `○`
+- `projectSkills` 是本项目技能根的现状（**0.9.0 起同样带 `description` / `installed`**，字段与候选一致；
+  唯一差别是这里的 `installed` 查 `installedIndex()`（`record.skills` 台账），快照里**没有 `syncedAt`**；
+  项目侧那份不是订阅装来的时 `installed` 为 `null`）：界面只用它算行首的 `●`（本项目已启用）/ `○`
   与 `stats.total`，**不参与勾选与对齐**。
 - `library` 是可用仓库的位置与技能数，供界面讲「候选从哪来」；`library.path` 只用于定位，界面不显示绝对路径。
 - `stats.copy`：角色里要、项目里没有、**库里有**的技能数量——切换时会把它们从库复制进项目根（复制出来一律启用态）。

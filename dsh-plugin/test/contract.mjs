@@ -2726,8 +2726,9 @@ await new Promise((resolve) => setTimeout(resolve, 20))
 check('点「详情」真的发出读 /skill 的请求（行为级，不只看源码里有没有那行字）', t7DetailStage.requests.length === 1, `请求 ${t7DetailStage.requests.length} 次`)
 // T7-W3：原来这条只看 URL 里有没有 `path=%2F…`——把 `apiGet('/skill', …)` 整个换成
 // `apiGet('/library/install', …)`，那串 path 查询参数可能还在，测试**全绿**（终审实测），
-// 于是「点详情变成调写接口」这种最危险的口子能被容忍。这里钉死端点前缀与 method。
-check('详情请求打的是 GET /skill 端点本身（换成写端点 /library/install 就红）', String(t7DetailStage.requests[0]?.url ?? '').startsWith('/api/skill-console/skill?') && t7DetailStage.requests[0]?.options?.method === 'GET', JSON.stringify({ url: t7DetailStage.requests[0]?.url ?? null, method: t7DetailStage.requests[0]?.options?.method ?? null }))
+// 于是「点详情变成调写接口」这种最危险的口子能被容忍。这里钉死端点前缀与 method，
+// 并保留「请求里带的就是被点那条技能的 path」这一维度（换成别的 path 同样要红）。
+check('详情请求打的是 GET /skill 端点本身（换成写端点 /library/install 就红）', String(t7DetailStage.requests[0]?.url ?? '').startsWith('/api/skill-console/skill?') && t7DetailStage.requests[0]?.options?.method === 'GET' && String(t7DetailStage.requests[0]?.url ?? '').includes('path=%2Flib%2Flib-link%2FSKILL.md'), JSON.stringify({ url: t7DetailStage.requests[0]?.url ?? null, method: t7DetailStage.requests[0]?.options?.method ?? null }))
 const t7DetailElement = t7DetailStage.stageWalk(t7DetailStage.renderSecond()).find((element) => element.type === t7DetailStage.stageExports.SkillDetail)
 check('详情回来后 RolesPanel 渲染出 SkillDetail（复用现成组件；setDetail 断掉这里就红）', t7DetailElement !== undefined && t7DetailElement.props?.state?.data?.content === 'DETAIL-BODY' && t7DetailElement.props?.collision === null, t7DetailElement === undefined ? 'SkillDetail 没出现' : JSON.stringify({ state: t7DetailElement.props?.state, collision: t7DetailElement.props?.collision }))
 
