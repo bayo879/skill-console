@@ -2130,6 +2130,52 @@ const libraryToggle = await callRouteOrReport(wsRoute, {
 check('启停围栏仍看不见库：/toggle 拿库内路径 400 error.path.outsideRoots', libraryToggle.status === 400 && libraryToggle.json?.code === 'error.path.outsideRoots', `${libraryToggle.status} ${JSON.stringify(libraryToggle.json)}`)
 check('被拒之后库里那份一个字节没动', existsSync(join(routeLibrary, 'lib-only', 'SKILL.md')) && !existsSync(join(routeLibrary, 'lib-only', 'SKILL.md.disabled')))
 
+// ── 4j. 角色候选带来源与简介（0.9.0）─────────────────────────────────────
+
+section('角色候选带所属仓库与明细（角色编辑页要显示来源）')
+
+// 不用 `/repositories/add`：`wsRoute` 的 manager 在 `apply` 时抓的是**真实** fetch（桩只在第一个
+// ctx 的 apply 窗口里注入过），联网不可用。自建一份 DSH_HOME + 手写的状态文件：`record.library`
+// 里有条目、`record.skills` 为空——所以来源只可能来自 `record.library`。
+//
+// ⚠️ 简报 bug（最小修，见 task-4-report.md §5）：简报原文的 `sourceHome` / `sourceStateDir`
+// 在本文件 4h 节（contract.mjs:2065-2066）**已经被声明**，照抄会在解析期抛
+// `SyntaxError: Identifier 'sourceHome' has already been declared`，整套测试一条都跑不了。
+// 这里只改名字（`rolesSource*`），夹具语义、断言、顺序与简报逐字一致。
+const rolesSourceHome = tempDir('sc-roles-source')
+const rolesSourceStateDir = join(rolesSourceHome, 'skill-console')
+placeSkill(join(rolesSourceStateDir, 'library'), 'lib-sourced', true)
+writeFileSync(join(rolesSourceStateDir, 'repositories.json'), `${JSON.stringify({ version: 1, repositories: [{ id: 'o/r', owner: 'o', name: 'r', ref: '', subdirectory: 'skills', addedAt: '2026-01-01T00:00:00.000Z', skills: {}, library: { 'lib-sourced': { sourcePath: 'skills/lib-sourced', kind: 'flat', commit: 'deadbeef', syncedAt: '2026-01-01T00:00:00.000Z', files: {} } } }] }, null, 2)}\n`)
+const rolesSourceProject = tempDir('sc-roles-source-project')
+placeSkill(join(rolesSourceProject, '.dsh', 'skills'), 'proj-local', true)
+// 第二个库技能**故意不写 description**：`describeFrontmatter` 对缺失的 description 回 `null`
+// （`lib/frontmatter.js:124`），而 `/roles` 的接口声明是 `description:string`。没有这一条时，
+// `candidateOf` 里 `typeof skill.description === 'string' ? ... : ''` 的 else 分支在整套测试里
+// 没有任何证据——把它改成 `skill.description ?? null` 也只有这一条会红。
+writeSkill(join(rolesSourceStateDir, 'library', 'lib-nodesc'), 'name: lib-nodesc')
+const envBefore = process.env.DSH_HOME
+process.env.DSH_HOME = rolesSourceHome
+const sourceCtx = guardedCtx()
+host.apply(sourceCtx.ctx)
+process.env.DSH_HOME = envBefore
+// `DSH_HOME` 只在 `apply` 那一瞬是临时值（`resolveDshHome()` 在 `apply` 时求值一次，
+// `lib/index.js:81`），必须还回去。**本节点之后已经没有任何路由调用**（后面是浏览器半边），
+// 所以泄漏出去不会自己变红——只能在还原处显式钉死。
+check('夹具用完把 DSH_HOME 还回去了（泄漏不会自己变红，只能显式断言）', process.env.DSH_HOME === envBefore, `实际 ${String(process.env.DSH_HOME)} vs ${String(envBefore)}`)
+const sourceRoute = sourceCtx.routeOf()
+
+const catalogWithSource = await callRouteOrReport(sourceRoute, { path: '/api/skill-console/catalog' })
+const syncedRow = (catalogWithSource.json?.data?.library?.skills ?? []).find((skill) => skill.name === 'lib-sourced')
+check('订阅同步进来的库技能带来源（owner/name/commit）', syncedRow?.installed?.owner === 'o' && syncedRow.installed.name === 'r' && syncedRow.installed.commit === 'deadbeef', JSON.stringify(syncedRow?.installed))
+
+const rolesWithSource = await callRouteOrReport(sourceRoute, { path: `/api/skill-console/roles?project=${encodeURIComponent(rolesSourceProject)}` })
+const candidateRow = (rolesWithSource.json?.data?.candidates ?? []).find((skill) => skill.name === 'lib-sourced')
+check('候选带 description（悬停看简介）', typeof candidateRow?.description === 'string' && candidateRow.description.length > 0, JSON.stringify(candidateRow))
+check('候选带 installed（显示所属仓库与明细）', candidateRow?.installed?.owner === 'o' && candidateRow.installed.name === 'r' && candidateRow.installed.commit === 'deadbeef', JSON.stringify(candidateRow?.installed))
+const nodescRow = (rolesWithSource.json?.data?.candidates ?? []).find((skill) => skill.name === 'lib-nodesc')
+check('没写 description 的候选回空串而不是 null（接口声明的是 description:string）', nodescRow !== undefined && nodescRow.description === '', JSON.stringify(nodescRow))
+check('项目技能那一栏也有 installed 与 description 字段', (rolesWithSource.json?.data?.projectSkills ?? []).length > 0 && (rolesWithSource.json?.data?.projectSkills ?? []).every((skill) => 'installed' in skill && 'description' in skill), JSON.stringify(rolesWithSource.json?.data?.projectSkills))
+
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
 section('浏览器半边（模块表 / slot 契约 / 降级）')

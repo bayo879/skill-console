@@ -183,13 +183,18 @@ export function createRouteHandlers(deps) {
 	 * 启停）。所以这里没有「控制项目技能」「控制全局技能」的话术：勾一个候选只是说
 	 * 「这个角色要它」。`toggleable` 在库里不表示「能不能启停」（库不是技能根），
 	 * 而是「能不能被复制进项目」——软链是 false，`readOnlyReason` 说明原因。
+	 *
+	 * `installed` 由调用方按「这块技能该用哪张来源表」传进来（库用 `libraryIndex()`，
+	 * 项目技能用 `installedIndex()`）：角色编辑页要显示所属仓库与简介。
 	 */
-	const candidateOf = (skill) => ({
+	const candidateOf = (skill, installed) => ({
 		name: skill.name,
 		path: skill.path,
 		enabled: skill.enabled === true,
 		toggleable: skill.toggleable === true,
 		readOnlyReason: skill.readOnlyReason ?? null,
+		description: typeof skill.description === 'string' ? skill.description : '',
+		installed: installed ?? null,
 	})
 
 	/** 这个项目当前激活的角色（没有就 null）。 */
@@ -418,6 +423,10 @@ export function createRouteHandlers(deps) {
 			const stats = plan === null
 				? { inRole: 0, total: projectSkills.length, copy: 0, enable: 0, disable: 0, noop: 0, skipped: 0, missing: 0, localKept: 0 }
 				: { inRole: activeRole.skills.length, ...plan.stats, localKept: plan.localKept.length }
+			// 两块技能各查各的来源表：候选在库里（`record.library`），项目技能是装进技能根的
+			// 台账（`record.skills`）。用错表会把「装过但已不在库」的来源显示到候选上。
+			const libraryInstalled = repositories.libraryIndex()
+			const projectInstalled = repositories.installedIndex()
 			return {
 				roles: roleStore.list().map((role) => publicRole(role, activeRole?.id ?? null)),
 				active: activeRole === null ? null : { id: activeRole.id, name: activeRole.name },
@@ -426,8 +435,8 @@ export function createRouteHandlers(deps) {
 				library: { path: libraryDir, count: librarySkills.length },
 				stats,
 				localKept: plan === null ? [] : plan.localKept,
-				candidates: librarySkills.map((skill) => candidateOf(skill)),
-				projectSkills: projectSkills.map((skill) => candidateOf(skill)),
+				candidates: librarySkills.map((skill) => candidateOf(skill, libraryInstalled.get(skill.name) ?? null)),
+				projectSkills: projectSkills.map((skill) => candidateOf(skill, projectInstalled.get(skill.name) ?? null)),
 			}
 		},
 
