@@ -2145,7 +2145,7 @@ section('角色候选带所属仓库与明细（角色编辑页要显示来源�
 const rolesSourceHome = tempDir('sc-roles-source')
 const rolesSourceStateDir = join(rolesSourceHome, 'skill-console')
 placeSkill(join(rolesSourceStateDir, 'library'), 'lib-sourced', true)
-writeFileSync(join(rolesSourceStateDir, 'repositories.json'), `${JSON.stringify({ version: 1, repositories: [{ id: 'o/r', owner: 'o', name: 'r', ref: '', subdirectory: 'skills', addedAt: '2026-01-01T00:00:00.000Z', skills: {}, library: { 'lib-sourced': { sourcePath: 'skills/lib-sourced', kind: 'flat', commit: 'deadbeef', syncedAt: '2026-01-01T00:00:00.000Z', files: {} } } }] }, null, 2)}\n`)
+writeFileSync(join(rolesSourceStateDir, 'repositories.json'), `${JSON.stringify({ version: 1, repositories: [{ id: 'o/r', owner: 'o', name: 'r', ref: '', subdirectory: 'skills', addedAt: '2026-01-01T00:00:00.000Z', skills: { 'proj-local': { sourcePath: 'skills/proj-local', kind: 'flat', commit: 'cafebabe', files: {} } }, library: { 'lib-sourced': { sourcePath: 'skills/lib-sourced', kind: 'flat', commit: 'deadbeef', syncedAt: '2026-01-01T00:00:00.000Z', files: {} } } }] }, null, 2)}\n`)
 const rolesSourceProject = tempDir('sc-roles-source-project')
 placeSkill(join(rolesSourceProject, '.dsh', 'skills'), 'proj-local', true)
 // 第二个库技能**故意不写 description**：`describeFrontmatter` 对缺失的 description 回 `null`
@@ -2175,6 +2175,10 @@ check('候选带 installed（显示所属仓库与明细）', candidateRow?.inst
 const nodescRow = (rolesWithSource.json?.data?.candidates ?? []).find((skill) => skill.name === 'lib-nodesc')
 check('没写 description 的候选回空串而不是 null（接口声明的是 description:string）', nodescRow !== undefined && nodescRow.description === '', JSON.stringify(nodescRow))
 check('项目技能那一栏也有 installed 与 description 字段', (rolesWithSource.json?.data?.projectSkills ?? []).length > 0 && (rolesWithSource.json?.data?.projectSkills ?? []).every((skill) => 'installed' in skill && 'description' in skill), JSON.stringify(rolesWithSource.json?.data?.projectSkills))
+// 上面那条只看**字段在不在**：两块技能各查各的来源表（候选查 `record.library`，项目技能查
+// `record.skills` 台账）这个决定，换错表时字段照样在、值变成 null，只有下面这条会红。
+const projectRow = (rolesWithSource.json?.data?.projectSkills ?? []).find((skill) => skill.name === 'proj-local')
+check('项目技能的来源查的是「装进技能根」的台账（把两张表换过来只这一条红）', projectRow?.installed?.owner === 'o' && projectRow.installed.commit === 'cafebabe', JSON.stringify(projectRow?.installed))
 
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
