@@ -1637,7 +1637,9 @@ window.__ModuleLoader__.load({
 			const root = props.root || {}
 			const skills = Array.isArray(root.skills) ? root.skills : []
 			const groups = groupSkillsByRepo(skills)
-			const label = rootLabel(t, root.key, root.label)
+			// 库块标题走 skills.library：宿主给的 root.label 是硬编码中文「可用仓库」，
+			// 两语界面都不该用它（0.9.0 §2）。
+			const label = props.mode === 'library' ? t('skills.library') : rootLabel(t, root.key, root.label)
 			const collapsedRepos = props.collapsedRepos ?? {}
 			// 两层折叠共用一个字典：根用 root.key，仓库用 root.key + ':' + repoKey（规格 §4）。
 			const collapsed = collapsedRepos[root.key] === true

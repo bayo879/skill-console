@@ -3240,6 +3240,14 @@ check('没有项目根时「同步到项目」禁用（沿用 project-dsh 判据
 check('库块把 onSync 接给 library 块（T5 未加兜底，漏接即点击报错）', /h\(SkillGroup, \{[\s\S]{0,600}key: 'library'[\s\S]{0,600}onSync: syncToProject/.test(clientSource))
 // 漏接 canSync 是**静默**失效（按钮变灰 + 提示「先选工作区」，没有任何报错）——单独钉一条。
 check('库块把 canSync 接给 library 块（漏接是静默禁用，最危险的一种）', /h\(SkillGroup, \{[\s\S]{0,600}key: 'library'[\s\S]{0,600}canSync,/.test(clientSource))
+// ① 四条 ERROR_KEYS 映射都要有覆盖：brief 原先只枚举了三个「原文带绝对路径」的码，
+//    error.proto.missingPath → error.missingPath 删掉仍全绿（T6 实现者实测）。
+for (const [code, key] of [['error.skill.notFound', 'error.skillNotFound'], ['error.transfer.symlink', 'error.transferSymlink'], ['error.copy.exists', 'error.copyExists'], ['error.proto.missingPath', 'error.missingPath']]) {
+	check(`ERROR_KEYS 映射 ${code} → ${key}（漏了会直接渲染宿主原文）`, new RegExp(`'${code.replace(/\./g, '\\.')}':\\s*'${key}'`).test(clientSource))
+}
+// ② skills.library 必须真被读掉。首版它是死键，库块标题走 rootLabel → t('roots.library')
+//    找不到就回落宿主硬编码中文「可用仓库」，**英文界面也是中文**。
+check('库块标题消费 skills.library（否则英文界面回落宿主中文，且该键是死键）', /mode === 'library'[\s\S]{0,80}'skills\.library'/.test(clientSource))
 const pathLeakingCodes = [['error.skill.notFound', 'error.skillNotFound'], ['error.transfer.symlink', 'error.transferSymlink'], ['error.copy.exists', 'error.copyExists']]
 check('分发能触发的三个「原文带绝对路径」错误码都映射成本地化文案（面板不会冒出库目录地址）', pathLeakingCodes.every(([code, key]) => clientSource.includes(`'${code}'`) && clientSource.includes(`'${key}'`) && typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string'), JSON.stringify(pathLeakingCodes.map(([code, key]) => [code, dictionaryZh[key]])))
 
