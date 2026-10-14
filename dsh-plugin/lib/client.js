@@ -2829,9 +2829,10 @@ window.__ModuleLoader__.load({
 								}),
 								h('span', { className: 'sc-role-skill-name' }, skill.name),
 							),
-							// 同样直接调用：替身不展开函数组件，而这条断言要读到来源文本。
-							SkillSourceLine({ t, skill }),
+							// spec §2.3 的行内顺序：开关/名字 → ●/○ → 来源行 → 只读标签 → 详情。
 							h('span', { className: 'sc-sub' }, enabledInProject.has(skill.name) ? '●' : '○'),
+							// 同样直接调用（不挂成组件元素）：替身不展开函数组件，而这条断言要读到来源文本。
+							SkillSourceLine({ t, skill }),
 							skill.toggleable === true ? null : h(UiTag, { tone: 'quiet' }, readOnlyText(t, skill)),
 							typeof props.onOpenDetail === 'function'
 								? h(UiButton, { variant: 'ghost', size: 'sm', onClick: () => props.onOpenDetail(skill), children: t('common.detail') })

@@ -2553,7 +2553,7 @@ const editorWithSource = RoleEditorExport({
 })
 const editorTexts = collectTexts(editorWithSource)
 check('候选行显示所属仓库（owner/name）', editorTexts.includes('o/r'), JSON.stringify(editorTexts))
-check('候选行有「详情」按钮', collect(editorWithSource, (element) => element.props !== undefined && element.props.children === 'common.detail').length === 1)
+check('候选行有「详情」按钮', collect(editorWithSource, (element) => element.props !== undefined && element.props.children === 'common.detail').length === 1, `详情按钮 ${collect(editorWithSource, (element) => element.props !== undefined && element.props.children === 'common.detail').length} 个`)
 // 「来源行与技能行共用一处」是 spec 的设计声明，但**光有 exports 钉不住它**：
 // 把 SkillSourceLine 在 SkillRow 里重新内联、导出照旧，T5 的 822 条全绿（T5 评审实测）。
 // 这里用源码级断言把「两个调用点都是普通函数调用」钉死（≠ h(SkillSourceLine, …)，契约测试的
@@ -2581,27 +2581,135 @@ const readonlyEditorProps = {
 }
 const readonlyEditorTree = RoleEditorExport(readonlyEditorProps)
 const readonlyDetailButtons = collect(readonlyEditorTree, (element) => element.props !== undefined && element.props.children === 'common.detail')
-check('只读候选行也有「详情」按钮（下一节 label 断言的前提，没有它就是空墙）', readonlyDetailButtons.length === 1)
+check('只读候选行也有「详情」按钮（下一节 label 断言的前提，没有它就是空墙）', readonlyDetailButtons.length === 1, `详情按钮 ${readonlyDetailButtons.length} 个`)
 const labelElement = collect(readonlyEditorTree, (element) => element.type === 'label')[0]
 check('「详情」按钮不在 label 里（点它不会顺手把开关也切了）', labelElement !== undefined && !JSON.stringify(labelElement).includes('common.detail'), JSON.stringify(labelElement))
-check('候选行外层换成非 label 元素（按钮只要放进行内就会触发 label 的默认行为）', collect(readonlyEditorTree, (element) => element.props !== undefined && element.props['data-skill'] === 'lib-link')[0]?.type === 'div')
+check('候选行外层换成非 label 元素（按钮只要放进行内就会触发 label 的默认行为）', collect(readonlyEditorTree, (element) => element.props !== undefined && element.props['data-skill'] === 'lib-link')[0]?.type === 'div', String(collect(readonlyEditorTree, (element) => element.props !== undefined && element.props['data-skill'] === 'lib-link')[0]?.type))
 check('label 仍只包开关与名字（点名字照样能勾选，开关语义没丢）', labelElement !== undefined && collectTexts(labelElement).includes('lib-link'), JSON.stringify(labelElement))
-check('点「详情」交出这一行的 skill（不是行名字符串）', (() => {
+
+// spec §2.3 的行内顺序是 `[开关] 名字 ●/○ [来源行] [只读标签] [详情]`。T7 第一轮把来源行插到了
+// ●/○ **之前**（照简报 snippet 的样子），改与不改都是绿的——没有任何一条墙钉相对顺序，所以它漂了。
+// 这里把整行的元素顺序钉死（元素类型/类名识别，不看文本，免得翻译改动就误红）。
+const readonlyRow = collect(readonlyEditorTree, (element) => element.props !== undefined && element.props['data-skill'] === 'lib-link')[0]
+const readonlyRowKinds = (readonlyRow?.children ?? []).filter((element) => element !== null && element !== undefined).map((element) => {
+	if (element.type === 'label') return 'pick'
+	if (element.props?.className === 'sc-sub') return 'state'
+	if (Array.isArray(element.children) && element.children.some((child) => child?.props?.className === 'sc-source')) return 'source'
+	if (element.props?.children === 'common.detail') return 'detail'
+	return 'other'
+})
+check('候选行内元素顺序符合 spec §2.3（开关+名字 → ●/○ → 来源行 → 只读标签 → 详情）', JSON.stringify(readonlyRowKinds) === JSON.stringify(['pick', 'state', 'source', 'other', 'detail']), JSON.stringify(readonlyRowKinds))
+const detailClickSeen = (() => {
 	const seen = []
 	const tree = RoleEditorExport({ ...readonlyEditorProps, onOpenDetail: (skill) => seen.push(skill && skill.name) })
 	const button = collect(tree, (element) => element.props !== undefined && element.props.children === 'common.detail')[0]
 	button?.props?.onClick()
-	return seen.length === 1 && seen[0] === 'lib-link'
-})())
-check('不传 onOpenDetail 时不渲染详情按钮（新 prop 可选，老调用点不受影响）', collect(RoleEditorExport({ ...readonlyEditorProps, onOpenDetail: undefined }), (element) => element.props !== undefined && element.props.children === 'common.detail').length === 0)
+	return seen
+})()
+check('点「详情」交出这一行的 skill（不是行名字符串）', detailClickSeen.length === 1 && detailClickSeen[0] === 'lib-link', JSON.stringify(detailClickSeen))
+check('不传 onOpenDetail 时不渲染详情按钮（新 prop 可选，老调用点不受影响）', collect(RoleEditorExport({ ...readonlyEditorProps, onOpenDetail: undefined }), (element) => element.props !== undefined && element.props.children === 'common.detail').length === 0, '不传 onOpenDetail 时仍然渲染了详情按钮')
 
-// RolesPanel 侧的接线在渲染级不可达：测试替身的 useState 只给初值、useEffect 不跑，面板永远停在
-// data === null 的早退分支（详情面板要等 effect 把 /roles 拉回来才可能出现）。所以这里钉调用点，
-// 每条都能被唯一变异弄红。
-const rolesPanelSource = clientSource.slice(clientSource.indexOf('function RolesPanel'), clientSource.indexOf('function SkillConsoleSection'))
-check('RolesPanel 复用 SkillDetail 渲染候选明细（不是自造一套详情）', /h\(SkillDetail, \{ t, state: detail,/.test(rolesPanelSource))
-check('角色编辑页的详情按 path 读宿主的 /skill（读围栏已扩到库根）', rolesPanelSource.includes("apiGet('/skill', withProject(project, { path: skill.path }), props.sessionId)"))
-check('角色的候选行「详情」接的是 RolesPanel 的 loadDetail', /h\(RoleEditor, \{[\s\S]{0,600}onOpenDetail: loadDetail,/.test(rolesPanelSource))
+// RolesPanel 侧的接线：**行为级**墙。第一轮这里只有三条源码级调用点钉子，理由是「渲染级不可达」——
+// 评审用 /tmp/t7rev/poc.mjs 证伪了那个前提：真正不可达的是**文件级共享的 reactStub**（它的 useState
+// 只给初值、setter 是空操作），不是渲染本身。下面用一个**自带 react 替身**的独立模块实例
+// （再调一次 `loaded.factory`，不碰共享替身，所以既有断言一条都不受影响）真把 RolesPanel 渲染出来：
+// hook 帧按「帧名 + 序号」持久化、setter 真的写回，于是点「详情」之后的第二次渲染能看到 SkillDetail
+// 真的出现。三条旧信号（复用 SkillDetail / 按 path 请求 / 接的是 loadDetail）全部由行为覆盖。
+const t7DetailStage = (() => {
+	const frames = new Map()
+	let frame = 'root'
+	let cursor = 0
+	const beginFrame = (name) => { frame = String(name); cursor = 0 }
+	const requests = []
+	const stageReact = {
+		createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
+		useState(initial) {
+			const key = `${frame}#${cursor++}`
+			if (!frames.has(key)) frames.set(key, typeof initial === 'function' ? initial() : initial)
+			return [frames.get(key), (next) => { frames.set(key, typeof next === 'function' ? next(frames.get(key)) : next) }]
+		},
+		useEffect: () => {},
+		useMemo: (fn) => (typeof fn === 'function' ? fn() : undefined),
+		useCallback: (fn) => fn,
+		useRef: () => ({ current: 0 }),
+		Fragment: 'Fragment',
+		Component: class {
+			constructor(props) { this.props = props || {}; this.state = {} }
+			setState(next) { this.state = { ...this.state, ...next } }
+		},
+	}
+	const stagePrimitives = new Proxy({}, {
+		get: (target, key) => {
+			if (typeof key !== 'string') return undefined
+			if (/^[A-Z]/.test(key)) return (props) => stageReact.createElement(key, { 'data-primitive': key, ...(props || {}) })
+			return () => ''
+		},
+	})
+	let spec = null
+	const stageSandbox = {
+		window: { __ModuleLoader__: { load: (value) => { spec = value } }, addEventListener() {}, removeEventListener() {} },
+		console,
+		fetch: async (url, options) => {
+			requests.push({ url: String(url), options })
+			return { ok: true, json: async () => ({ ok: true, data: { content: 'DETAIL-BODY' } }) }
+		},
+		URLSearchParams,
+		setTimeout,
+		clearTimeout,
+		setInterval,
+		clearInterval,
+		localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+		document: { addEventListener() {}, removeEventListener() {}, getElementById: () => null, createElement: () => ({ style: {} }), head: { appendChild() {} } },
+	}
+	vm.runInNewContext(clientSource, stageSandbox, { filename: 'lib/client.js（详情行为墙专用实例）' })
+	const stageExports = spec.factory((name) => {
+		if (name === 'react') return stageReact
+		if (name === '@deepseek-ai/dsh-client-ui-primitives') return stagePrimitives
+		throw new Error(`客户端 bundle 只该 require react / primitives，实际 require 了 ${name}`)
+	})
+	let stageSection = null
+	stageExports.apply({
+		locale: { bind: () => (key) => key, register: () => () => {} },
+		effect: (fn) => { const stop = fn(); return typeof stop === 'function' ? stop : () => {} },
+		slots: {
+			inject: (name, callback) => callback(),
+			register: (meta, component) => { stageSection = { meta, component }; return () => {} },
+		},
+	})
+	const renderInFrame = (component, props) => { beginFrame(component?.name || 'anon'); return component(props || {}) }
+	const stageWalk = (node, out = []) => {
+		if (node === null || node === undefined || typeof node !== 'object') return out
+		if (node.type !== undefined) out.push(node)
+		for (const child of node.children || []) stageWalk(child, out)
+		const propChildren = node.props?.children
+		if (Array.isArray(propChildren)) for (const child of propChildren) stageWalk(child, out)
+		return out
+	}
+	// 页签容器：帧 0=当前页签、1=项目上下文 state、2=pick、3=目录版本 store，切到 roles 分支。
+	frames.set('SkillConsoleSection#0', 'roles')
+	frames.set('SkillConsoleSection#1', { loading: false, data: null, error: null })
+	frames.set('SkillConsoleSection#2', null)
+	frames.set('SkillConsoleSection#3', 0)
+	const boundary = renderInFrame(stageSection.component, {})
+	const shell = renderInFrame(boundary.children[0].type, boundary.children[0].props)
+	const rolesPanelElement = shell.children.find((element) => element?.props?.key === 'roles')?.children?.[0]
+	// 绕过 RolesPanel 的 `data === null` 早退分支：帧 0=目录版本 store、1=data、2=draft、3=busy、
+	// 4=notice、5=error、6=detail。
+	const candidate = { name: 'lib-link', path: '/lib/lib-link/SKILL.md', enabled: true, toggleable: true, description: '', installed: null }
+	frames.set('RolesPanel#1', { active: null, project: null, roles: [], candidates: [candidate], projectSkills: [], stats: {}, localKept: [] })
+	frames.set('RolesPanel#2', { id: 'r', name: 'x', skills: [] })
+	const firstTree = renderInFrame(rolesPanelElement.type, rolesPanelElement.props)
+	const roleEditorElement = stageWalk(firstTree).find((element) => element.type === stageExports.RoleEditor)
+	const opened = { found: roleEditorElement !== undefined, wired: typeof roleEditorElement?.props?.onOpenDetail === 'function' }
+	if (opened.wired) roleEditorElement.props.onOpenDetail(candidate)
+	return { requests, stageExports, opened, renderSecond: () => renderInFrame(rolesPanelElement.type, rolesPanelElement.props), stageWalk }
+})()
+check('RolesPanel 把详情动作接到了候选行（漏接就是点「详情」什么都不发生）', t7DetailStage.opened.found && t7DetailStage.opened.wired, `RoleEditor ${t7DetailStage.opened.found ? '在树里' : '不在树里'}，onOpenDetail ${t7DetailStage.opened.wired ? '是函数' : '不是函数'}`)
+await new Promise((resolve) => setTimeout(resolve, 20))
+check('点「详情」真的发出读 /skill 的请求（行为级，不只看源码里有没有那行字）', t7DetailStage.requests.length === 1, `请求 ${t7DetailStage.requests.length} 次`)
+check('详情请求按 path 读宿主的 /skill（读围栏已扩到库根）', (t7DetailStage.requests[0]?.url ?? '').includes('path=%2Flib%2Flib-link%2FSKILL.md'), t7DetailStage.requests[0]?.url ?? '没有请求')
+const t7DetailElement = t7DetailStage.stageWalk(t7DetailStage.renderSecond()).find((element) => element.type === t7DetailStage.stageExports.SkillDetail)
+check('详情回来后 RolesPanel 渲染出 SkillDetail（复用现成组件；setDetail 断掉这里就红）', t7DetailElement !== undefined && t7DetailElement.props?.state?.data?.content === 'DETAIL-BODY' && t7DetailElement.props?.collision === null, t7DetailElement === undefined ? 'SkillDetail 没出现' : JSON.stringify({ state: t7DetailElement.props?.state, collision: t7DetailElement.props?.collision }))
 
 const rolesReadme = readFileSync(join(LIB, 'client.js'), 'utf8')
 check('角色面板不复用全局根的写路径（不在客户端拼 applyRole 的入参）', !/applyRole/.test(rolesReadme))
