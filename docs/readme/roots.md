@@ -93,3 +93,7 @@
 ③ 失败**不回滚**：库里那份已经就位，响应 `sourceRemoved:false` + `warning` 如实报告，用户再点一次「删除」即可清掉原处那份。复制失败时按复制自身的错误码上抛，原处没动。
 
 来源可以是**任意技能根**（全局或当前工作区项目技能根）：0.7.0 之前这条只允许全局 → 项目，0.8.0 起统一成「搬进可用仓库」，`error.transfer.notGlobal` 这枚码**已不再产生**。可用仓库不是技能根（不在 `ROOT_DEFS` / `resolveRoots` 里），所以 `libraryRootOf()` 是路由层临时合成的根描述，只用来复用 `scanRoot` / `copySkillIntoRoot`。
+
+### 反方向：从可用仓库分发到项目（0.9.0）
+
+反方向（0.9.0）：`POST /library/install` 把库里那份复制进**当前工作区的项目根**（`copySkillIntoRoot(projectRoot, source)`），库里那份留着。目标固定、请求体没有 `target`；源以库的扫描结果为准（`librarySkillsOf()` 里按 `path` 找），路径不在库里就抛围栏的码。同名一律 `localKept`（保留项目那份，不覆盖、也不动它的启用态）；真的复制成功时落进项目根的那份是启用态。

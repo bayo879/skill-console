@@ -68,7 +68,7 @@ kind: 'prefix'   path: '/api/skill-console'
 {
   "ok": true,
   "data": {
-    "version": "0.8.0",              // 插件版本（package.json 的 version）；配置页头部显示它
+    "version": "0.9.0",              // 插件版本（package.json 的 version）；配置页头部显示它
     "dshHome": "/Users/…/harness",
     "stateDir": "/Users/…/harness/skill-console",
     "libraryDir": "/Users/…/harness/skill-console/library",   // 可用仓库：角色的候选与复制来源（DSH 不加载它）
@@ -143,13 +143,30 @@ kind: 'prefix'   path: '/api/skill-console'
         "winner": { "root": "project-dsh", "path": "…" },
         "shadowed": [ { "root": "user-dsh", "path": "…" } ] }
     ],
-    "warnings": [ { "code": "error.root.read", "message": "…" } ]
+    "warnings": [ { "code": "error.root.read", "message": "…" } ],
+    // 0.9.0：可用仓库那一块，**只在缺省 scope=all 时出现**（收窄响应里没有这个字段）。
+    // 它与 roots[*] 平行，但**块本身更窄**：没有 path / scope / writable，也**不进 collisions**。
+    "library": {
+      "key": "library", "label": "可用仓库", "exists": true,
+      "skills": [ { "name": "tdd", "declaredName": "tdd", "description": "…",
+                    "path": "…/skill-console/library/tdd/SKILL.md", "kind": "directory",
+                    "enabled": true, "inRole": false, "inLibrary": true,
+                    "installed": { "id": "obra/superpowers", "owner": "obra", "name": "superpowers",
+                                   "commit": "abc1234", "sourcePath": "skills/tdd" } } ],  // 非订阅为 null
+      "warning": null            // 库目录读不动时 { code, message }；message 带绝对路径，界面不许显示
+    }
   }
 }
 ```
 
 > 排序：`roots` 按上表顺序；每个根内技能按 `name` 升序。
 > `collisions` 只列**多个根里同名且都启用**的技能（这正是「关掉项目副本后全局副本接管」要在 UI 上讲清楚的地方）。
+> **`library`（0.9.0）**：可用仓库那一块，**只在缺省 `scope=all` 时出现**——`?scope=global` / `?scope=project`
+> 的收窄响应里**没有**这个字段（收窄的语义是「只看某个技能根」，库不是技能根）。技能行与技能根内同形
+> （`scanRoot` 同一套扫描），但**块本身更窄**：没有 `path` / `scope` / `writable`。`exists` 由宿主自己算
+> （库目录不存在时 `false`、`skills` 为空）。它**不进 `collisions`、也不进 `roots`**：库不参与 DSH 加载，
+> 混进冲突计算会造出假冲突。`warning` 只在库目录读不动时非 null（`{ code, message }`）——`message` 里带
+> 库目录的绝对路径，**界面不许显示它**，只能给固定文案。
 
 ## 3. `GET /skill?path=<abs>`
 
@@ -171,6 +188,9 @@ kind: 'prefix'   path: '/api/skill-console'
   }
 }
 ```
+0.9.0 起**读围栏临时包含库根**：`path` 指向可用仓库里的技能也能读（技能页签第三块的「详情」就是这么读的）；
+**写围栏没变**——库路径在 `/toggle`、`/skills/delete`、`/skills/move-to-library` 这些写接口上仍是 400 `error.path.outsideRoots`。
+
 错误：404 `error.skill.notFound`；400 `error.path.outsideRoots`。
 
 ## 4. `POST /toggle`
@@ -447,9 +467,12 @@ kind: 'prefix'   path: '/api/skill-console'
     "stats": { "inRole": 2, "total": 7, "copy": 0, "enable": 0, "disable": 0, "noop": 5, "skipped": 0, "missing": 0, "localKept": 0 },
     "localKept": [ { "name": "g", "projectPath": "…/g/SKILL.md", "libraryPath": "…/library/g/SKILL.md" } ],
     // 候选 = 可用仓库里的技能（0.7.0 起是**平面数组**，不再分 project/global）
-    "candidates": [ { "name": "g", "path": "…/library/g", "enabled": true, "toggleable": true, "readOnlyReason": null } ],
+    "candidates": [ { "name": "g", "path": "…/library/g", "enabled": true, "toggleable": true, "readOnlyReason": null,
+                      "description": "…", "installed": { "id": "obra/superpowers", "owner": "obra", "name": "superpowers",
+                                      "commit": "abc1234", "sourcePath": "skills/g" }|null } ],   // 后两个字段 0.9.0 补
     // 本项目技能根现状，只用于算「● 已启用 / ○」与数量，**不参与勾选与对齐**
-    "projectSkills": [ { "name": "a", "path": "…/.dsh/skills/a", "enabled": true, "toggleable": true, "readOnlyReason": null } ],
+    "projectSkills": [ { "name": "a", "path": "…/.dsh/skills/a", "enabled": true, "toggleable": true, "readOnlyReason": null,
+                         "description": "…", "installed": null } ],
     "library": { "path": "/Users/…/harness/skill-console/library", "count": 3 }
   }
 }
@@ -458,10 +481,13 @@ kind: 'prefix'   path: '/api/skill-console'
 - `status`：无激活角色 → `unassigned`；`planRole` 的 `steps` 为空 → `matched`；否则 `drifted`。
   `missing` **不影响** `status`（只是「角色里有、本项目没有」）。
 - `drifted` **不自动纠正**：手工改过开关就一直显示「已偏离」，等用户主动再切一次。
-- `candidates` 是**平面数组**（只来自可用仓库），每项只带 `name` / `path` / `enabled` / `toggleable` /
-  `readOnlyReason`；勾选的含义是「切换时把**库里那份复制进项目**」。能不能操作一律由 `toggleable`
-  表达（软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`）。**项目技能与全局技能都不在候选里。**
-- `projectSkills` 是本项目技能根的现状（同形状）：界面只用它算行首的 `●`（本项目已启用）/ `○`
+- `candidates` 是**平面数组**（只来自可用仓库），每项带 `name` / `path` / `enabled` / `toggleable` /
+  `readOnlyReason` / `description` / `installed`（后两个是 0.9.0 补的：`description` 是 frontmatter 的简介，
+  缺失时空串；`installed` 是订阅安装快照、非订阅为 `null`，角色编辑页用它显示「所属仓库」）；
+  勾选的含义是「切换时把**库里那份复制进项目**」。能不能操作一律由 `toggleable` 表达
+  （软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`）。**项目技能与全局技能都不在候选里。**
+- `projectSkills` 是本项目技能根的现状（同形状，**0.9.0 起同样带 `description` / `installed`**；项目侧
+  那份不是订阅装来的时 `installed` 为 `null`）：界面只用它算行首的 `●`（本项目已启用）/ `○`
   与 `stats.total`，**不参与勾选与对齐**。
 - `library` 是可用仓库的位置与技能数，供界面讲「候选从哪来」；`library.path` 只用于定位，界面不显示绝对路径。
 - `stats.copy`：角色里要、项目里没有、**库里有**的技能数量——切换时会把它们从库复制进项目根（复制出来一律启用态）。
@@ -598,6 +624,36 @@ kind: 'prefix'   path: '/api/skill-console'
 - `to` 是**目标技能路径**（目录包给目录、扁平给 `.md` 文件）；`from` 是原发现文件路径；`kind` 是源技能形态（`directory` / `flat`）。
 - 面板上这个按钮**有条件出现**（0.8.0）：技能已在当前角色里（`inRole`）或已在可用仓库里（`inLibrary`）时不显示。
 
+## 24. `POST /library/install`  ← 从可用仓库分发到项目（0.9.0）
+
+```jsonc
+// 请求：可用仓库里的发现文件路径；project 省略时按 x-skill-console-session 头严格解析当前工作区
+{ "path": "/Users/…/skill-console/library/tdd/SKILL.md", "project": "/Users/…/proj-a" }
+// data：复制成功（项目技能根多一份，启用态）
+{ "copied": true, "name": "tdd", "targetPath": "/Users/…/proj-a/.dsh/skills/tdd", "kind": "directory" }
+// data：项目里已有同名 —— 保留项目那份，什么都不写
+{ "copied": false, "reason": "localKept",
+  "kept": { "name": "tdd", "path": "/Users/…/proj-a/.dsh/skills/tdd/SKILL.md", "enabled": true, "kind": "directory" } }
+```
+语义：
+- **目标恒定是当前工作区的项目技能根**：请求体里**没有 `target`**，也不会写全局根或可用仓库——全局根是
+  角色切换的领域（README 边界 #4）。
+- 源以**库的扫描结果**为准（`librarySkillsOf()` 里按 `path` 找）：路径不在库里时先按库根读一次，
+  让围栏 / 不存在的码优先抛出（例如越界 400 `error.path.outsideRoots`），再回 404 `error.skill.notFound`。
+- **从不覆盖**：项目技能根里已有同名（**启用或停用都算**）就原样保留、如实报告 `copied:false, reason:'localKept'`，
+  `kept` 是项目里那份的 `{name, path, enabled, kind}`。要更新项目里那份，得先自己处理掉它。
+- 复制成功时项目根多一份（**启用态**），**库那份原样不动**；**不写订阅台账、不登记角色**——这只是把现成的
+  文件复制过去，与订阅快照、角色定义都无关（`roles.json` 一个字节不动）。
+- 复制出来的是**普通技能**：软链接来源由 `copySkillIntoRoot` 挡下 400 `error.transfer.symlink`；
+  并发下同名突然出现时 409 `error.copy.exists` 兜底。没有可确认的动作，所以**不收 `confirm`**。
+- **天然幂等**：连点两次，第二次必然走 `localKept` 分支（第一次已经把项目那份建出来了）。
+- `project`（**工作区目录路径**）给了就只认它（无效 → 400 `error.workspace.invalid`）；没给才按
+  `x-skill-console-session` 头严格解析，解析不出项目根 400 `error.role.noProject`，**不会回落到「最近一个会话」**。
+  库目录没配置（`libraryDir === ''`）时 500 `error.internal`。
+- 面板上这一行在技能页签第三块（可用仓库），按钮叫「同步到项目」；解析不出项目技能根时按钮禁用（tooltip
+  说明要先选工作区）。库扫描有 warning 时，这一块照常渲染，只多一行**固定文案**的警告（不显示含绝对路径的
+  `warning.message`）。
+
 ---
 
 ## 前端必须处理的错误码
@@ -668,5 +724,6 @@ kind: 'prefix'   path: '/api/skill-console'
 7. `POST /skills/move-to-library`：先备份原处那份 → 复制进可用仓库 → 删原处那份；删原处失败不回滚（库里那份留着，如实报 `warning`）
 8. `POST /repositories/install` 的 `target:'project'`：只写当前工作区的项目技能根 `<projectRoot>/.dsh/skills/`，不更新订阅快照
 9. `POST /repositories/sync`：只写可用仓库 `<DSH_HOME>/skill-console/library/` 与订阅状态里的 `record.library` 台账；**不写任何技能根**，也不让技能注册表失效
+10. `POST /library/install`：只在**当前工作区的项目技能根**建一份（临时名 + rename，失败清理临时件），**绝不覆盖**——目标已有同名时一个字节都不写，直接回 `copied:false`
 
 除此之外不写任何文件；不会自动删技能——删除／移动只在你显式调用时发生，且删前必先备份。

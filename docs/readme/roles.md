@@ -1,6 +1,6 @@
 # 角色（技能组合）
 
-状态：**已实现**（`dsh-skill-console@0.8.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
+状态：**已实现**（`dsh-skill-console@0.9.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
 
 ---
 
@@ -132,8 +132,8 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
   status: 'unassigned' | 'matched' | 'drifted',
   stats: { inRole, total, copy, enable, disable, noop, skipped, missing, localKept },
   localKept: [{ name, projectPath, libraryPath }],
-  candidates: [{ name, path, enabled, toggleable, readOnlyReason }],   // 只来自可用仓库（平面数组）
-  projectSkills: [{ name, path, enabled, toggleable, readOnlyReason }], // 本项目现状，只用来算 ●/○
+  candidates: [{ name, path, enabled, toggleable, readOnlyReason, description, installed }],   // 只来自可用仓库（平面数组）
+  projectSkills: [{ name, path, enabled, toggleable, readOnlyReason, description, installed }], // 本项目现状，只用来算 ●/○
   library: { path, count }                                            // 可用仓库在哪、有几个技能
 }
 ```
@@ -141,6 +141,9 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 - **`candidates` 是平面数组，唯一来源是可用仓库**（0.7.0）。项目技能与全局技能都**不在**候选里；候选里的
   `enabled` 是「库里那份文件是否启用」（同步进来的都是启用态，所以基本恒为 `true`），能不能勾一律由
   `toggleable` 表达：软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`。
+- **`description` 与 `installed` 是 0.9.0 补的**（两个数组同一套 `candidateOf`，所以形状一致）：`description`
+  是 frontmatter 的简介（缺失时空串），`installed` 是订阅安装快照 `{id, owner, name, commit, sourcePath}`、
+  非订阅为 `null`——角色编辑页靠这两个字段在候选行上显示**所属仓库**与明细。
 - **`projectSkills` 是本项目现状**，形状与候选逐字段相同（同一套 `candidateOf`），只用来算行首 `●`（同名已启用）/ `○`（没有或没启用）与界面上的数量——它**不参与勾选**。库为空时 `candidates` 是空数组，界面给「去技能仓库页签同步」的引导。
 - `stats.enable` / `stats.disable` / `stats.copy` 就是这次切换的落盘动作数（直接来自 `planRole`）：界面用 `disable` 讲「切换会停用 N 个」、用 `copy` 讲「会从可用仓库复制 N 个进来」。
 - `stats.localKept` 与顶层 `localKept` 是「项目里已有同名」的条目：**保留项目那份，绝不被库里那份覆盖**；它不计入 `stats.total`。
@@ -200,7 +203,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ### 单文件增长的取舍（已知代价）
 
-角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，`client.js` 现在 **3136 行**（`wc -l dsh-plugin/lib/client.js`，0.8.0 收尾时；0.7.0 收尾时是 3493 行——0.8.0 撤掉批量层与安装块后**变短了**），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
+角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，0.9.0 再加可用仓库块（第三块）与候选行的来源 / 详情，`client.js` 现在 **3278 行**（`wc -l dsh-plugin/lib/client.js`，0.9.0 收尾时；0.7.0 收尾时是 3493 行——0.8.0 撤掉批量层与安装块后**变短了**，0.9.0 又**变长了**），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
 
 已选择：**接受增长，不引入构建机制**（保住「改代码就生效」，且没有「改了源码忘了跑构建、界面静默跑旧代码」这种故障态）。缓解办法是把角色面板的**逻辑尽量压到宿主 `roles.js`**，客户端只留渲染。
 
@@ -224,7 +227,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ## 9. 测试覆盖（沿用现有三层）
 
-**`test/contract.mjs`（离线；0.8.0 收尾时全量 785 项）**
+**`test/contract.mjs`（离线；0.9.0 收尾时全量 880 项）**
 
 - 角色 CRUD；`roles.json` 损坏时拒绝写入且原文件不动；角色数/技能数上限；重名 409；名字非法 400。
 - `planRole` 纯函数：`copy` / `localKept` / `missing` / `disable` / 软链进 `skipped` / 同名双副本一起处置 / 连切两次第二次全 `noop` / `stats.total = copy+enable+disable+noop+skipped` 且 `localKept` 不计入。
@@ -245,7 +248,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 - `README.md`：功能节的「角色 tab」、设计边界的第 4 / 5 条、已知边界里「角色排除不掉全局技能」「可用仓库没有管理界面」与「客户端单文件超 2000 行」几条、模块表的 `roles.js` 行，都是本文件的入口摘要。
 - `docs/HTTP-API.md` 第 16–21 节是这 6 个角色端点的冻结契约（含 `copy` / `localKept` / `missing` 字段）；第 13 节是 `POST /repositories/sync`（写入可用仓库）。
-- 插件版本 `0.8.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
+- 插件版本 `0.9.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
 - `planRole` 的 `sources` 现在是**可用仓库**的扫描结果；不传时按「没有可用来源」处理，只是不会有 `copy` / `localKept`。
 
 ## 11. 明确不做的事
@@ -254,6 +257,6 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 - **不做「角色决定全局技能」**。技术上必须写全局根，与前提冲突。
 - **不做角色继承 / 分组 / 标签**。平铺一层够用。
 - **角色不搬运技能**：角色只会启用 / 停用项目里的技能，以及把全局有的**复制**进项目；不会把项目里的技能移走或删除。「删除技能 / 移到可用仓库」是技能 tab 里独立的显式动作（都先备份）；其中「移到可用仓库」只在技能还没被当前角色管着、且库里没有同名时才出现。
-- **不做可用仓库的管理界面**（浏览 / 删除 / 停用 / 自动清理）。库只是角色候选与复制来源的存放处：清理由用户自己删目录，上游删掉的技能不会自动从库里消失（卡片上的「与最新清单一致 / 不一致」两个数才是准的）。
+- **不做可用仓库的管理界面**（0.9.0 起只提供**浏览**：技能页签第三块只读展示 + 行内「详情」/「同步到项目」，仍然没有删除 / 停用 / 自动清理）。库只是角色候选与复制来源的存放处：清理由用户自己删目录，上游删掉的技能不会自动从库里消失（卡片上的「与最新清单一致 / 不一致」两个数才是准的）。
 - **不做自动同步 / 定时同步**。链路必须由人手点「同步到可用仓库」触发。
 - **不做自动对齐**。打开面板不会静默改盘——写操作必须由用户显式点击。
