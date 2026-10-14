@@ -138,9 +138,10 @@ export function createRouteHandlers(deps) {
 	 * 它不进 `findCollisions`（库不参与加载，混进去会造出假冲突），也不进 `roots`：
 	 * 客户端的折叠键 `${root.key}:${group.key}` 照样能用，因为 `key` 是 `library`。
 	 * `exists` 得自己算——根那块的 `exists` 是 `resolveRoots()` 给的。
-	 * `flags`（`sourceFlagsOf` 的产物）由调用方传进来，避免同一个请求里重复扫描。
+	 * `flags`（`sourceFlagsOf` 的产物）由调用方传进来，避免同一个请求里重复扫描
+	 * （`project` 因此不需要——`flags` 已经是按它算好的）。
 	 */
-	const libraryBlockOf = (project, flags) => {
+	const libraryBlockOf = (flags) => {
 		if (libraryDir === '') return { key: 'library', label: '可用仓库', exists: false, skills: [], warning: null }
 		const root = libraryRootOf()
 		const { skills, warning } = scanRoot(root)
@@ -264,7 +265,7 @@ export function createRouteHandlers(deps) {
 				scope,
 				project: scope === 'global' ? null : project,
 				roots: rows,
-				...(scope === 'all' ? { library: libraryBlockOf(project, flags) } : {}),
+				...(scope === 'all' ? { library: libraryBlockOf(flags) } : {}),
 				collisions: findCollisions(scanned),
 				warnings,
 			}
