@@ -153,6 +153,7 @@ window.__ModuleLoader__.load({
 				'skills.library': '可用仓库',
 				'skills.syncDone': '已把「{name}」同步到项目技能根（启用态）。',
 				'skills.syncLocalKept': '项目里已有「{name}」，保留项目那份（停用态也不动）。',
+				'skills.libraryWarning': '可用仓库目录读不完整，列表可能不全；稍后重试或检查库目录权限。',
 				'skills.noDescription': '未提供简介',
 				'skills.nameFromDirectory': 'frontmatter 没写 name，这里显示的是目录/文件名',
 				'skills.status.enabled': '已启用',
@@ -369,6 +370,7 @@ window.__ModuleLoader__.load({
 				'skills.library': 'Library',
 				'skills.syncDone': 'Synced "{name}" into the project skill root (enabled).',
 				'skills.syncLocalKept': 'The project already has "{name}"; the project copy is kept as is.',
+				'skills.libraryWarning': 'The library directory could not be read completely, so the list may be incomplete. Retry later or check the directory permissions.',
 				'skills.noDescription': 'No description provided',
 				'skills.nameFromDirectory': 'Frontmatter has no name; the folder/file name is shown instead',
 				'skills.status.enabled': 'Enabled',
@@ -612,6 +614,9 @@ window.__ModuleLoader__.load({
 /* 说明行夹在组头和首个仓库组之间，会让 .sc-group-head + .sc-repogroup 失配
    （首个仓库组重新长出 1px 上边框，与组头的下边框叠成双线）。 */
 .sc-group-head + .sc-library-hint + .sc-repogroup { border-top: 0; }
+/* 有 warning 时说明行有两行，上面那条会失配（首个仓库组的前一个是 warn 行）——
+   用「紧跟任一说明行」兜住，避免首个仓库组又出现双线。 */
+.sc-library-hint + .sc-repogroup { border-top: 0; }
 .sc-repogroup-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.03)); }
 .sc-repogroup.is-open > .sc-repogroup-head { border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 .sc-repogroup-title { font-weight: 600; font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace); }
@@ -640,6 +645,8 @@ window.__ModuleLoader__.load({
 .sc-hint { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
 /* 库块说明行：自带内边距，与 .sc-group-head / .sc-row 的 10px 对齐。 */
 .sc-library-hint { padding: 6px 10px; font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
+/* 库目录读不完整时的提示行：同一处内边距，换成警示色。 */
+.sc-library-warn { color: var(--dsw-alias-state-warn-label, #b7791f); }
 .sc-warn { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.6; color: var(--dsw-alias-state-warn-label, #b7791f); word-break: break-word; }
 .sc-err { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-state-error-primary, #d1242f); word-break: break-word; }
 .sc-ok { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-state-success-primary, #2ea043); }
@@ -1671,6 +1678,12 @@ window.__ModuleLoader__.load({
 				// 库块的说明行：库不是技能根，DSH 不加载它；没有项目根时改说「先选工作区」。
 				props.mode === 'library'
 					? h('div', { className: 'sc-library-hint' }, t(props.canSync === true ? 'skills.libraryHint' : 'skills.libraryNoWorkspace'))
+					: null,
+				// 库扫不动时补一行**固定文案**：`root.warning` 里拼的是库目录**绝对路径**
+				// （roots.js:260），面板不显示目录地址（README 技能 tab 那条），
+				// 所以只提示「读不完整」，不把宿主的 warning.message 渲染出去。
+				props.mode === 'library' && typeof root.warning === 'string' && root.warning !== ''
+					? h('div', { className: 'sc-library-hint sc-library-warn' }, t('skills.libraryWarning'))
 					: null,
 				collapsed
 					? null
@@ -3229,6 +3242,9 @@ window.__ModuleLoader__.load({
 		exports.collisionRowOf = collisionRowOf
 		exports.SkillDetail = SkillDetail
 		exports.missingSkillsOf = missingSkillsOf
+		// 映射表必须真的被查：这条导出让「errorMessage 有没有查 ERROR_KEYS」能被行为断言打到，
+		// 而不是只钉表里的字面量（漏查就会把带绝对路径的宿主原文渲染上屏）。
+		exports.errorMessage = errorMessage
 		return module.exports
 	},
 })

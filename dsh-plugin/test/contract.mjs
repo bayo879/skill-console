@@ -3093,6 +3093,11 @@ for (const key of [
 	'skills.expand', 'skills.collapse', 'skills.tagInRole', 'skills.tagInLibrary',
 	'error.roleNoProject', 'error.tooMany',
 	'workspace.session', 'error.workspaceInvalid',
+	// 0.9.0 T5 / T6 新增：库块与逐行同步、四条错误码映射的词典键。
+	// 上面那条 zh/en 一致性断言只抓得住**不对称**的删除；两边一起删是全绿的，所以逐个清点。
+	'skills.library', 'skills.libraryHint', 'skills.libraryEmpty', 'skills.libraryNoWorkspace',
+	'skills.syncToProject', 'skills.syncDone', 'skills.syncLocalKept', 'skills.libraryWarning',
+	'error.skillNotFound', 'error.transferSymlink', 'error.copyExists', 'error.missingPath',
 ]) {
 	check(`词典 zh / en 都有 ${key}`, typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string', `zh=${typeof dictionaryZh[key]} en=${typeof dictionaryEn[key]}`)
 }
@@ -3237,6 +3242,10 @@ check('折叠记忆把库块一起算进去', clientSource.includes('collapseKey
 check('没有项目根时「同步到项目」禁用（沿用 project-dsh 判据）', clientSource.includes("const canSync = roots.some((root) => root.key === 'project-dsh')"))
 // T5 里库行的整行 onClick 直接调 props.onSync（控制器裁决不加兜底，漏接就 TypeError）——
 // 这条钉子确保 Task 6 真的把 onSync 接在**库块**那个 h(SkillGroup, {...}) 上。
+// 它和下面那条 canSync 钉子都是**调用点**检查：渲染级断言看不见 props 接线。
+// 注意两条都用 600 字符窗口，且对**属性顺序敏感**（`key: 'library'` 必须在前面），
+// 所以将来在 `key: 'library'` 与这两个属性之间插一段 700 字符的注释会让它们误红——
+// 调用点钉子可以接受这个代价，但**行为**检查一律不许再依赖正则（见下面 ②③⑤⑥）。
 check('库块把 onSync 接给 library 块（T5 未加兜底，漏接即点击报错）', /h\(SkillGroup, \{[\s\S]{0,600}key: 'library'[\s\S]{0,600}onSync: syncToProject/.test(clientSource))
 // 漏接 canSync 是**静默**失效（按钮变灰 + 提示「先选工作区」，没有任何报错）——单独钉一条。
 check('库块把 canSync 接给 library 块（漏接是静默禁用，最危险的一种）', /h\(SkillGroup, \{[\s\S]{0,600}key: 'library'[\s\S]{0,600}canSync,/.test(clientSource))
@@ -3245,9 +3254,57 @@ check('库块把 canSync 接给 library 块（漏接是静默禁用，最危险�
 for (const [code, key] of [['error.skill.notFound', 'error.skillNotFound'], ['error.transfer.symlink', 'error.transferSymlink'], ['error.copy.exists', 'error.copyExists'], ['error.proto.missingPath', 'error.missingPath']]) {
 	check(`ERROR_KEYS 映射 ${code} → ${key}（漏了会直接渲染宿主原文）`, new RegExp(`'${code.replace(/\./g, '\\.')}':\\s*'${key}'`).test(clientSource))
 }
-// ② skills.library 必须真被读掉。首版它是死键，库块标题走 rootLabel → t('roots.library')
+// ② 库块标题必须真消费 skills.library。首版它是死键，库块标题走 rootLabel → t('roots.library')，
 //    找不到就回落宿主硬编码中文「可用仓库」，**英文界面也是中文**。
-check('库块标题消费 skills.library（否则英文界面回落宿主中文，且该键是死键）', /mode === 'library'[\s\S]{0,80}'skills\.library'/.test(clientSource))
+//    这里用**渲染级**断言（`SkillGroup` 是导出的，`tStub` 原样返回键名）：正则会被
+//    `==` vs `===`、或两个片段之间插一段长注释弄成假绿/假红，渲染出的文本才是用户看到的东西。
+const libraryGroupTexts = (props) => collectTexts(exposed.SkillGroup({ t: tStub, root: { key: 'library', label: '可用仓库', exists: true, skills: [] }, mode: 'library', collapsedRepos: {}, ...props }))
+check('库块标题消费 skills.library（否则英文界面回落宿主中文，且该键是死键）', libraryGroupTexts({ canSync: true }).includes('skills.library'), libraryGroupTexts({ canSync: true }).join('|'))
+check('库块提示行按 canSync 两态', libraryGroupTexts({ canSync: true }).includes('skills.libraryHint') && libraryGroupTexts({ canSync: false }).includes('skills.libraryNoWorkspace'), libraryGroupTexts({ canSync: false }).join('|'))
+check('空库给库专属空态', libraryGroupTexts({ canSync: true }).includes('skills.libraryEmpty'), libraryGroupTexts({ canSync: true }).join('|'))
+// root 模式的标题必须仍走宿主 label 的本地化（roots.*），不能被库分支的 skills.library 劫持。
+// 这里**不能用 tStub**：`rootLabel` 把「翻译结果 === 键名」判为未翻译而回落宿主 label
+// （client.js:990-996），tStub 下永远拿不到 'roots.project-dsh'，只会得到 fixture 的 label。
+const tZhReal = (key) => (typeof dictionaryZh[key] === 'string' ? dictionaryZh[key] : key)
+const rootModeTexts = collectTexts(exposed.SkillGroup({ t: tZhReal, root: { key: 'project-dsh', label: '宿主给的标签', exists: true, skills: [] }, collapsedRepos: {} }))
+check('root 模式标题不受库逻辑影响', rootModeTexts.includes('项目 DSH') && !rootModeTexts.includes('可用仓库'), rootModeTexts.join('|'))
+// ③ 库扫描有 warning 时给固定文案行，且绝不渲染宿主原文。
+//    宿主 warning.message 里拼的是库目录**绝对路径**（roots.js:260），面板不显示目录地址——
+//    这条断言是那个硬约束在渲染层的唯一证据：fixture 里塞一个绝对路径，断言它绝不上屏。
+check('库扫描有 warning 时给固定文案行，且绝不渲染宿主原文（原文含绝对路径）', (() => {
+	const texts = collectTexts(exposed.SkillGroup({ t: tStub, mode: 'library', canSync: true, collapsedRepos: {}, root: { key: 'library', label: '可用仓库', exists: true, skills: [], warning: '读 /Users/someone/.dsh/skill-console/library 失败' } }))
+	return texts.includes('skills.libraryWarning') && !texts.some((text) => String(text).includes('/Users/someone'))
+})(), (() => {
+	const texts = collectTexts(exposed.SkillGroup({ t: tStub, mode: 'library', canSync: true, collapsedRepos: {}, root: { key: 'library', label: '可用仓库', exists: true, skills: [], warning: '读 /Users/someone/.dsh/skill-console/library 失败' } }))
+	return texts.join('|')
+})())
+// ④ 库块说明行的专属 class 与 CSS。渲染级断言看不见样式，只能钉源码字面量：
+//    `sc-hint` 是通用说明行，库块改回它会让「双线」修复失配；两条 CSS 是那个修复的另一半。
+check('库块说明行用专属 class sc-library-hint', clientSource.includes("className: 'sc-library-hint'"))
+check('sc-library-hint 自带内边距', /\.sc-library-hint\s*\{[^}]*padding:/.test(clientSource))
+check('说明行不破 .sc-group-head + .sc-repogroup 的相邻选择器（否则首个仓库组双线）', clientSource.includes('.sc-group-head + .sc-library-hint + .sc-repogroup'))
+// 注意锚点必须带行首 `\n`：`.sc-library-hint + .sc-repogroup { border-top: 0; }` 是上面那条
+// `.sc-group-head + .sc-library-hint + .sc-repogroup { … }` 的**子串**，不带行首锚的
+// `includes` 会被长规则满足，删掉新规则也不变红（半空真检查）。
+check('说明行加 warning 行后相邻选择器仍成立（否则首个仓库组又双线）', /\n\.sc-library-hint \+ \.sc-repogroup \{ border-top: 0; \}/.test(clientSource))
+// ⑤ 同步动作的行为钉在 `syncToProject` 函数体这个窗口里，不用全文 includes。
+//    窗口切到「同缩进的下一个声明」为止，比「取 N 个字符」更难悄悄漏掉尾部。
+const syncBody = (() => {
+	const at = clientSource.indexOf('const syncToProject')
+	if (at < 0) return ''
+	const end = clientSource.slice(at).indexOf('\n\t\t\tconst ')
+	return end < 0 ? clientSource.slice(at) : clientSource.slice(at, at + end)
+})()
+check('同步动作窗口切到了完整函数体（切错会让下面几条一起假绿）', syncBody.startsWith('const syncToProject = (skill) =>') && syncBody.trimEnd().endsWith('}') && syncBody.includes('apiPost('), syncBody.slice(0, 60))
+check('同步载荷带 path（不是空对象）', syncBody.includes('withProject(project, { path: skill.path })'), syncBody.slice(0, 200))
+check('两态回执分别接 skills.syncDone / skills.syncLocalKept', syncBody.includes("t('skills.syncDone'") && syncBody.includes("t('skills.syncLocalKept'"))
+check('以 copied === false 判 localKept（不是恒真/恒假）', /data\.copied === false/.test(syncBody))
+check('重入守卫：busyPath 非 null 直接返回', /busyPath !== null\) return/.test(syncBody))
+// ⑥ 映射表光有字面量不够：`errorMessage` 必须真的**查表**。
+//    否则哪天它不再查 ERROR_KEYS，上面那几条字面量检查会全绿，而面板渲染出带绝对路径的宿主原文。
+//    三段断言各管一件事：映射码 → 词典键；未映射码 → 原样透传（不许无差别屏蔽）；垃圾输入不抛。
+const errorMessageExport = exposed.errorMessage
+check('errorMessage 查 ERROR_KEYS 表（不回落渲染宿主原文）', typeof errorMessageExport === 'function' && errorMessageExport(tStub, { code: 'error.proto.missingPath', message: '/abs/path' }) === 'error.missingPath' && errorMessageExport(tStub, { code: 'error.skill.notFound', message: 'C:\\abs\\path' }) === 'error.skillNotFound' && errorMessageExport(tStub, { code: 'error.unknown', message: 'raw host text' }) === 'raw host text', typeof errorMessageExport)
 const pathLeakingCodes = [['error.skill.notFound', 'error.skillNotFound'], ['error.transfer.symlink', 'error.transferSymlink'], ['error.copy.exists', 'error.copyExists']]
 check('分发能触发的三个「原文带绝对路径」错误码都映射成本地化文案（面板不会冒出库目录地址）', pathLeakingCodes.every(([code, key]) => clientSource.includes(`'${code}'`) && clientSource.includes(`'${key}'`) && typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string'), JSON.stringify(pathLeakingCodes.map(([code, key]) => [code, dictionaryZh[key]])))
 
