@@ -2535,6 +2535,74 @@ for (const [label, withPrimitives] of [
 	check(`RoleEditor 的名字 onChange 交出字符串而不是事件对象（${label}）`, typed === '前端', `实际 ${Object.prototype.toString.call(typed)} ${String(typed)}`)
 }
 
+section('角色编辑页：候选显示所属仓库与明细')
+
+const editorWithSource = RoleEditorExport({
+	t: tStub,
+	draft: { id: 'r', name: 'x', skills: [] },
+	candidates: [{ name: 'lib-only', path: '/l/lib-only/SKILL.md', enabled: true, toggleable: true, readOnlyReason: null, description: DESCRIPTION, installed: { id: 'o/r', owner: 'o', name: 'r', commit: 'abc123', sourcePath: 'skills/lib-only' } }],
+	projectSkills: [],
+	missing: [],
+	busy: false,
+	onName: () => {},
+	onToggle: () => {},
+	onSave: () => {},
+	onCancel: () => {},
+	onActivate: null,
+	onOpenDetail: () => {},
+})
+const editorTexts = collectTexts(editorWithSource)
+check('候选行显示所属仓库（owner/name）', editorTexts.includes('o/r'), JSON.stringify(editorTexts))
+check('候选行有「详情」按钮', collect(editorWithSource, (element) => element.props !== undefined && element.props.children === 'common.detail').length === 1)
+// 「来源行与技能行共用一处」是 spec 的设计声明，但**光有 exports 钉不住它**：
+// 把 SkillSourceLine 在 SkillRow 里重新内联、导出照旧，T5 的 822 条全绿（T5 评审实测）。
+// 这里用源码级断言把「两个调用点都是普通函数调用」钉死（≠ h(SkillSourceLine, …)，契约测试的
+// createElement 替身不展开函数组件）。
+check('SkillSourceLine 被两处共用（SkillRow + 角色候选行），且都是普通函数调用',
+	(clientSource.match(/SkillSourceLine\(\{ t, skill \}\)/g) ?? []).length >= 2 && !clientSource.includes('h(SkillSourceLine')
+	, `调用点 ${(clientSource.match(/SkillSourceLine\(\{ t, skill \}\)/g) ?? []).length} 处`)
+
+// 只读候选（软链）也必须能看详情：夹具**必须带 onOpenDetail**。
+// 简报给的只读夹具漏了这个 prop，于是紧接着那条 label 断言会因为「整棵树里压根没有详情按钮」
+// 而恒真——空墙。这里补上，并额外用一条前提守卫把「按钮确实在树里」钉住。
+const readonlyEditorProps = {
+	t: tStub,
+	draft: { id: 'r', name: 'x', skills: ['lib-link'] },
+	candidates: [{ name: 'lib-link', path: '/l/lib-link/SKILL.md', enabled: true, toggleable: false, readOnlyReason: '软链', description: '', installed: null }],
+	projectSkills: [],
+	missing: [],
+	busy: false,
+	onName: () => {},
+	onToggle: () => {},
+	onSave: () => {},
+	onCancel: () => {},
+	onActivate: null,
+	onOpenDetail: () => {},
+}
+const readonlyEditorTree = RoleEditorExport(readonlyEditorProps)
+const readonlyDetailButtons = collect(readonlyEditorTree, (element) => element.props !== undefined && element.props.children === 'common.detail')
+check('只读候选行也有「详情」按钮（下一节 label 断言的前提，没有它就是空墙）', readonlyDetailButtons.length === 1)
+const labelElement = collect(readonlyEditorTree, (element) => element.type === 'label')[0]
+check('「详情」按钮不在 label 里（点它不会顺手把开关也切了）', labelElement !== undefined && !JSON.stringify(labelElement).includes('common.detail'), JSON.stringify(labelElement))
+check('候选行外层换成非 label 元素（按钮只要放进行内就会触发 label 的默认行为）', collect(readonlyEditorTree, (element) => element.props !== undefined && element.props['data-skill'] === 'lib-link')[0]?.type === 'div')
+check('label 仍只包开关与名字（点名字照样能勾选，开关语义没丢）', labelElement !== undefined && collectTexts(labelElement).includes('lib-link'), JSON.stringify(labelElement))
+check('点「详情」交出这一行的 skill（不是行名字符串）', (() => {
+	const seen = []
+	const tree = RoleEditorExport({ ...readonlyEditorProps, onOpenDetail: (skill) => seen.push(skill && skill.name) })
+	const button = collect(tree, (element) => element.props !== undefined && element.props.children === 'common.detail')[0]
+	button?.props?.onClick()
+	return seen.length === 1 && seen[0] === 'lib-link'
+})())
+check('不传 onOpenDetail 时不渲染详情按钮（新 prop 可选，老调用点不受影响）', collect(RoleEditorExport({ ...readonlyEditorProps, onOpenDetail: undefined }), (element) => element.props !== undefined && element.props.children === 'common.detail').length === 0)
+
+// RolesPanel 侧的接线在渲染级不可达：测试替身的 useState 只给初值、useEffect 不跑，面板永远停在
+// data === null 的早退分支（详情面板要等 effect 把 /roles 拉回来才可能出现）。所以这里钉调用点，
+// 每条都能被唯一变异弄红。
+const rolesPanelSource = clientSource.slice(clientSource.indexOf('function RolesPanel'), clientSource.indexOf('function SkillConsoleSection'))
+check('RolesPanel 复用 SkillDetail 渲染候选明细（不是自造一套详情）', /h\(SkillDetail, \{ t, state: detail,/.test(rolesPanelSource))
+check('角色编辑页的详情按 path 读宿主的 /skill（读围栏已扩到库根）', rolesPanelSource.includes("apiGet('/skill', withProject(project, { path: skill.path }), props.sessionId)"))
+check('角色的候选行「详情」接的是 RolesPanel 的 loadDetail', /h\(RoleEditor, \{[\s\S]{0,600}onOpenDetail: loadDetail,/.test(rolesPanelSource))
+
 const rolesReadme = readFileSync(join(LIB, 'client.js'), 'utf8')
 check('角色面板不复用全局根的写路径（不在客户端拼 applyRole 的入参）', !/applyRole/.test(rolesReadme))
 

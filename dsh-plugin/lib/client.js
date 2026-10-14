@@ -697,6 +697,7 @@ window.__ModuleLoader__.load({
 .sc-role-skill { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 .sc-role-skills > .sc-role-skill:first-child { border-top: 0; }
 .sc-role-skill-name { font-family: var(--dsw-font-mono, monospace); font-size: 12px; }
+.sc-role-skill-pick { display: inline-flex; align-items: center; gap: 8px; }
 .sc-role-skill-readonly { opacity: 0.6; }
 .sc-role-library-note { padding: 6px 10px; font-size: 12px; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
 .sc-role-missing { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; }
@@ -1393,7 +1394,7 @@ window.__ModuleLoader__.load({
 			const statusTone = diagnostics.length > 0 ? 'warning' : skill.enabled ? 'success' : 'quiet'
 			const statusTag = h(UiTag, { tone: statusTone }, t(statusKey))
 
-			// 直接调用（不写成 `h(SkillSourceLine, …)`）：契约测试的 `createElement` 替身
+			// 直接调用（不把它挂成组件元素）：契约测试的 `createElement` 替身
 			// **不展开函数组件**，而「明细行显示 owner/name」这条断言读的就是这里的文本；
 			// 写成组件元素会让它连子树都进不去（contract.mjs:2411/2423 会红）。
 			// 这个 helper 不用任何 hook，当纯渲染函数调用是安全的。
@@ -2813,17 +2814,28 @@ window.__ModuleLoader__.load({
 					{ className: 'sc-role-skills' },
 					librarySkills.map((skill) =>
 						h(
-							'label',
+							'div',
 							{ key: skill.name, className: 'sc-role-skill' + (skill.toggleable === true ? '' : ' sc-role-skill-readonly'), 'data-skill': skill.name },
-							h(UiSwitch, {
-								checked: picked.has(skill.name),
-								disabled: props.busy || skill.toggleable !== true,
-								label: skill.name,
-								onChange: (next) => props.onToggle(skill.name, next),
-							}),
-							h('span', { className: 'sc-role-skill-name' }, skill.name),
+							// label 只包开关 + 名字：放进 label 的按钮会连带触发 label 的默认行为，
+							// 点「详情」会顺手把开关也切了。
+							h(
+								'label',
+								{ className: 'sc-role-skill-pick' },
+								h(UiSwitch, {
+									checked: picked.has(skill.name),
+									disabled: props.busy || skill.toggleable !== true,
+									label: skill.name,
+									onChange: (next) => props.onToggle(skill.name, next),
+								}),
+								h('span', { className: 'sc-role-skill-name' }, skill.name),
+							),
+							// 同样直接调用：替身不展开函数组件，而这条断言要读到来源文本。
+							SkillSourceLine({ t, skill }),
 							h('span', { className: 'sc-sub' }, enabledInProject.has(skill.name) ? '●' : '○'),
 							skill.toggleable === true ? null : h(UiTag, { tone: 'quiet' }, readOnlyText(t, skill)),
+							typeof props.onOpenDetail === 'function'
+								? h(UiButton, { variant: 'ghost', size: 'sm', onClick: () => props.onOpenDetail(skill), children: t('common.detail') })
+								: null,
 						),
 					),
 				)
@@ -2893,6 +2905,9 @@ window.__ModuleLoader__.load({
 			const [busy, setBusy] = react.useState(false)
 			const [notice, setNotice] = react.useState(null)
 			const [error, setError] = react.useState(null)
+			// 候选技能的明细：库是只读分发源，但宿主把 `/skill` 的**读**围栏扩到了库根，
+			// 所以这里点「详情」能真读到内容。写操作照旧不碰库。
+			const [detail, setDetail] = react.useState(null)
 
 			const load = react.useCallback(() => {
 				setBusy(true)
@@ -2909,6 +2924,15 @@ window.__ModuleLoader__.load({
 			react.useEffect(() => {
 				load()
 			}, [load])
+
+			// 候选的明细：能读库路径靠宿主把 `/skill` 的**读**围栏扩到了库根。
+			// 同名冲突（collision）只对技能根里的行有意义，库候选传 null。
+			const loadDetail = (skill) => {
+				setDetail({ loading: true, data: null, error: null, name: skill.name, collision: null })
+				apiGet('/skill', withProject(project, { path: skill.path }), props.sessionId)
+					.then((data) => setDetail({ loading: false, data, error: null, name: skill.name, collision: null }))
+					.catch((failure) => setDetail({ loading: false, data: null, error: actionError(t, failure), name: skill.name, collision: null }))
+			}
 
 			if (data === null) {
 				return h('div', { className: 'sc-body' }, h('span', { className: 'sc-sub' }, error ?? t('roles.loadFailed')))
@@ -3014,6 +3038,7 @@ window.__ModuleLoader__.load({
 			return h(
 				'div',
 				{ className: 'sc-body' },
+				detail === null ? null : h(SkillDetail, { t, state: detail, collision: null, onClose: () => setDetail(null) }),
 				h(
 					'div',
 					{ className: 'sc-bar' },
@@ -3050,6 +3075,7 @@ window.__ModuleLoader__.load({
 						onSave: runSave,
 						onCancel: () => setDraft(null),
 						onActivate: current.id === null ? null : () => runActivate(current.id, current.skills),
+						onOpenDetail: loadDetail,
 					})
 					: h(
 						'div',
