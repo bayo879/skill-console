@@ -2092,6 +2092,15 @@ check('库内那条已被外部删掉 → 404 error.skill.notFound', missingSour
 const noPath = await callRouteOrReport(wsRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { project: projectDir } })
 check('缺 path → 400 error.proto.missingPath', noPath.status === 400 && noPath.json?.code === 'error.proto.missingPath', `${noPath.status} ${JSON.stringify(noPath.json)}`)
 
+// 库里的软链技能：链接目标另建一份不撞名的技能。简报原夹具直接链项目里刚分发的
+// lib-only，frontmatter 声明的名字也是 lib-only，于是「同名先走 localKept」（spec
+// library.md:58-59）会抢在 copySkillIntoRoot 的软链拒绝之前命中，测不到 error.transfer.symlink。
+const installLinkRoot = tempDir('sc-lib-link')
+placeSkill(installLinkRoot, 'lib-link', true)
+symlinkSync(join(installLinkRoot, 'lib-link'), join(routeLibrary, 'lib-link'))
+const symlinkSource = await callRouteOrReport(wsRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(routeLibrary, 'lib-link', 'SKILL.md'), project: projectDir } })
+check('库里的软链技能被拒（400 error.transfer.symlink）', symlinkSource.status === 400 && symlinkSource.json?.code === 'error.transfer.symlink', `${symlinkSource.status} ${JSON.stringify(symlinkSource.json)}`)
+
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
 section('浏览器半边（模块表 / slot 契约 / 降级）')
