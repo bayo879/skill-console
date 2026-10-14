@@ -2068,7 +2068,11 @@ mkdirSync(sourceStateDir, { recursive: true })
 writeFileSync(join(sourceStateDir, 'repositories.json'), `${JSON.stringify({ version: 1, repositories: [{ id: 'o/r', owner: 'o', name: 'r', ref: '', subdirectory: 'skills', addedAt: '2026-01-01T00:00:00.000Z', skills: {}, library: { 'lib-only': { sourcePath: 'skills/lib-only', kind: 'flat', commit: 'deadbeef', syncedAt: '2026-01-01T00:00:00.000Z', files: {} } } }] }, null, 2)}\n`)
 const sourceManager = reposModule.createRepositoryManager({ stateDir: sourceStateDir, skillsDir: join(sourceHome, 'skills'), libraryDir: join(sourceStateDir, 'library'), log: () => {} })
 const sourceIndex = sourceManager.libraryIndex().get('lib-only')
-check('libraryIndex 认的是 record.library：订阅同步来的那条带 owner/name/commit/syncedAt', sourceIndex?.owner === 'o' && sourceIndex?.name === 'r' && sourceIndex?.commit === 'deadbeef' && sourceIndex?.syncedAt === '2026-01-01T00:00:00.000Z', JSON.stringify(sourceIndex ?? null))
+// `sourcePath` 是新加的半边：`libraryIndex()` 的来源形状全靠 `sourceEntryOf` 里的
+// `sourcePath: snapshot.sourcePath ?? null`（lib/repos.js:420），而客户端 `SkillSourceLine`
+// 的 tooltip 就靠它显示「来源明细」。把它删掉时，**全库原本没有任何断言会红**——终审
+// 点名的可静默回归，所以这里和 owner/name/commit/syncedAt 并列钉住。
+check('libraryIndex 认的是 record.library：订阅同步来的那条带 owner/name/commit/sourcePath/syncedAt', sourceIndex?.owner === 'o' && sourceIndex?.name === 'r' && sourceIndex?.commit === 'deadbeef' && sourceIndex?.sourcePath === 'skills/lib-only' && sourceIndex?.syncedAt === '2026-01-01T00:00:00.000Z', JSON.stringify(sourceIndex ?? null))
 check('同一份状态里 installedIndex 是空的（库的来源 ≠ 装进技能根的台账）', sourceManager.installedIndex().size === 0, JSON.stringify([...sourceManager.installedIndex().keys()]))
 
 section('从可用仓库分发到项目（POST /library/install）')
@@ -2076,6 +2080,11 @@ section('从可用仓库分发到项目（POST /library/install）')
 const installBody = { path: join(routeLibrary, 'lib-only', 'SKILL.md'), project: projectDir }
 const installResponse = await callRouteOrReport(wsRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: installBody })
 check('分发成功：库里的那份被复制进项目技能根', installResponse.status === 200 && installResponse.json?.data?.copied === true && installResponse.json.data.name === 'lib-only', `${installResponse.status} ${JSON.stringify(installResponse.json)}`)
+// 「目标恒为项目根」这条硬约束原来只有 `copied`/`name` 两个字段的间接证据：回执里的
+// `targetPath` 换成库里那份的路径（`source.path`）时，整套测试仍然全绿。这里把落点直接钉死
+// （夹具是目录包，`targetPathFor` 给的是 `<root>/<name>`，见 lib/rows.js:24-26）。
+const installTarget = installResponse.json?.data?.targetPath ?? ''
+check('回执的落点在项目技能根下、且不在库根下（换成库里那份的路径就红）', installTarget === join(projectDir, '.dsh', 'skills', 'lib-only') && !installTarget.startsWith(routeLibrary) && installResponse.json?.data?.kind === 'directory', JSON.stringify({ targetPath: installTarget, kind: installResponse.json?.data?.kind }))
 check('落点是项目根，不是全局根', existsSync(join(projectDir, '.dsh', 'skills', 'lib-only', 'SKILL.md')) && !existsSync(join(globalRoot, 'lib-only', 'SKILL.md')))
 check('库里那份原样留在库里（分发是复制，不是搬）', existsSync(join(routeLibrary, 'lib-only', 'SKILL.md')))
 
@@ -2106,7 +2115,9 @@ check('库里的软链技能被拒（400 error.transfer.symlink）', symlinkSour
 section('库进页面 ≠ 库成根（承重墙回归）')
 
 const libraryRead = await callRouteOrReport(wsRoute, { path: `/api/skill-console/skill?path=${encodeURIComponent(join(routeLibrary, 'lib-only', 'SKILL.md'))}` })
-check('/skill 能读库路径并回 frontmatter + body（角色编辑页要看明细）', libraryRead.status === 200 && typeof libraryRead.json?.data?.frontmatter === 'string' && typeof libraryRead.json?.data?.body === 'string', `${libraryRead.status} ${JSON.stringify(Object.keys(libraryRead.json?.data ?? {}))}`)
+// 硬约束 1 在契约层的直接证据：`readSkill` 回的是 `root: root.key`（lib/roots.js:182 一带），
+// 库路径读出来的记录必须自报 `root === 'library'`。少了它，「读面认出这是库」只剩 200 + 类型。
+check('/skill 能读库路径并回 frontmatter + body + root=library（角色编辑页要看明细）', libraryRead.status === 200 && typeof libraryRead.json?.data?.frontmatter === 'string' && typeof libraryRead.json?.data?.body === 'string' && libraryRead.json?.data?.root === 'library', `${libraryRead.status} ${JSON.stringify({ root: libraryRead.json?.data?.root, keys: Object.keys(libraryRead.json?.data ?? {}) })}`)
 
 // 库里放一个与全局根同名的技能：它是分发源，不参与加载，也就不该出现在同名覆盖清单里。
 placeSkill(routeLibrary, 'alpha', true)
@@ -2180,6 +2191,12 @@ check('项目技能那一栏也有 installed 与 description 字段', (rolesWith
 // `record.skills` 台账）这个决定，换错表时字段照样在、值变成 null，只有下面这条会红。
 const projectRow = (rolesWithSource.json?.data?.projectSkills ?? []).find((skill) => skill.name === 'proj-local')
 check('项目技能的来源查的是「装进技能根」的台账（把两张表换过来只这一条红）', projectRow?.installed?.owner === 'o' && projectRow.installed.commit === 'cafebabe', JSON.stringify(projectRow?.installed))
+// 上面那条只证 `description` **字段在**。判断过是否与邻居重复：`candidateRow.description.length > 0`
+// 钉的是**候选**数组的真值分支、`nodescRow.description === ''` 钉的是**候选**数组的 else 分支
+// （lib/routes.js 的 `typeof … : ''`），**项目技能**数组的值通路谁都没钉——把项目那栏的映射
+// 硬写成 `description: ''`，上面三条全绿。所以这里补值断言，值取自夹具实况（placeSkill 写的是
+// `${name} 的说明`，见 test/contract.mjs 的 placeSkill）。
+check('项目技能那栏的 description 是技能自己写的简介（项目栏硬写成空串也只这一条红）', projectRow?.description === 'proj-local 的说明', JSON.stringify(projectRow?.description))
 
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
@@ -2707,7 +2724,10 @@ const t7DetailStage = (() => {
 check('RolesPanel 把详情动作接到了候选行（漏接就是点「详情」什么都不发生）', t7DetailStage.opened.found && t7DetailStage.opened.wired, `RoleEditor ${t7DetailStage.opened.found ? '在树里' : '不在树里'}，onOpenDetail ${t7DetailStage.opened.wired ? '是函数' : '不是函数'}`)
 await new Promise((resolve) => setTimeout(resolve, 20))
 check('点「详情」真的发出读 /skill 的请求（行为级，不只看源码里有没有那行字）', t7DetailStage.requests.length === 1, `请求 ${t7DetailStage.requests.length} 次`)
-check('详情请求按 path 读宿主的 /skill（读围栏已扩到库根）', (t7DetailStage.requests[0]?.url ?? '').includes('path=%2Flib%2Flib-link%2FSKILL.md'), t7DetailStage.requests[0]?.url ?? '没有请求')
+// T7-W3：原来这条只看 URL 里有没有 `path=%2F…`——把 `apiGet('/skill', …)` 整个换成
+// `apiGet('/library/install', …)`，那串 path 查询参数可能还在，测试**全绿**（终审实测），
+// 于是「点详情变成调写接口」这种最危险的口子能被容忍。这里钉死端点前缀与 method。
+check('详情请求打的是 GET /skill 端点本身（换成写端点 /library/install 就红）', String(t7DetailStage.requests[0]?.url ?? '').startsWith('/api/skill-console/skill?') && t7DetailStage.requests[0]?.options?.method === 'GET', JSON.stringify({ url: t7DetailStage.requests[0]?.url ?? null, method: t7DetailStage.requests[0]?.options?.method ?? null }))
 const t7DetailElement = t7DetailStage.stageWalk(t7DetailStage.renderSecond()).find((element) => element.type === t7DetailStage.stageExports.SkillDetail)
 check('详情回来后 RolesPanel 渲染出 SkillDetail（复用现成组件；setDetail 断掉这里就红）', t7DetailElement !== undefined && t7DetailElement.props?.state?.data?.content === 'DETAIL-BODY' && t7DetailElement.props?.collision === null, t7DetailElement === undefined ? 'SkillDetail 没出现' : JSON.stringify({ state: t7DetailElement.props?.state, collision: t7DetailElement.props?.collision }))
 
@@ -2797,6 +2817,11 @@ check('没有项目根时「同步到项目」真的 disabled（漏了是静默�
 check('disabled 时必须给出「先选工作区」的 title（只说灰不解释等于没提示）', noWorkspaceButton !== undefined && noWorkspaceButton.props.title === 'skills.libraryNoWorkspace', JSON.stringify(noWorkspaceButton?.props ?? null))
 const workspaceButton = librarySyncButton({ canSync: true })
 check('选了工作区后同一个按钮不再 disabled（canSync 判据不能恒真）', workspaceButton !== undefined && workspaceButton.props.disabled === false && workspaceButton.props.title === undefined, JSON.stringify(workspaceButton?.props ?? null))
+// 第三半：`disabled: props.busy || props.canSync !== true`（lib/client.js 的 SkillRow）里的
+// `props.busy` 操作数。删掉它（只留 canSync 那一半）时，上面两条一条都不动——「正在同步时
+// 别的行还能被点」是并发双击的入口，必须单独钉。
+const busySyncButton = librarySyncButton({ canSync: true, busy: true })
+check('同步进行中（busy）时按钮 disabled（删掉 props.busy 操作数只这一条红）', busySyncButton !== undefined && busySyncButton.props.disabled === true, JSON.stringify(busySyncButton?.props ?? null))
 
 const libraryRepoGroupTree = exposed.SkillRepoGroup({
 	t: tStub,

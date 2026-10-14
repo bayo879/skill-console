@@ -1396,7 +1396,7 @@ window.__ModuleLoader__.load({
 
 			// 直接调用（不把它挂成组件元素）：契约测试的 `createElement` 替身
 			// **不展开函数组件**，而「明细行显示 owner/name」这条断言读的就是这里的文本；
-			// 写成组件元素会让它连子树都进不去（contract.mjs:2411/2423 会红）。
+			// 写成组件元素会让它连子树都进不去（contract.mjs:2572/2578 会红）。
 			// 这个 helper 不用任何 hook，当纯渲染函数调用是安全的。
 			const sourceLine = SkillSourceLine({ t, skill })
 
