@@ -3221,6 +3221,28 @@ const fallbackUses = (clientSource.match(/t\([^)]*?'skills\.projectFallback/g) ?
 const projectNameCalls = /t\('skills\.projectName'/.test(clientSource)
 check('技能页签不再自己播报「当前项目」，回落文案只剩工作区条那一处', !clientSource.includes("t('skills.projectName')") && !projectNameCalls && fallbackUses === 1, `projectName=${projectNameCalls} fallbackUses=${fallbackUses}`)
 
+check('技能页签渲染第三块：复用 SkillGroup + mode:library，不自造平行组件', /h\(SkillGroup, \{[\s\S]{0,200}key: 'library'[\s\S]{0,200}mode: 'library'/.test(clientSource))
+check('库块的数据来自 catalog.data.library，缺席就不渲染', clientSource.includes('catalog.data.library') && /library === null[\s\S]{0,40}\? null/.test(clientSource))
+check('同步动作打 POST /library/install 并带上当前工作区', (() => {
+	const at = clientSource.indexOf("apiPost('/library/install'")
+	return at >= 0 && clientSource.slice(at, at + 200).includes('withProject(project')
+})())
+check('同步成功后只推 revision（不调 reloadAfterAction，否则详情被关掉）', (() => {
+	const at = clientSource.indexOf('const syncToProject')
+	if (at < 0) return false
+	const body = clientSource.slice(at, at + 900)
+	return body.includes('bumpCatalog()') && !body.includes('reloadAfterAction')
+})())
+check('折叠记忆把库块一起算进去', clientSource.includes('collapseKeysOf(library === null ? roots : [...roots, library])'))
+check('没有项目根时「同步到项目」禁用（沿用 project-dsh 判据）', clientSource.includes("const canSync = roots.some((root) => root.key === 'project-dsh')"))
+// T5 里库行的整行 onClick 直接调 props.onSync（控制器裁决不加兜底，漏接就 TypeError）——
+// 这条钉子确保 Task 6 真的把 onSync 接在**库块**那个 h(SkillGroup, {...}) 上。
+check('库块把 onSync 接给 library 块（T5 未加兜底，漏接即点击报错）', /h\(SkillGroup, \{[\s\S]{0,600}key: 'library'[\s\S]{0,600}onSync: syncToProject/.test(clientSource))
+// 漏接 canSync 是**静默**失效（按钮变灰 + 提示「先选工作区」，没有任何报错）——单独钉一条。
+check('库块把 canSync 接给 library 块（漏接是静默禁用，最危险的一种）', /h\(SkillGroup, \{[\s\S]{0,600}key: 'library'[\s\S]{0,600}canSync,/.test(clientSource))
+const pathLeakingCodes = [['error.skill.notFound', 'error.skillNotFound'], ['error.transfer.symlink', 'error.transferSymlink'], ['error.copy.exists', 'error.copyExists']]
+check('分发能触发的三个「原文带绝对路径」错误码都映射成本地化文案（面板不会冒出库目录地址）', pathLeakingCodes.every(([code, key]) => clientSource.includes(`'${code}'`) && clientSource.includes(`'${key}'`) && typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string'), JSON.stringify(pathLeakingCodes.map(([code, key]) => [code, dictionaryZh[key]])))
+
 section('文案：界面说「工作区」，词典与错误码跟得上')
 
 check('技能页签与节顶工作区条的标签文案叫「工作区」（skills.project）', dictionaryZh['skills.project'] === '工作区' && dictionaryEn['skills.project'] === 'Workspace', `${dictionaryZh['skills.project']} / ${dictionaryEn['skills.project']}`)

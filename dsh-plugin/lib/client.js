@@ -150,6 +150,9 @@ window.__ModuleLoader__.load({
 				'skills.libraryHint': '库里的技能 DSH 不加载；用「同步到项目」放进当前工作区。',
 				'skills.libraryEmpty': '可用仓库里还没有技能。去「技能仓库」页签订阅一个仓库，或把技能「移到可用仓库」。',
 				'skills.libraryNoWorkspace': '先在工作区条里选一个工作区，才能把技能同步进项目。',
+				'skills.library': '可用仓库',
+				'skills.syncDone': '已把「{name}」同步到项目技能根（启用态）。',
+				'skills.syncLocalKept': '项目里已有「{name}」，保留项目那份（停用态也不动）。',
 				'skills.noDescription': '未提供简介',
 				'skills.nameFromDirectory': 'frontmatter 没写 name，这里显示的是目录/文件名',
 				'skills.status.enabled': '已启用',
@@ -222,6 +225,10 @@ window.__ModuleLoader__.load({
 				'error.roleNoProject': '解析不出要操作哪个工作区：请先在面板上选一个工作区，再重试。',
 				'error.workspaceInvalid': '这个工作区目录不存在或不是目录：请在节顶重新选一个工作区。',
 				'error.tooMany': '一次提交的条目太多，请分批操作。',
+				'error.skillNotFound': '可用仓库里没有这个技能（可能已被删除）。',
+				'error.transferSymlink': '这条技能是软链，不能分发到项目。',
+				'error.copyExists': '项目技能根里已经有同名技能。',
+				'error.missingPath': '请求缺少 path。',
 				'error.endpointMissing': '后端接口没挂上（HTTP {status}）。通常是插件没被加载，或装好后还没重启 DSH。',
 				'error.internal': '后端处理这次请求时抛了异常，没有改动任何文件。可以看 DSH 日志里的 web-server 警告。',
 				'error.action': '操作失败：{error}',
@@ -359,6 +366,9 @@ window.__ModuleLoader__.load({
 				'skills.libraryHint': 'DSH does not load skills in the library. Use "Sync to project" to copy one into the current workspace.',
 				'skills.libraryEmpty': 'The library is empty. Subscribe to a repository in the Repositories tab, or move a skill into the library.',
 				'skills.libraryNoWorkspace': 'Pick a workspace in the workspace bar first, then sync skills into the project.',
+				'skills.library': 'Library',
+				'skills.syncDone': 'Synced "{name}" into the project skill root (enabled).',
+				'skills.syncLocalKept': 'The project already has "{name}"; the project copy is kept as is.',
 				'skills.noDescription': 'No description provided',
 				'skills.nameFromDirectory': 'Frontmatter has no name; the folder/file name is shown instead',
 				'skills.status.enabled': 'Enabled',
@@ -430,6 +440,10 @@ window.__ModuleLoader__.load({
 				'error.roleNoProject': 'Could not resolve which workspace this applies to. Pick a workspace in the panel and try again.',
 				'error.workspaceInvalid': 'That workspace path does not exist or is not a directory. Pick a workspace in the bar and try again.',
 				'error.tooMany': 'Too many items in one request; please split it into smaller batches.',
+				'error.skillNotFound': 'That skill is not in the library (it may have been deleted).',
+				'error.transferSymlink': 'That library entry is a symlink; it cannot be distributed into the project.',
+				'error.copyExists': 'The project skill root already has a skill with this name.',
+				'error.missingPath': 'The request is missing path.',
 				'error.endpointMissing': 'The backend endpoint is not mounted (HTTP {status}). Usually the plugin was not loaded, or DSH has not been restarted since installing it.',
 				'error.internal': 'The backend threw while handling this request; nothing was changed on disk. Check the web-server warnings in the DSH log.',
 				'error.action': 'Action failed: {error}',
@@ -595,6 +609,9 @@ window.__ModuleLoader__.load({
 .sc-repogroup { border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 /* 首个仓库组紧跟在根组头下面：根组头自己已有 border-bottom，再画一条就是双线。 */
 .sc-group-head + .sc-repogroup { border-top: 0; }
+/* 说明行夹在组头和首个仓库组之间，会让 .sc-group-head + .sc-repogroup 失配
+   （首个仓库组重新长出 1px 上边框，与组头的下边框叠成双线）。 */
+.sc-group-head + .sc-library-hint + .sc-repogroup { border-top: 0; }
 .sc-repogroup-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.03)); }
 .sc-repogroup.is-open > .sc-repogroup-head { border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 .sc-repogroup-title { font-weight: 600; font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace); }
@@ -621,6 +638,8 @@ window.__ModuleLoader__.load({
 .sc-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .sc-meta { font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11.5px; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); word-break: break-all; }
 .sc-hint { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
+/* 库块说明行：自带内边距，与 .sc-group-head / .sc-row 的 10px 对齐。 */
+.sc-library-hint { padding: 6px 10px; font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
 .sc-warn { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.6; color: var(--dsw-alias-state-warn-label, #b7791f); word-break: break-word; }
 .sc-err { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-state-error-primary, #d1242f); word-break: break-word; }
 .sc-ok { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-state-success-primary, #2ea043); }
@@ -880,6 +899,10 @@ window.__ModuleLoader__.load({
 			'error.role.noProject': 'error.roleNoProject',
 			'error.workspace.invalid': 'error.workspaceInvalid',
 			'error.proto.tooMany': 'error.tooMany',
+			'error.skill.notFound': 'error.skillNotFound',
+			'error.transfer.symlink': 'error.transferSymlink',
+			'error.copy.exists': 'error.copyExists',
+			'error.proto.missingPath': 'error.missingPath',
 		}
 
 		/** 把任何异常变成本地化的一行话。 */
@@ -1645,7 +1668,7 @@ window.__ModuleLoader__.load({
 				),
 				// 库块的说明行：库不是技能根，DSH 不加载它；没有项目根时改说「先选工作区」。
 				props.mode === 'library'
-					? h('div', { className: 'sc-hint' }, t(props.canSync === true ? 'skills.libraryHint' : 'skills.libraryNoWorkspace'))
+					? h('div', { className: 'sc-library-hint' }, t(props.canSync === true ? 'skills.libraryHint' : 'skills.libraryNoWorkspace'))
 					: null,
 				collapsed
 					? null
@@ -1848,13 +1871,39 @@ window.__ModuleLoader__.load({
 					.then(() => setBusyPath(null))
 			}
 
+			/**
+			 * 把库里的一个技能分发进当前工作区的项目技能根。
+			 *
+			 * 不调 `reloadAfterAction()`：它会把详情面板一起关掉，而库里这一行并没有被改动；
+			 * 只推一次 revision，重拉交给依赖它的 effect（与 `/toggle` 同一套做法）。
+			 */
+			const syncToProject = (skill) => {
+				if (busyPath !== null) return
+				setBusyPath(skill.path)
+				setNotice(null)
+				setActionFail(null)
+				apiPost('/library/install', withProject(project, { path: skill.path }), sessionId)
+					.then((data) => {
+						// 项目已有同名时只报告、不动它（停用态也不动）：启停归用户。
+						if (data.copied === false) setNotice(t('skills.syncLocalKept', { name: skill.name || '' }))
+						else setNotice(t('skills.syncDone', { name: data.name || skill.name || '' }))
+						bumpCatalog()
+					})
+					.catch((error) => setActionFail(actionError(t, error)))
+					.then(() => setBusyPath(null))
+			}
+
 			const collisions = catalog.data && Array.isArray(catalog.data.collisions) ? catalog.data.collisions : []
 			const warnings = catalog.data && Array.isArray(catalog.data.warnings) ? catalog.data.warnings : []
 			const roots = catalog.data && Array.isArray(catalog.data.roots) ? catalog.data.roots : []
+			// 可用仓库那一块（只读分发源）：宿主只在缺省 scope=all 时给，老宿主/收窄响应缺席就整块不渲染。
+			const library = catalog.data && typeof catalog.data.library === 'object' && catalog.data.library !== null ? catalog.data.library : null
+			// 「同步到项目」要有项目根才成立：没有工作区 / 那条工作区解析不出项目根时按钮禁用。
+			const canSync = roots.some((root) => root.key === 'project-dsh')
 			// 折叠记忆：存储里读到的（记忆，键按「工作区 + 根」算，所以 A 的收起不会影响 B）
 			// + 本次挂载的覆盖层（键是裸键，用户刚点的那一下优先）。
 			// 覆盖层只活这一次挂载：换工作区的 effect 会把它清空，否则裸键会跨工作区串味。
-			const collapseKeys = collapseKeysOf(roots)
+			const collapseKeys = collapseKeysOf(library === null ? roots : [...roots, library])
 			const collapsedReposView = { ...collapsedOf(storageOf(), project.active, collapseKeys), ...collapsedRepos }
 			const toggleRepo = (key) => {
 				const next = collapsedReposView[key] !== true
@@ -1916,6 +1965,22 @@ window.__ModuleLoader__.load({
 						onMove: moveSkillToLibrary,
 					}),
 				),
+				// 第三块：可用仓库。放在两条根之后——它是**分发源**，不是这个工作区的现状。
+				library === null
+					? null
+					: h(SkillGroup, {
+						key: 'library',
+						t,
+						root: library,
+						mode: 'library',
+						busy: busyPath !== null,
+						busyPath,
+						canSync,
+						collapsedRepos: collapsedReposView,
+						onToggleRepo: toggleRepo,
+						onOpen: loadDetail,
+						onSync: syncToProject,
+					}),
 				// 目录里没有项目根 = 还没选工作区（或那条工作区解析不到项目根）。
 				// 这条引导要占住**项目块的槽位**：套上与项目技能根同形的组容器，读起来是
 				// 「项目这块是空的、原因是还没选工作区」，而不是一条游离在顶上的告示。
