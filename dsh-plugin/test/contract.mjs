@@ -2577,12 +2577,17 @@ const exposed = loaded.factory(requireFor(true))
 
 section('技能页签：库行是只读分发源（mode 只换行动作集）')
 
+check('SkillSourceLine 从 exports 暴露给契约测试', typeof exposed.SkillSourceLine === 'function')
+
 const libraryRowTree = exposed.SkillRow({
 	t: tStub,
 	busy: false,
 	mode: 'library',
 	canSync: true,
 	skill: { name: 'lib-only', description: DESCRIPTION, enabled: true, diagnostics: [], declaredName: 'lib-only', installed: null, root: 'library', scope: 'global' },
+	onDelete: () => {},
+	onMove: () => {},
+	canMove: true,
 	onOpen: () => {},
 	onSync: () => {},
 })
