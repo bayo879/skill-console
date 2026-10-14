@@ -2054,6 +2054,19 @@ check('scope=global 的收窄响应里没有 library（老调用方行为不变�
 const catalogProjectNoLibrary = await callRouteOrReport(wsRoute, { path: '/api/skill-console/catalog?scope=project' })
 check('scope=project 的收窄响应里也没有 library', catalogProjectNoLibrary.status === 200 && catalogProjectNoLibrary.json?.data?.library === undefined, JSON.stringify(Object.keys(catalogProjectNoLibrary.json?.data ?? {})))
 
+// 「订阅来源」这条不能靠路由的 `/repositories/add`：`wsRoute` 的 manager 在 `apply` 时抓的是
+// **真实** fetch（桩只在第一个 ctx 的 apply 窗口里注入过），联网不可用。
+// 直接喂一份状态文件：`record.library` 里有、`record.skills` 里没有——所以只有从
+// `record.library` 取数才会报出来源，两个索引因此**不是一回事**（同一份状态上互证）。
+const sourceHome = tempDir('sc-library-source')
+const sourceStateDir = join(sourceHome, 'skill-console')
+placeSkill(join(sourceStateDir, 'library'), 'lib-only', true)
+writeFileSync(join(sourceStateDir, 'repositories.json'), `${JSON.stringify({ version: 1, repositories: [{ id: 'o/r', owner: 'o', name: 'r', ref: '', subdirectory: 'skills', addedAt: '2026-01-01T00:00:00.000Z', skills: {}, library: { 'lib-only': { sourcePath: 'skills/lib-only', kind: 'flat', commit: 'deadbeef', syncedAt: '2026-01-01T00:00:00.000Z', files: {} } } }] }, null, 2)}\n`)
+const sourceManager = reposModule.createRepositoryManager({ stateDir: sourceStateDir, skillsDir: join(sourceHome, 'skills'), libraryDir: join(sourceStateDir, 'library'), log: () => {} })
+const sourceIndex = sourceManager.libraryIndex().get('lib-only')
+check('libraryIndex 认的是 record.library：订阅同步来的那条带 owner/name/commit/syncedAt', sourceIndex?.owner === 'o' && sourceIndex?.name === 'r' && sourceIndex?.commit === 'deadbeef' && sourceIndex?.syncedAt === '2026-01-01T00:00:00.000Z', JSON.stringify(sourceIndex))
+check('同一份状态里 installedIndex 是空的（库的来源 ≠ 装进技能根的台账）', sourceManager.installedIndex().size === 0, JSON.stringify([...sourceManager.installedIndex().keys()]))
+
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
 section('浏览器半边（模块表 / slot 契约 / 降级）')
