@@ -68,7 +68,7 @@ kind: 'prefix'   path: '/api/skill-console'
 {
   "ok": true,
   "data": {
-    "version": "0.10.0",             // 插件版本（package.json 的 version）；配置页头部显示它
+    "version": "0.10.1",             // 插件版本（package.json 的 version）；配置页头部显示它
     "dshHome": "/Users/…/harness",
     "stateDir": "/Users/…/harness/skill-console",
     "libraryDir": "/Users/…/harness/skill-console/library",   // 可用仓库：角色的候选与复制来源（DSH 不加载它）
@@ -463,13 +463,12 @@ kind: 'prefix'   path: '/api/skill-console'
     // 0.10.0 起每个角色**都带自己的 plan**（不只是激活的那个），结构与 /roles/preview 的产物一致。
     // 界面靠它逐技能讲差异；不读它的客户端忽略即可（纯增量）。
     "roles": [ { "id": "…", "name": "前端", "skills": ["a", "b"], "updatedAt": 1789…, "active": false,
-                 "plan": { "steps": [], "noop": [], "skipped": [], "localKept": [], "missing": [],
+                 "plan": { "steps": [], "noop": [], "skipped": [], "missing": [],
                            "stats": { "total": 0, "copy": 0, "enable": 0, "disable": 0, "noop": 0, "skipped": 0, "missing": 0 } } } ],
     "active": { "id": "…", "name": "前端" },      // 本项目未激活角色时 null
     "project": { "name": "proj-a", "fallback": false },   // 解析不出项目根时 null
     "status": "unassigned",                        // 'unassigned' | 'matched' | 'drifted'
-    "stats": { "inRole": 2, "total": 7, "copy": 0, "enable": 0, "disable": 0, "noop": 5, "skipped": 0, "missing": 0, "localKept": 0 },
-    "localKept": [ { "name": "g", "projectPath": "…/g/SKILL.md", "libraryPath": "…/library/g/SKILL.md" } ],
+    "stats": { "inRole": 2, "total": 7, "copy": 0, "enable": 0, "disable": 0, "noop": 5, "skipped": 0, "missing": 0 },
     // 候选 = 可用仓库里的技能（0.7.0 起是**平面数组**，不再分 project/global）
     "candidates": [ { "name": "g", "path": "…/library/g", "enabled": true, "toggleable": true, "readOnlyReason": null,
                       "description": "…", "installed": { "id": "obra/superpowers", "owner": "obra", "name": "superpowers",
@@ -500,7 +499,7 @@ kind: 'prefix'   path: '/api/skill-console'
   与 `stats.total`，**不参与勾选与对齐**。
 - `library` 是可用仓库的位置与技能数，供界面讲「候选从哪来」；`library.path` 只用于定位，界面不显示绝对路径。
 - `stats.copy`：角色里要、项目里没有、**库里有**的技能数量——切换时会把它们从库复制进项目根（复制出来一律启用态）。
-- `stats.localKept` / 顶层 `localKept`：项目里已有同名的条目；**保留项目那份，绝不被库覆盖**，该条目自身该 enable / disable / noop 照旧。`localKept` 不计入 `stats.total`。
+- **项目里已有同名时本地那份优先，且不再报告（0.10.1 起）**：项目里已有同名技能就用项目那份，库里那份**绝不覆盖**它。响应里**没有** `localKept` 字段——它恒等于「项目技能 ∩ 可用仓库」，与角色选了什么无关、永远有内容，对决策没有信息量。差异只在切换时讲，且只讲「角色要、本地没有」的那些（见 `stats.copy` / `stats.missing`）。
 - `stats.missing`：角色里要、项目与可用仓库都没有的名字数量；只报告、不算失败，但**会让 `status` 变成 `drifted`**。
 - 错误：500 `error.role.state`（`roles.json` 损坏，拒绝覆盖）。
 
@@ -519,7 +518,6 @@ kind: 'prefix'   path: '/api/skill-console'
                    "sourcePath": "…/g/SKILL.md", "sourceKind": "directory" } ],
     "noop":    [ { "name": "a", "path": "…", "enabled": true } ],
     "skipped": [ { "name": "s", "path": "…", "reason": "symlink" } ],
-    "localKept": [ { "name": "k", "projectPath": "…/k/SKILL.md", "libraryPath": "…/library/k/SKILL.md" } ],
     "missing": ["在其他项目里才有的技能"],
     "stats":   { "total": 8, "copy": 1, "enable": 1, "disable": 0, "noop": 5, "skipped": 1, "missing": 1 }
   }
@@ -565,14 +563,13 @@ kind: 'prefix'   path: '/api/skill-console'
   "results": [ { "name": "b", "path": "…", "action": "enable", "ok": true, "enabled": true, "changed": true },
                { "name": "c", "path": "…", "action": "disable", "ok": false, "code": "error.toggle.notFound", "error": "…" } ],
   "changed": 1,
-  "takeover": [ { "name": "c", "by": [ { "root": "user-dsh", "label": "全局 DSH", "scope": "global", "path": "…" } ] } ],
-  "localKept": [ { "name": "k", "projectPath": "…/k/SKILL.md", "libraryPath": "…/library/k/SKILL.md" } ] }
+  "takeover": [ { "name": "c", "by": [ { "root": "user-dsh", "label": "全局 DSH", "scope": "global", "path": "…" } ] } ] }
 ```
 语义：严格对齐——角色内的启用、项目里其余的全部停用（复用 `/toggle` 的发现文件重命名），
 角色里要、项目里没有、**可用仓库有**的技能**先从可用仓库复制进项目**（`action: 'copy'`，复制出来一律启用态），
 **只写项目技能根**，全局根在结构上不可达。逐项隔离：一项失败不影响其余项。
 `changed > 0` 时让技能注册表失效，并对每个真正改动的路径各发一次 `fs/observed` 通知。
-`takeover` 报告「停用项目副本后，全局同名技能接管生效」；`localKept` 报告「两边同名、保留项目那份」。
+`takeover` 报告「停用项目副本后，全局同名技能接管生效」。项目里已有同名的技能不在这份回执里出现——它们本来就被保留、本来就不是差异（见 §16）。
 写的是**哪个工作区**：请求体 `project`（**工作区目录路径**）给了就只认它，不是存在的目录 →
 400 `error.workspace.invalid`；没给才按 `x-skill-console-session` 头严格解析，解析不出
 （会话不存在 / 拿不到 cwd）→ 400 `error.role.noProject`，**绝不回落到「最近一个会话」**。

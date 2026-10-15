@@ -232,11 +232,12 @@ export function createRoleStore(options) {
  * 复制步骤的 `path` 固定为 `null`：纯函数这一层拿不到项目根路径，目标路径由
  * `applyRole` 用 `targetPathFor(projectRoot.path, step.name, step.sourceKind)` 算。
  *
- * 同名不覆盖：项目里已有同名、来源里也有同名时，进 `localKept`（只报告），该条目
- * 自身该 enable / disable / noop 照旧——**不会**用来源那份覆盖项目那份。
+ * 项目里已有同名就不复制（本地那份优先）——这是**常态**，不是需要报告的差异：
+ * 可用仓库与本项目本来就是同一批技能的两份存放，交集恒等于项目现有技能。
+ * 计划只报告角色与项目之间真正没对齐的部分（`steps` / `missing` / `skipped`）。
  *
  * @param input - `{role, skills, sources}`：`role` 是角色对象（或 null），`skills` 是项目根扫描结果，`sources` 是可用仓库扫描结果（只读来源，不落盘）。
- * @returns `{steps, noop, skipped, localKept, missing, stats}`。
+ * @returns `{steps, noop, skipped, missing, stats}`。
  */
 export function planRole(input) {
 	const role = input?.role ?? null
@@ -253,16 +254,12 @@ export function planRole(input) {
 	const steps = []
 	const noop = []
 	const skipped = []
-	const localKept = []
 	const seen = new Set()
 
 	for (const skill of skills) {
 		const name = typeof skill?.name === 'string' ? skill.name : ''
 		if (name === '') continue
 		seen.add(name)
-		// 项目里已有同名、可用仓库里也有同名：保留本地副本，绝不覆盖。
-		const source = sourceByName.get(name)
-		if (source !== undefined) localKept.push({ name, projectPath: skill.path, libraryPath: source.path })
 		if (skill.toggleable !== true) {
 			skipped.push({ name, path: skill.path, reason: skill.readOnlyReason ?? 'readonly' })
 			continue
@@ -298,7 +295,7 @@ export function planRole(input) {
 		skipped: skipped.length,
 		missing: missing.length,
 	}
-	return { steps, noop, skipped, localKept, missing, stats }
+	return { steps, noop, skipped, missing, stats }
 }
 
 /**

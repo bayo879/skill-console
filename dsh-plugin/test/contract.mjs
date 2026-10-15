@@ -468,7 +468,7 @@ check('已同态时 toggleSkill 回 changed=false，不报错', linked.results[0
 
 // ── 2f. 角色计划与执行：从全局复制（0.4.0） ────────────────────────────────
 
-section('角色计划 0.4.0：copy / localKept / skipped / stats.total')
+section('角色计划 0.4.0：copy / skipped / stats.total')
 {
 	const projectRecord = { key: 'project-dsh', scope: 'project', label: '项目 DSH', rank: 100, path: tempDir('plan-project'), exists: true, writable: true }
 	const globalRecord = { key: 'user-dsh', scope: 'global', label: '全局 DSH', rank: 400, path: tempDir('plan-global'), exists: true, writable: true }
@@ -476,10 +476,10 @@ section('角色计划 0.4.0：copy / localKept / skipped / stats.total')
 		mkdirSync(join(rootPath, name), { recursive: true })
 		writeFileSync(join(rootPath, name, enabled ? 'SKILL.md' : 'SKILL.md.disabled'), `---\nname: ${name}\ndescription: 计划用\n---\n\n# ${name}\n`)
 	}
-	placeOne(projectRecord.path, 'local-copy', true) // 项目里有、启用、角色内 → noop + localKept
+	placeOne(projectRecord.path, 'local-copy', true) // 项目里有、启用、角色内 → noop
 	placeOne(projectRecord.path, 'local-off', false) // 项目里有、停用、角色内 → enable
 	placeOne(globalRecord.path, 'from-global', true) // 只有全局有、角色内 → copy
-	placeOne(globalRecord.path, 'local-copy', true) // 两边同名 → localKept
+	placeOne(globalRecord.path, 'local-copy', true) // 两边同名：本地优先，不进计划
 	placeOne(globalRecord.path, 'still-missing', false) // 全局是停用态，仍然可复制
 	const justOutside = tempDir('plan-outside')
 	mkdirSync(join(justOutside, 'nofm'), { recursive: true })
@@ -499,13 +499,13 @@ section('角色计划 0.4.0：copy / localKept / skipped / stats.total')
 	check('copy 步骤的目标路径留给 applyRole 算（planRole 里是 null）', plan.steps.filter((step) => step.action === 'copy').every((step) => step.path === null))
 	check('项目里停用、角色内 → enable', plan.steps.some((step) => step.action === 'enable' && step.name === 'local-off'))
 	check('项目里启用、角色内 → noop', plan.noop.some((entry) => entry.name === 'local-copy'))
-	check('两边同名 → localKept，指向项目那份与可用仓库那份', plan.localKept.some((entry) => entry.name === 'local-copy' && entry.projectPath === join(projectRecord.path, 'local-copy', 'SKILL.md') && entry.libraryPath === join(globalRecord.path, 'local-copy', 'SKILL.md')), JSON.stringify(plan.localKept))
+	check('两边同名 → 本地那份优先，不进计划', plan.steps.every((step) => step.name !== 'local-copy'))
 	check('全局软链接 → skipped reason=symlink', plan.skipped.some((entry) => entry.name === 'global-link' && entry.reason === 'symlink'), JSON.stringify(plan.skipped))
 	check('两处都没有 → missing', plan.missing.includes('nowhere'), JSON.stringify(plan.missing))
 	check('stats.copy 数得对（2 个）', plan.stats.copy === 2, String(plan.stats.copy))
 	check('stats.total = copy+enable+disable+noop+skipped', plan.stats.total === plan.stats.copy + plan.stats.enable + plan.stats.disable + plan.stats.noop + plan.stats.skipped, JSON.stringify(plan.stats))
-	check('localKept 不计入 stats.total', plan.stats.total === 5, JSON.stringify(plan.stats))
-	check('localKept 的长度单独可见', plan.localKept.length === 1, String(plan.localKept.length))
+	check('同名技能不计入 stats.total（本地优先，不算一步）', plan.stats.total === 5, JSON.stringify(plan.stats))
+	check('计划里不再产出 localKept（同名是常态，不是差异）', plan.localKept === undefined, JSON.stringify(plan.localKept))
 }
 
 section('角色执行 0.4.0：复制只落项目根，全局根整轮没被碰')
@@ -1662,7 +1662,7 @@ check('取消后回到 unassigned', (await call({ path: '/api/skill-console/role
 const rolesWithPlan = await call({ path: '/api/skill-console/roles', headers: roleSession })
 check(
 	'每个角色都带自己的 plan（不只是激活的那个）',
-	rolesWithPlan.json.data.roles.length > 0 && rolesWithPlan.json.data.roles.every((role) => role.plan !== undefined && ['steps', 'noop', 'skipped', 'localKept', 'missing', 'stats'].every((key) => key in role.plan)),
+	rolesWithPlan.json.data.roles.length > 0 && rolesWithPlan.json.data.roles.every((role) => role.plan !== undefined && ['steps', 'noop', 'skipped', 'missing', 'stats'].every((key) => key in role.plan)),
 	JSON.stringify(rolesWithPlan.json.data.roles.map((role) => Object.keys(role.plan ?? {}))),
 )
 
@@ -1670,7 +1670,7 @@ const inlinePlan = rolesWithPlan.json.data.roles.find((role) => role.id === save
 const samePreview = (await call({ path: `/api/skill-console/roles/preview?role=${savedRoleId}`, headers: roleSession })).json.data
 check(
 	'GET /roles 的 plan 与 /roles/preview 逐字段相同（两条路不能走偏）',
-	JSON.stringify(inlinePlan) === JSON.stringify({ steps: samePreview.steps, noop: samePreview.noop, skipped: samePreview.skipped, localKept: samePreview.localKept, missing: samePreview.missing, stats: samePreview.stats }),
+	JSON.stringify(inlinePlan) === JSON.stringify({ steps: samePreview.steps, noop: samePreview.noop, skipped: samePreview.skipped, missing: samePreview.missing, stats: samePreview.stats }),
 	`${JSON.stringify(inlinePlan)} vs ${JSON.stringify(samePreview)}`,
 )
 
@@ -2912,7 +2912,7 @@ const t7DetailStage = (() => {
 	// 绕过 RolesPanel 的 `data === null` 早退分支：帧 0=目录版本 store、1=data、2=draft、3=busy、
 	// 4=notice、5=error、6=detail。
 	const candidate = { name: 'lib-link', path: '/lib/lib-link/SKILL.md', enabled: true, toggleable: true, description: '', installed: null }
-	frames.set('RolesPanel#1', { active: null, project: null, roles: [], candidates: [candidate], projectSkills: [], stats: {}, localKept: [] })
+	frames.set('RolesPanel#1', { active: null, project: null, roles: [], candidates: [candidate], projectSkills: [], stats: {} })
 	frames.set('RolesPanel#2', { id: 'r', name: 'x', skills: [] })
 	const firstTree = renderInFrame(rolesPanelElement.type, rolesPanelElement.props)
 	const roleEditorElement = stageWalk(firstTree).find((element) => element.type === stageExports.RoleEditor)
@@ -3474,7 +3474,7 @@ try {
 }
 check('locale 缺失时不抛异常', localeMissingThrew === false)
 
-// ── 0.4.0：删除 / 移到项目 / 安装目标 / 角色的 copy 与 localKept ──────────
+// ── 0.4.0：删除 / 移到项目 / 安装目标 / 角色的 copy ──────────────────────
 
 // SkillRow 是普通函数组件：用极简 React 替身直接调用就能看它渲染了什么。
 // 注意这里的 `delRowT` / `delRowProps` 不能叫 `tStub` / `rowProps`——上面已经有同名的顶层 const。
@@ -3498,11 +3498,13 @@ check('「移到可用仓库」只在「当前角色没在用、库里也没有�
 check('移动确认框写明动的是哪个技能、哪个技能根', clientSource.includes("t('skills.moveConfirm', { name:") && clientSource.includes("t('skills.movePartial'"))
 check('技能行标出「当前角色 / 可用仓库」两个来源', clientSource.includes("t('skills.tagInRole')") && clientSource.includes("t('skills.tagInLibrary')"))
 check('角色面板把 copy 数显示出来', clientSource.includes("t('roles.copyCount', { count: copyCount })"))
-check('角色面板把 localKept 显示出来', clientSource.includes("t('roles.localKept')") && clientSource.includes("t('roles.localKeptHint')"))
+check('角色面板不再常驻「项目里已有同名」清单（同名是常态，不是差异）', !clientSource.includes("t('roles.localKept')") && !clientSource.includes('localKeptList'))
 check('仓库页签不再有安装目标选择（订阅默认同步进可用仓库）', !clientSource.includes("t('repos.installTarget')") && !clientSource.includes('target: installTarget'))
 check('订阅卡片讲清可用仓库里的存量与不一致', clientSource.includes('librarySummaryLine(t, library)') && clientSource.includes("'repos.library.synced'") && clientSource.includes("'repos.library.outdated'"))
 // 从角色列表直接激活时没有草稿：确认框的数量必须按「被激活的那个角色」算，否则恒为 0。
 check('激活确认框按被激活角色的技能算数量', clientSource.includes('const confirmText = (skills) =>') && clientSource.includes('runActivate(role.id, role.skills ?? [])'))
+// 差异只在切换时讲，而且要点名：「角色有、本地没有」的技能分「会从库里复制」与「库里也没有」两行。
+check('激活确认框点名「角色有、本地没有」的技能', clientSource.includes("t('roles.activateNotLocal', { names:") && clientSource.includes("t('roles.activateAbsent', { names:"))
 check('从编辑器激活时按草稿算数量', clientSource.includes('runActivate(current.id, current.skills)'))
 // 面板不显示任何具体目录地址（README 技能 tab 那条）：删除 / 移动的回执里不许留 {path} / {backup} 槽。
 const noticeCopy = [dictionaryZh['skills.deleteDone'], dictionaryZh['skills.moveDone'], dictionaryEn['skills.deleteDone'], dictionaryEn['skills.moveDone']].join('|')
@@ -3513,7 +3515,7 @@ for (const key of [
 	'skills.delete', 'skills.deleteConfirm', 'skills.deleteSymlinkHint', 'skills.deleteGlobalHint',
 	'skills.deleteDone', 'skills.deleteFailed', 'skills.move', 'skills.moveConfirm', 'skills.moveDone',
 	'skills.movePartial', 'skills.moveFailed', 'skills.formFlat', 'skills.formDirectory', 'skills.formSymlink',
-	'roles.copyCount', 'roles.localKept', 'roles.localKeptHint', 'roles.librarySkills', 'roles.libraryHint', 'roles.libraryEmpty',
+	'roles.copyCount', 'roles.activateNotLocal', 'roles.activateAbsent', 'roles.librarySkills', 'roles.libraryHint', 'roles.libraryEmpty',
 	'repos.library.synced', 'repos.library.outdated', 'repos.library.missing', 'repos.library.modified', 'repos.library.orphan', 'repos.library.invalid',
 	'skills.expand', 'skills.collapse', 'skills.tagInRole', 'skills.tagInLibrary',
 	'error.roleNoProject', 'error.tooMany',

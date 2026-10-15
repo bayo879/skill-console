@@ -100,7 +100,9 @@ window.__ModuleLoader__.load({
 				'roles.remove': '删除',
 				'roles.removeConfirm': '删除角色「{name}」？磁盘上的技能文件一个都不会动。',
 				'roles.activate': '切换到此角色',
-				'roles.activateConfirm': '切换会把「{project}」的技能对齐到这个角色：复制 {copy} 个、启用 {enable} 个、停用 {disable} 个。全局技能不受影响（复制只从全局读一份到项目，全局那份不会被改）。确定吗？',
+				'roles.activateConfirm': '切换会把「{project}」的技能对齐到这个角色：复制 {copy} 个、启用 {enable} 个、停用 {disable} 个。可用仓库与全局技能都只读，不会被改。确定吗？',
+				'roles.activateNotLocal': '本地没有、会从可用仓库复制：{names}',
+				'roles.activateAbsent': '本地和可用仓库都没有、切换后仍然缺：{names}',
 				'roles.deactivate': '取消角色',
 				'roles.deactivateConfirm': '取消角色的激活记录？磁盘上的技能保持现状，不会还原。',
 				'roles.save': '保存',
@@ -145,8 +147,6 @@ window.__ModuleLoader__.load({
 				'roles.libraryEmpty': '可用仓库里还没有技能。去「技能仓库」页签把订阅同步过来。',
 				'roles.activateSummary': '复制 {copy} 个 · 启用 {enable} 个 · 停用 {disable} 个 · 跳过 {skipped} 个',
 				'roles.copyCount': '复制 {count} 个',
-				'roles.localKept': '项目里已有同名，保留本地副本',
-				'roles.localKeptHint': '这些技能在这个项目里已经有一份，角色不会用可用仓库那份覆盖它们。',
 				'roles.takeover': '「{name}」停用后有同名技能接管生效',
 				'roles.resultOk': '完成',
 				'roles.resultSkipped': '跳过',
@@ -365,7 +365,9 @@ window.__ModuleLoader__.load({
 				'roles.remove': 'Delete',
 				'roles.removeConfirm': 'Delete the role "{name}"? No skill file on disk will be touched.',
 				'roles.activate': 'Switch to this role',
-				'roles.activateConfirm': 'Switching aligns "{project}" to this role: copy {copy} / enable {enable} / disable {disable}. Global skills are untouched (copying only reads one global copy into the project). Continue?',
+				'roles.activateConfirm': 'Switching aligns "{project}" to this role: copy {copy} / enable {enable} / disable {disable}. The available library and global skills are read-only. Continue?',
+				'roles.activateNotLocal': 'Not in this project — will be copied from the available library: {names}',
+				'roles.activateAbsent': 'In neither this project nor the available library — still missing after switching: {names}',
 				'roles.deactivate': 'Clear role',
 				'roles.deactivateConfirm': 'Clear this project\'s active-role record? Skills on disk stay as they are — nothing is restored.',
 				'roles.save': 'Save',
@@ -410,8 +412,6 @@ window.__ModuleLoader__.load({
 				'roles.libraryEmpty': 'The available library has no skills yet. Sync a subscription from the "Skill repositories" tab.',
 				'roles.activateSummary': 'copy {copy} · enable {enable} · disable {disable} · skipped {skipped}',
 				'roles.copyCount': 'copy {count}',
-				'roles.localKept': 'A local copy already exists — keeping it',
-				'roles.localKeptHint': 'These skills already exist in this project; the role will not overwrite them with the library copies.',
 				'roles.takeover': 'After disabling "{name}", a same-named skill takes over',
 				'roles.resultOk': 'done',
 				'roles.resultSkipped': 'skipped',
@@ -3787,9 +3787,8 @@ button.sc-link:hover, .sc-summary-link:hover { color: var(--dsw-alias-link, inhe
 			const status = roleStatusOf(data)
 			const roles = Array.isArray(data.roles) ? data.roles : []
 			const projectName = data.project?.name ?? t('roles.noProject')
-			// 0.4.0：角色里「将从全局复制进项目」的数量，以及「项目里已有同名、保留本地」的名单。
+			// 0.4.0：角色里「将从可用仓库复制进项目」的数量。
 			const copyCount = Number(data.stats?.copy ?? 0)
-			const localKeptList = Array.isArray(data.localKept) ? data.localKept : []
 
 			/** 把一份角色转成草稿。 */
 			const draftOf = (role) => ({ id: role.id, name: role.name, skills: [...(role.skills ?? [])] })
@@ -3803,6 +3802,10 @@ button.sc-link:hover, .sc-summary-link:hover { color: var(--dsw-alias-link, inhe
 			 * 准备一份「将复制 A / 启用 M / 停用 N」的确认文案（本地算，不为了弹窗再打一次接口）。
 			 * 技能名由调用方显式传入：从角色列表直接激活时并没有草稿，
 			 * 若读 `current.skills`（草稿为空时是空数组）会把数量恒算成 0。
+			 *
+			 * 「角色有、本地没有」的技能按补不补得上分成两行**点名**：能从可用仓库复制的、
+			 * 与库里也没有（切换后仍然缺）的。只给数字的话，用户不知道缺的是哪几个，
+			 * 也就无从去技能仓库页签补上。
 			 */
 			const confirmText = (skills) => {
 				const wanted = skills ?? []
@@ -3810,10 +3813,14 @@ button.sc-link:hover, .sc-summary-link:hover { color: var(--dsw-alias-link, inhe
 				// copy 的来源是可用仓库；enable/disable 说的是本项目技能根的现状。
 				const libraryNames = new Set(libraryCandidates.map((skill) => skill.name))
 				const known = new Set(projectSkillRows.map((skill) => skill.name))
-				const copy = wanted.filter((name) => !known.has(name) && libraryNames.has(name)).length
+				const copies = wanted.filter((name) => !known.has(name) && libraryNames.has(name))
+				const absent = wanted.filter((name) => !known.has(name) && !libraryNames.has(name))
 				const enable = projectSkillRows.filter((skill) => picked.has(skill.name) && skill.enabled !== true).length
 				const disable = projectSkillRows.filter((skill) => !picked.has(skill.name) && skill.enabled === true).length
-				return t('roles.activateConfirm', { copy, enable, disable, project: project.activeName || projectName })
+				const lines = [t('roles.activateConfirm', { copy: copies.length, enable, disable, project: project.activeName || projectName })]
+				if (copies.length > 0) lines.push(t('roles.activateNotLocal', { names: copies.join('、') }))
+				if (absent.length > 0) lines.push(t('roles.activateAbsent', { names: absent.join('、') }))
+				return lines.join('\n')
 			}
 
 			/**
@@ -3903,15 +3910,6 @@ button.sc-link:hover, .sc-summary-link:hover { color: var(--dsw-alias-link, inhe
 				status === 'drifted' ? h('span', { className: 'sc-sub' }, t('roles.statusDriftedHint')) : null,
 				error === null ? null : h('span', { className: 'sc-role-error' }, error),
 				notice === null ? null : h('span', { className: 'sc-role-notice' }, notice),
-				localKeptList.length > 0
-					? h(
-							'div',
-							{ className: 'sc-note' },
-							h('div', { className: 'sc-group-title' }, t('roles.localKept')),
-							localKeptList.map((entry) => h('div', { key: 'local-kept-' + entry.name, className: 'sc-hint' }, entry.name)),
-							h('div', { className: 'sc-hint' }, t('roles.localKeptHint')),
-						)
-					: null,
 				draft !== null
 					? h(RoleEditor, {
 						t,

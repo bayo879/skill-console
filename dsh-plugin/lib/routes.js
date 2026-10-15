@@ -434,8 +434,8 @@ export function createRouteHandlers(deps) {
 			const librarySkills = librarySkillsOf()
 			const plan = activeRole === null ? null : planRole({ role: activeRole, skills: projectSkills, sources: librarySkills })
 			const stats = plan === null
-				? { inRole: 0, total: projectSkills.length, copy: 0, enable: 0, disable: 0, noop: 0, skipped: 0, missing: 0, localKept: 0 }
-				: { inRole: activeRole.skills.length, ...plan.stats, localKept: plan.localKept.length }
+				? { inRole: 0, total: projectSkills.length, copy: 0, enable: 0, disable: 0, noop: 0, skipped: 0, missing: 0 }
+				: { inRole: activeRole.skills.length, ...plan.stats }
 			// 两块技能各查各的来源表：候选在库里（`record.library`），项目技能是装进技能根的
 			// 台账（`record.skills`）。用错表会把「装过但已不在库」的来源显示到候选上。
 			const libraryInstalled = repositories.libraryIndex()
@@ -454,7 +454,6 @@ export function createRouteHandlers(deps) {
 				status: statusOf(activeRole, plan),
 				library: { path: libraryDir, count: librarySkills.length },
 				stats,
-				localKept: plan === null ? [] : plan.localKept,
 				candidates: librarySkills.map((skill) => candidateOf(skill, libraryInstalled.get(skill.name) ?? null)),
 				projectSkills: projectSkills.map((skill) => candidateOf(skill, projectInstalled.get(skill.name) ?? null)),
 			}
@@ -520,7 +519,6 @@ export function createRouteHandlers(deps) {
 				results,
 				changed,
 				takeover,
-				localKept: plan.localKept,
 			}
 		},
 
