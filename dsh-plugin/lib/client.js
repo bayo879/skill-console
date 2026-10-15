@@ -1,11 +1,16 @@
 /**
  * dsh-skill-console — 浏览器半边（设置 →「技能控制台」）。
  *
- * 一个挂载点，两个标签页：
+ * 一个挂载点，三个标签页：
  *
  *   1. 「技能」——按 全局 / 项目 看技能目录，逐项启停（宿主用重命名发现文件实现，
  *      绝不改写内容），并把「同名技能谁生效」讲清楚：collisions + toggle 返回的 takeover。
- *   2. 「技能仓库」——订阅 GitHub 仓库、**手动**拉取最新、逐项确认安装/更新、恢复备份。
+ *   2. 「技能仓库」——**一页两个视图**（页内分段控件切换）：
+ *      「订阅」订阅 GitHub 仓库、**手动**拉取最新、展开看每个技能在库里的状态、恢复备份；
+ *      「可用仓库」看订阅落进库里的技能，按来源分组，逐项复制进当前工作区。
+ *      库只在这一处出现——技能页签不再平行挂一块只读的库。
+ *   3. 「角色」——定义一份技能集合，切换时把当前工作区对齐过去；折叠态就能看到
+ *      当前项目与角色的差异（构成条 + 计数），展开是逐技能的动作清单。
  *
  * 为什么只有一个挂载点：这个插件的全部语义都是「配置面」，没有需要常驻的运行时
  * 视图（不像集群面板要浮层）。设置分区是它唯一的家，也就没有第二个注册点。
@@ -105,16 +110,40 @@ window.__ModuleLoader__.load({
 				'roles.namePlaceholder': '例如：前端开发',
 				'roles.skillsCount': '{count} 个技能',
 				'roles.statusUnassigned': '未启用角色',
+				'roles.statusInactive': '未激活',
 				'roles.statusMatched': '已对齐角色',
 				'roles.statusDrifted': '已偏离角色',
 				'roles.statusDriftedHint': '项目技能与角色不一致（可能手工改过开关）。不会自动纠正，再切一次即可对齐。',
+				'roles.diffReady': '已就位 {count}',
+				'roles.diffCopy': '会复制 {count}',
+				'roles.diffEnable': '会启用 {count}',
+				'roles.diffLose': '会停用 {count}',
+				'roles.diffMissing': '库里没有 {count}',
+				'roles.diffSkipped': '改不了 {count}',
+				'roles.diffIfSwitch': '若切换：{summary}',
+				'roles.diffAligned': '与项目一致',
+				'roles.diffBlocked': '不会被执行',
+				'roles.extraTitle': '角色外 · 切换后会停用（{count}）',
+				'roles.applyDiff': '按此差异切换',
+				'roles.applyDiffConfirm': '按上面这份差异切换「{project}」？',
+				'roles.librarySyncedCol': '库',
+				'state.ready': '已就位',
+				'state.gain': '会生效',
+				'state.gainCopy': '会复制',
+				'state.gainEnable': '会启用',
+				'state.lose': '会失效',
+				'state.missing': '库里没有',
+				'state.skipped': '改不了',
+				'state.reasonReadonly': '项目里只读',
+				'state.reasonSymlink': '库内是软链',
+				'state.reasonUnknown': '动不了',
 				'roles.librarySkills': '可用仓库·角色从这里挑选',
 				'roles.libraryHint': '勾选 = 切换时把它复制进当前工作区；项目里已有的同名技能不会被覆盖。',
 				'roles.missingSkills': '角色里包含、但可用仓库与本项目都没有的技能',
 				'roles.missingHint': '这些名字在别的项目里可能有；在本项目里切换时会被跳过。',
 				'roles.noProjectRoot': '这个项目还没有技能根（<项目根>/.dsh/skills 不存在）。',
 				'roles.libraryEmpty': '可用仓库里还没有技能。去「技能仓库」页签把订阅同步过来。',
-				'roles.activateSummary': '复制 {copy} 个 / 启用 {enable} 个 / 停用 {disable} 个 / 跳过 {skipped} 个',
+				'roles.activateSummary': '复制 {copy} 个 · 启用 {enable} 个 · 停用 {disable} 个 · 跳过 {skipped} 个',
 				'roles.copyCount': '复制 {count} 个',
 				'roles.localKept': '项目里已有同名，保留本地副本',
 				'roles.localKeptHint': '这些技能在这个项目里已经有一份，角色不会用可用仓库那份覆盖它们。',
@@ -148,7 +177,8 @@ window.__ModuleLoader__.load({
 				'skills.empty': '这个技能根还是空的。去「技能仓库」页签订阅一个仓库，装几个技能进来。',
 				'skills.syncToProject': '同步到项目',
 				'skills.libraryHint': '库里的技能 DSH 不加载；用「同步到项目」放进当前工作区。',
-				'skills.libraryEmpty': '可用仓库里还没有技能。去「技能仓库」页签订阅一个仓库，或把技能「移到可用仓库」。',
+				'skills.libraryEmpty': '可用仓库里还没有技能。',
+				'skills.libraryPointer': '可用仓库里有 {count} 个技能（DSH 不加载它们）。在「技能仓库」页签里浏览与分发。',
 				'skills.libraryNoWorkspace': '先在工作区条里选一个工作区，才能把技能同步进项目。',
 				'skills.library': '可用仓库',
 				'skills.syncDone': '已把「{name}」同步到项目技能根（启用态）。',
@@ -234,10 +264,33 @@ window.__ModuleLoader__.load({
 				'error.internal': '后端处理这次请求时抛了异常，没有改动任何文件。可以看 DSH 日志里的 web-server 警告。',
 				'error.action': '操作失败：{error}',
 				'repos.subscribed': '已订阅的仓库',
+				'repos.viewSubscriptions': '订阅',
+				'repos.viewLibrary': '可用仓库',
+				'repos.viewSubscriptionsCount': '订阅 {count}',
+				'repos.viewLibraryCount': '可用仓库 {count}',
+				'repos.viewLibraryLink': '查看明细',
+				// 「技能仓库」页签的两个视图都是**全局一份**（不随工作区变），页签顶部说一次。
+				'section.globalScope': '以下内容全局一份，与工作区无关。',
+				// 库视图（「技能仓库」页签的第二个视图）。措辞与技能页签不同的一律走 library.*，
+				// 完全一样的一律复用 skills.*——同一句话不该有两份译文，多一份就多一处漂移。
+				'library.filterPlaceholder': '按名字或简介筛选',
+				'library.filterCount': '{shown} / {total} 个技能',
+				'library.filterEmpty': '没有匹配「{query}」的技能。',
+				'library.filterClear': '清除筛选',
+				'library.sourceFilter': '只看 {source}',
+				'library.clearSource': '显示全部来源',
+				'library.empty': '可用仓库里还没有技能。订阅一个仓库并「拉取最新」，或把技能「移到可用仓库」。',
+				'library.inProject': '已在项目',
+				'library.syncedAt': '{time}同步进库',
 				'repos.tokenOn': '已配置 GitHub token',
 				'repos.tokenOff': '未配置 GitHub token',
 				'repos.empty': '还没有订阅任何仓库。在下面填 owner/name 或 GitHub 链接即可添加（添加时会立刻做一次首次拉取）。',
-				'repos.statusLine': '可用仓库：共 {total} 个技能 · 已同步 {synced} · 待更新 {outdated} · 上游已删除 {orphan}',
+				'repos.statusPrefix': '可用仓库：',
+				'repos.statusEmpty': '还没有技能',
+				'repos.statusTotal': '共 {count} 个技能',
+				'repos.statusSynced': '已同步 {count}',
+				'repos.statusOutdated': '待更新 {count}',
+				'repos.statusOrphan': '上游已删除 {count}',
 				'repos.statusExtra': '另有 frontmatter 异常 {invalid} 个',
 				'repos.ref': '分支 {ref}',
 				'repos.refDefault': '默认分支',
@@ -263,8 +316,8 @@ window.__ModuleLoader__.load({
 				'repos.edited': '已更新「{id}」的订阅设置。',
 				'repos.editUnchanged': '「{id}」没有改动。',
 				'repos.editFetchError': '订阅设置已保存，但重新拉取失败：{error}',
-				'repos.expand': '展开',
-				'repos.collapse': '收起',
+				'common.expand': '展开',
+				'common.collapse': '收起',
 				'repos.collapseAll': '全部收起',
 				'repos.detailTitle': '仓库里的技能',
 				'repos.detailEmpty': '这个订阅还没有远端清单，点「拉取最新」。',
@@ -322,16 +375,40 @@ window.__ModuleLoader__.load({
 				'roles.namePlaceholder': 'e.g. Frontend',
 				'roles.skillsCount': '{count} skills',
 				'roles.statusUnassigned': 'No role active',
+				'roles.statusInactive': 'Not active',
 				'roles.statusMatched': 'Aligned to role',
 				'roles.statusDrifted': 'Drifted from role',
 				'roles.statusDriftedHint': 'Project skills no longer match the role (toggles were changed by hand). Nothing is corrected automatically — switch again to realign.',
+				'roles.diffReady': 'In place {count}',
+				'roles.diffCopy': 'Copy {count}',
+				'roles.diffEnable': 'Enable {count}',
+				'roles.diffLose': 'Disable {count}',
+				'roles.diffMissing': 'Missing {count}',
+				'roles.diffSkipped': 'Read-only {count}',
+				'roles.diffIfSwitch': 'If switched: {summary}',
+				'roles.diffAligned': 'Matches project',
+				'roles.diffBlocked': "Won't be applied",
+				'roles.extraTitle': 'Outside role · will be disabled ({count})',
+				'roles.applyDiff': 'Apply this diff',
+				'roles.applyDiffConfirm': 'Apply the diff above to "{project}"?',
+				'roles.librarySyncedCol': 'Library',
+				'state.ready': 'In place',
+				'state.gain': 'Takes effect',
+				'state.gainCopy': 'Will be copied',
+				'state.gainEnable': 'Will be enabled',
+				'state.lose': 'Will be disabled',
+				'state.missing': 'Not in library',
+				'state.skipped': 'Read-only',
+				'state.reasonReadonly': 'Read-only in project',
+				'state.reasonSymlink': 'Symlinked in library',
+				'state.reasonUnknown': 'Cannot be changed',
 				'roles.librarySkills': 'Available library · pick from here',
 				'roles.libraryHint': 'Checked = it is copied into the current workspace when switching; a same-named skill already in the project is never overwritten.',
 				'roles.missingSkills': 'In the role but in neither the available library nor this project',
 				'roles.missingHint': 'These names may exist in other projects; switching here skips them.',
 				'roles.noProjectRoot': 'This project has no skill root yet (<projectRoot>/.dsh/skills does not exist).',
 				'roles.libraryEmpty': 'The available library has no skills yet. Sync a subscription from the "Skill repositories" tab.',
-				'roles.activateSummary': 'copy {copy} / enable {enable} / disable {disable} / skipped {skipped}',
+				'roles.activateSummary': 'copy {copy} · enable {enable} · disable {disable} · skipped {skipped}',
 				'roles.copyCount': 'copy {count}',
 				'roles.localKept': 'A local copy already exists — keeping it',
 				'roles.localKeptHint': 'These skills already exist in this project; the role will not overwrite them with the library copies.',
@@ -365,7 +442,8 @@ window.__ModuleLoader__.load({
 				'skills.empty': 'This skill root is empty. Subscribe to a repository in the Repositories tab and install a few skills.',
 				'skills.syncToProject': 'Sync to project',
 				'skills.libraryHint': 'DSH does not load skills in the library. Use "Sync to project" to copy one into the current workspace.',
-				'skills.libraryEmpty': 'The library is empty. Subscribe to a repository in the Repositories tab, or move a skill into the library.',
+				'skills.libraryEmpty': 'The library is empty.',
+				'skills.libraryPointer': 'The library holds {count} skills (DSH does not load them). Browse and distribute them in the Repositories tab.',
 				'skills.libraryNoWorkspace': 'Pick a workspace in the workspace bar first, then sync skills into the project.',
 				'skills.library': 'Library',
 				'skills.syncDone': 'Synced "{name}" into the project skill root (enabled).',
@@ -450,10 +528,30 @@ window.__ModuleLoader__.load({
 				'error.internal': 'The backend threw while handling this request; nothing was changed on disk. Check the web-server warnings in the DSH log.',
 				'error.action': 'Action failed: {error}',
 				'repos.subscribed': 'Subscribed repositories',
+				'repos.viewSubscriptions': 'Subscriptions',
+				'repos.viewLibrary': 'Library',
+				'repos.viewSubscriptionsCount': 'Subscriptions {count}',
+				'repos.viewLibraryCount': 'Library {count}',
+				'repos.viewLibraryLink': 'View details',
+				'section.globalScope': 'Everything below is global — it does not change with the workspace.',
+				'library.filterPlaceholder': 'Filter by name or description',
+				'library.filterCount': '{shown} of {total} skills',
+				'library.filterEmpty': 'No skill matches "{query}".',
+				'library.filterClear': 'Clear filter',
+				'library.sourceFilter': 'Only {source}',
+				'library.clearSource': 'Show all sources',
+				'library.empty': 'The library is empty. Subscribe to a repository and fetch it, or move a skill into the library.',
+				'library.inProject': 'In project',
+				'library.syncedAt': 'synced {time}',
 				'repos.tokenOn': 'GitHub token configured',
 				'repos.tokenOff': 'No GitHub token configured',
 				'repos.empty': 'No repository is subscribed yet. Enter owner/name or a GitHub URL below to add one (adding performs one initial fetch).',
-				'repos.statusLine': 'Library: {total} skills · {synced} synced · {outdated} update available · {orphan} deleted upstream',
+				'repos.statusPrefix': 'Library: ',
+				'repos.statusEmpty': 'no skills yet',
+				'repos.statusTotal': '{count} skills',
+				'repos.statusSynced': '{count} synced',
+				'repos.statusOutdated': '{count} update available',
+				'repos.statusOrphan': '{count} deleted upstream',
 				'repos.statusExtra': 'plus {invalid} invalid frontmatter',
 				'repos.ref': 'Ref {ref}',
 				'repos.refDefault': 'Default branch',
@@ -479,8 +577,8 @@ window.__ModuleLoader__.load({
 				'repos.edited': 'Updated the subscription settings for "{id}".',
 				'repos.editUnchanged': '"{id}" had no changes.',
 				'repos.editFetchError': 'Settings saved, but the refetch failed: {error}',
-				'repos.expand': 'Expand',
-				'repos.collapse': 'Collapse',
+				'common.expand': 'Expand',
+				'common.collapse': 'Collapse',
 				'repos.collapseAll': 'Collapse all',
 				'repos.detailTitle': 'Skills in this repository',
 				'repos.detailEmpty': 'This subscription has no remote manifest yet — click "Fetch latest".',
@@ -575,6 +673,18 @@ window.__ModuleLoader__.load({
 .sc-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
 .sc-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .sc-spacer { flex: 1 1 auto; }
+/* 「技能仓库」页签的作用域声明，跟页签同排、靠右收尾。
+   与 .sc-hint 同字号同色，但**自己不许换行**——它换行会把页签条撑高，切页签就跳版。
+   容器仍是 flex-wrap，所以窄到放不下时它整条掉到下一行，那是优雅降级、不是跳版。 */
+.sc-scope { font-size: 12px; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 二级视图切换：连体分段控件。
+   刻意**不用** pill——一级页签已经是 border-radius:999px 的 pill，两级同形就分不出层级。
+   两段等宽、无圆角、共享分隔线，选中段用 hover 底色打底 + 加粗。 */
+.sc-seg { display: inline-flex; border: 1px solid var(--dsw-alias-border-l3, rgba(127,127,127,0.4)); border-radius: 6px; overflow: hidden; }
+.sc-seg-item { font: inherit; font-size: 12px; padding: 4px 12px; border: 0; border-left: 1px solid var(--dsw-alias-border-l3, rgba(127,127,127,0.4)); background: transparent; color: inherit; cursor: pointer; }
+.sc-seg-item:first-child { border-left: 0; }
+.sc-seg-item:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.1)); }
+.sc-seg-item[data-active="true"] { background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.14)); font-weight: 600; }
 .sc-nowrap { white-space: nowrap; }
 .sc-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 10px; min-height: 0; overflow: auto; padding-right: 2px; }
 /* 本面板的高度是定死的（.sc-section 给了确定高度），内容一超高，浏览器就会按 flex-shrink
@@ -601,7 +711,9 @@ window.__ModuleLoader__.load({
 .sc-caret { width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 5px solid currentColor; transition: transform 0.12s ease; }
 .sc-caret[data-open="true"] { transform: rotate(90deg); }
 .sc-group-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--dsw-alias-border-l3, rgba(127,127,127,0.3)); background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.06)); font-size: 12px; }
-.sc-group-title { font-weight: 600; }
+/* 组标题 12 → 13px：它是每张卡片里唯一的层级标记，12px 与正文字号重合就看不出是标题。
+   只抬一级——再往上就会和宿主设置页自己的标题争层级。 */
+.sc-group-title { font-weight: 600; font-size: 13px; }
 .sc-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 /* 第一行不画上分隔线，靠的是「谁是组头的下一个兄弟」：根/仓库组头下面紧跟着的第一行，
    以及没有组头的明细列表（.sc-group > .sc-row）自己的首行。 */
@@ -678,6 +790,18 @@ window.__ModuleLoader__.load({
 .sc-tip { display: inline-flex; align-items: center; }
 .sc-link { color: var(--dsw-alias-link, inherit); text-decoration: none; }
 .sc-link:hover { text-decoration: underline; }
+/* 把「一句话」做成入口时用的按钮：外观必须与它替代的那行文字完全一致，
+   否则同一段句子会因为「这次能点」而换一副样子（版式噪声）。 */
+button.sc-link, .sc-summary-link { font: inherit; font-size: 12px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+button.sc-link { color: var(--dsw-alias-link, inherit); }
+button.sc-link:hover, .sc-summary-link:hover { color: var(--dsw-alias-link, inherit); text-decoration: underline; }
+.sc-hint.sc-summary-link { color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
+/* 库视图：筛选行 + 库的整块内容。这里只补布局，行/组/折叠全部复用技能页签那一套。 */
+.sc-lib { display: flex; flex-direction: column; gap: 10px; }
+.sc-filter { flex: 1 1 220px; min-width: 160px; }
+/* 技能页签里那条指路：它不是技能根，所以不套 .sc-group，用虚线框说明「这一块不在这儿」。 */
+.sc-library-pointer { display: block; width: 100%; margin-top: 2px; font: inherit; font-size: 12px; line-height: 1.6; padding: 10px 12px; border: 1px dashed var(--dsw-alias-border-l3, rgba(127,127,127,0.4)); border-radius: 8px; background: transparent; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); cursor: pointer; text-align: left; }
+.sc-library-pointer:hover { border-style: solid; color: inherit; }
 .sc-changed { display: flex; flex-wrap: wrap; gap: 4px; }
 .sc-change { font-family: var(--ds-font-family-code, ui-monospace, Menlo, monospace); font-size: 10.5px; padding: 0 4px; border-radius: 4px; border: 1px solid var(--dsw-alias-border-l3, rgba(127,127,127,0.35)); }
 .sc-change[data-change="added"] { color: var(--dsw-alias-state-success-primary, #2ea043); }
@@ -685,18 +809,58 @@ window.__ModuleLoader__.load({
 .sc-change[data-change="modified"] { color: var(--dsw-alias-state-warn-label, #b7791f); }
 .sc-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.7)); }
 .sc-dot[data-state="done"] { background: var(--dsw-alias-state-success-primary, #2ea043); }
+.sc-dot[data-state="info"] { background: var(--dsw-alias-state-business-primary, #3b82f6); }
+.sc-dot[data-state="warn"] { background: var(--dsw-alias-state-warn-primary, #d29922); }
 .sc-dot[data-state="error"] { background: var(--dsw-alias-state-error-primary, #d1242f); }
+/* 斜纹 = 「存在但动不了」（只读 / 软链）。必须与实色的「不需要动」区分开：
+   两者在旧界面上都表现为「什么都没发生」，是最容易混的一对。 */
+.sc-dot[data-state="muted"] { background: repeating-linear-gradient(45deg, var(--dsw-alias-label-tertiary, rgba(127,127,127,0.7)) 0 1px, transparent 1px 3px); box-shadow: inset 0 0 0 1px var(--dsw-alias-label-tertiary, rgba(127,127,127,0.45)); }
 .sc-stack { display: flex; flex-direction: column; gap: 6px; }
 .sc-inline { display: inline-flex; align-items: center; gap: 6px; }
-.sc-role-row { align-items: center; }
+.sc-role-row { align-items: flex-start; }
+.sc-role-body { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
 .sc-role-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
-.sc-role-name { font-weight: 600; }
+/* 角色名 13 → 15px：它是角色页唯一的一级对象，与技能行的名字必须拉开。只抬两级。 */
+.sc-role-name { font-weight: 600; font-size: 15px; }
+/* 构成条：一格一个技能，顺序与展开后的清单逐行相同——它是那份清单的小地图。
+   颜色只表达「对项目的影响方向」，更细的动作差别交给清单里的文字。
+   ready 刻意压到低透明度：14 个饱和绿块会让真正的问题点淹掉，「全淡绿」才是对齐的样子。 */
+/* 构成条与它的「+N」是**两个盒子**：格子会被裁掉，而「还有 N 个」永远得看得见——
+   放在同一个 overflow: hidden 里的话，一旦空间不够，最先消失的恰好是那个说明。 */
+.sc-ribbon-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; }
+/* min-width: 0 是关键：flex 项默认的自动最小尺寸等于内容宽度，不给 0 的话这条永远
+   不收缩——overflow: hidden 也就永远没有东西可裁，格子会改从卡片边缘溢出去。 */
+.sc-ribbon { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; overflow: hidden; min-width: 0; flex: 0 1 auto; }
+.sc-ribbon-cell { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; background: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.5)); }
+.sc-ribbon-cell[data-state="ready"] { background: var(--dsw-alias-state-success-primary, #2ea043); opacity: 0.32; }
+.sc-ribbon-cell[data-state="gain"] { background: var(--dsw-alias-state-business-primary, #3b82f6); }
+.sc-ribbon-cell[data-state="lose"] { background: var(--dsw-alias-state-warn-primary, #d29922); }
+.sc-ribbon-cell[data-state="missing"] { background: var(--dsw-alias-state-error-primary, #d1242f); }
+.sc-ribbon-cell[data-state="skipped"] { background: repeating-linear-gradient(45deg, var(--dsw-alias-label-tertiary, rgba(127,127,127,0.7)) 0 1px, transparent 1px 3px); box-shadow: inset 0 0 0 1px var(--dsw-alias-label-tertiary, rgba(127,127,127,0.45)); }
+.sc-ribbon-more { font-size: 11px; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); flex: 0 0 auto; }
+.sc-role-counts { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
+/* 展开后的差异清单：每一行左侧 2px 色带就是构成条那一格的放大版，
+   所以清单与构成条读起来是同一张图的两个尺度。 */
+.sc-role-diff { display: flex; flex-direction: column; margin-top: 2px; }
+.sc-role-diff-group { font-weight: 600; font-size: 12px; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); padding: 6px 0 2px 10px; }
+.sc-role-diff-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0 3px 10px; border-left: 2px solid var(--dsw-alias-label-tertiary, rgba(127,127,127,0.4)); }
+.sc-role-diff-row[data-state="ready"] { border-left-color: var(--dsw-alias-state-success-primary, #2ea043); opacity: 0.72; }
+.sc-role-diff-row[data-state="gain"] { border-left-color: var(--dsw-alias-state-business-primary, #3b82f6); }
+.sc-role-diff-row[data-state="lose"] { border-left-color: var(--dsw-alias-state-warn-primary, #d29922); }
+.sc-role-diff-row[data-state="missing"] { border-left-color: var(--dsw-alias-state-error-primary, #d1242f); }
+.sc-role-diff-row[data-state="skipped"] { border-left-color: transparent; background-image: repeating-linear-gradient(45deg, var(--dsw-alias-label-tertiary, rgba(127,127,127,0.55)) 0 1px, transparent 1px 3px); background-repeat: no-repeat; background-size: 2px 100%; }
+.sc-role-diff-name { font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; }
+/* 按钮贴在清单下方 20px 内：清单本身就是确认面，两者必须能被一眼看成一体。 */
+.sc-role-diff-apply { align-self: flex-start; margin-top: 8px; }
 .sc-role-editor { display: flex; flex-direction: column; gap: 10px; }
 .sc-role-editor-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sc-role-skills { display: flex; flex-direction: column; }
-.sc-role-skill { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
+/* 与 .sc-row 同一条行节奏：多行内容（名字 + 来源行）从顶部对齐，居中的话短行会漂到中间去。 */
+.sc-role-skill { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,0.18)); }
 .sc-role-skills > .sc-role-skill:first-child { border-top: 0; }
-.sc-role-skill-name { font-family: var(--dsw-font-mono, monospace); font-size: 12px; }
+/* 字形与面板里其他代码位（.sc-role-diff-name / 技能路径）统一：只有这处用了 --dsw-font-mono，
+   宿主的设置页并不保证定义它，取不到就落到泛型 monospace，与隔壁两行长得不一样。 */
+.sc-role-skill-name { font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; }
 .sc-role-skill-pick { display: inline-flex; align-items: center; gap: 8px; }
 .sc-role-skill-readonly { opacity: 0.6; }
 .sc-role-library-note { padding: 6px 10px; font-size: 12px; color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.9)); }
@@ -829,6 +993,52 @@ window.__ModuleLoader__.load({
 			const StateDot = primitive('StateDot')
 			if (StateDot) return h(StateDot, props)
 			return h('span', { className: 'sc-dot', 'data-state': props.state, 'aria-hidden': 'true' })
+		}
+
+		// ── 技能状态词表 ──────────────────────────────────────────────────────
+		//
+		// 「这个技能现在处于什么状态」过去有三个页签各写一套：`UiTag` 的 `data-tone`、
+		// `UiStateDot` 的 `data-state`（只有 绿/灰/红 三态）、以及 `.sc-ok` / `.sc-warn`
+		// 的纯文字。同一个「同步 / 启用」状态在技能页签、角色页签、仓库页签长得都不一样，
+		// 用户没法把三处的颜色对上。这里收成一份，三个页签都从这里取。
+
+		/**
+		 * 技能在「项目 ↔ 角色」这条流水线上的状态。
+		 *
+		 * 颜色只表达**对项目的影响方向**（会多一个 / 会少一个 / 动不了），更细的动作差异
+		 * 由文案承担——这样构成条一眼能看，文字行也不失精度。
+		 */
+		const SKILL_STATE = {
+			// 不需要动作。注意这个状态包含两种情形：启用着且角色要，以及停用着且角色不要。
+			// 所以文案是「已就位」而不是「已在项目里」——后者对第二种不准。
+			ready: { tone: 'success', dot: 'done', key: 'state.ready' },
+			gain: { tone: 'info', dot: 'info', key: 'state.gain' },
+			lose: { tone: 'warning', dot: 'warn', key: 'state.lose' },
+			missing: { tone: 'danger', dot: 'error', key: 'state.missing' },
+			// 存在但动不了（项目里只读、库里是软链）。中性灰的语义因此从「没有信息」
+			// 变成「改不了」，和「不需要改」靠斜纹区分开。
+			skipped: { tone: 'quiet', dot: 'muted', key: 'state.skipped' },
+		}
+
+		/** 状态键 → 词表条目。读不懂的键退回 `ready`——界面宁可少说，也不能崩。 */
+		function skillStateOf(state) {
+			return SKILL_STATE[state] ?? SKILL_STATE.ready
+		}
+
+		/**
+		 * 一行技能的状态标记：一个点 + 一句文案。
+		 *
+		 * @param props - `{t, state, note}`；`note` 是可选的补充（例如只读 / 软链的原因）。
+		 */
+		function StateMark(props) {
+			const state = SKILL_STATE[props.state] ?? SKILL_STATE.ready
+			return h(
+				'span',
+				{ className: 'sc-state-mark' },
+				h(UiStateDot, { state: state.dot }),
+				h('span', { className: 'sc-state-mark-label' }, props.t(state.key)),
+				props.note ? h('span', { className: 'sc-sub' }, props.note) : null,
+			)
 		}
 
 		/** 有图标就用产品图标，没有就不渲染（文字信息本身已经完整）。 */
@@ -1388,6 +1598,10 @@ window.__ModuleLoader__.load({
 			const t = props.t
 			const skill = props.skill || {}
 			const isLibrary = props.mode === 'library'
+			// 库行：已经在项目里的**不再给「同步到项目」**。那条路一定会失败（`/library/install`
+			// 从不覆盖），与其让人点完读一句「项目里已有同名技能」，不如一开始就把状态摆出来。
+			const alreadyInProject = isLibrary && props.inProject === true
+			const canSync = props.canSync === true && !alreadyInProject
 			const diagnostics = normalizeDiagnostics(skill.diagnostics)
 			const readOnly = readOnlyText(t, skill)
 			const statusKey = diagnostics.length > 0 ? 'skills.status.invalid' : skill.enabled ? 'skills.status.enabled' : 'skills.status.disabled'
@@ -1399,6 +1613,9 @@ window.__ModuleLoader__.load({
 			// 写成组件元素会让它连子树都进不去（contract.mjs:2753/2578 会红）。
 			// 这个 helper 不用任何 hook，当纯渲染函数调用是安全的。
 			const sourceLine = SkillSourceLine({ t, skill })
+			// 库行补一句「什么时候进的库」：`installed.syncedAt` 来自订阅台账（`repos.js:651`），
+			// 回答的是「上次同步把它带进来的时间」。技能根里没有这个时间，只在库视图显示。
+			const syncedAt = isLibrary && skill.installed && typeof skill.installed === 'object' && typeof skill.installed.syncedAt === 'number' ? skill.installed.syncedAt : null
 
 			return h(
 				'div',
@@ -1428,8 +1645,10 @@ window.__ModuleLoader__.load({
 						skill.inRole === true ? h(UiTag, { tone: 'success' }, t('skills.tagInRole')) : null,
 						// 库块里每一行都在库里，「库里有」标签是噪音，只在技能根里显示。
 						skill.inLibrary === true && isLibrary !== true ? h(UiTag, { tone: 'quiet' }, t('skills.tagInLibrary')) : null,
+						alreadyInProject ? h(UiTag, { tone: 'quiet' }, t('library.inProject')) : null,
 					),
 					sourceLine,
+					syncedAt === null ? null : h('div', { className: 'sc-hint' }, t('library.syncedAt', { time: relativeText(t, syncedAt) })),
 					diagnostics.map((entry, index) =>
 						h(
 							'div',
@@ -1450,12 +1669,12 @@ window.__ModuleLoader__.load({
 					isLibrary !== true && props.canMove === true && props.onMove
 						? h(UiButton, { variant: 'ghost', size: 'sm', onClick: () => props.onMove(skill, props.rootName), children: t('skills.move') })
 						: null,
-					isLibrary === true
+					isLibrary === true && !alreadyInProject
 						? h(UiButton, {
 								variant: 'ghost',
 								size: 'sm',
-								disabled: props.busy || props.canSync !== true,
-								title: props.canSync === true ? undefined : t('skills.libraryNoWorkspace'),
+								disabled: props.busy || canSync !== true,
+								title: canSync === true ? undefined : t('skills.libraryNoWorkspace'),
 								onClick: () => props.onSync(skill),
 								children: t('skills.syncToProject'),
 							})
@@ -1582,6 +1801,76 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 「技能仓库」页签选中的是哪个视图。
+		 *
+		 * **刻意不带工作区**（与 `collapseStoreKey` 相反）：订阅与可用仓库都是**全局一份**，
+		 * 这个页签的存在理由就是不随工作区变。键带上工作区的话，换一个工作区就会把用户的
+		 * 视图选择悄悄重置——变成一个他既没点过、也看不出来源的跳变。
+		 */
+		const REPOS_VIEW_PREFIX = 'dsh-skill-console.repos-view'
+
+		/** 读回视图选择：只有明确存过 `'library'` 才算，别的一概当「订阅」。 */
+		function reposViewOf(storage) {
+			try {
+				if (!storage || typeof storage.getItem !== 'function') return 'subscriptions'
+				return storage.getItem(REPOS_VIEW_PREFIX) === 'library' ? 'library' : 'subscriptions'
+			} catch (error) {
+				return 'subscriptions'
+			}
+		}
+
+		/** 记住视图选择：`subscriptions` 是默认态，清键而不是写值（不留垃圾）。 */
+		function persistReposView(storage, view) {
+			if (!storage || typeof storage.setItem !== 'function' || typeof storage.removeItem !== 'function') return
+			try {
+				if (view === 'library') storage.setItem(REPOS_VIEW_PREFIX, 'library')
+				else storage.removeItem(REPOS_VIEW_PREFIX)
+			} catch (error) {
+				// 同 persistCollapsed：记不住不影响这一次切换。
+			}
+		}
+
+		/**
+		 * 订阅卡片的展开集合。与 `reposViewOf` 同理**不带工作区**：订阅是全账户一份，
+		 * 没有「A 工作区展开了 B 工作区没展开」这回事。
+		 *
+		 * 这个键存在的理由是**页签切换**：三个页签各自包一层边界，切走就把面板卸载了，
+		 * 组件内 state 一丢，回来时全部折叠回原样——用户于是得重新找到刚才那张卡。
+		 * 存进 sessionStorage 就活过一次切换，与技能页签的折叠记忆同一套做法。
+		 */
+		const REPOS_OPEN_PREFIX = 'dsh-skill-console.repos-open'
+
+		/** 读回展开集合：只认布尔真值，坏数据当没存过。 */
+		function reposOpenOf(storage) {
+			try {
+				if (!storage || typeof storage.getItem !== 'function') return {}
+				const raw = storage.getItem(REPOS_OPEN_PREFIX)
+				if (!raw) return {}
+				const parsed = JSON.parse(raw)
+				if (!Array.isArray(parsed)) return {}
+				const open = {}
+				for (const id of parsed) {
+					if (typeof id === 'string' && id !== '') open[id] = true
+				}
+				return open
+			} catch (error) {
+				return {}
+			}
+		}
+
+		/** 记住展开集合：空集合清键而不是写 `[]`（不留垃圾）。 */
+		function persistReposOpen(storage, open) {
+			if (!storage || typeof storage.setItem !== 'function' || typeof storage.removeItem !== 'function') return
+			try {
+				const ids = open && typeof open === 'object' ? Object.keys(open).filter((id) => open[id] === true) : []
+				if (ids.length === 0) storage.removeItem(REPOS_OPEN_PREFIX)
+				else storage.setItem(REPOS_OPEN_PREFIX, JSON.stringify(ids))
+			} catch (error) {
+				// 同 persistCollapsed：记不住不影响这一次展开。
+			}
+		}
+
+		/**
 		 * 一个根下面的一个仓库组：组头可折叠。
 		 *
 		 * 组头**不再有批量启停**：角色页签已经是「谁生效」的唯一入口，技能页签只留逐项的
@@ -1629,6 +1918,9 @@ window.__ModuleLoader__.load({
 								canMove: skill.toggleable === true && skill.inRole !== true && skill.inLibrary !== true,
 								mode: props.mode ?? 'root',
 								canSync: props.canSync === true,
+								// 库视图专用的「已经在项目里」：一个名字集合，由库视图从同一次 /catalog
+								// 的 project-dsh 根算出来，不额外发请求。
+								inProject: typeof props.inProjectNames === 'object' && props.inProjectNames !== null && typeof props.inProjectNames.has === 'function' ? props.inProjectNames.has(skill.name) : false,
 								onSync: props.onSync,
 								rootName: rootLabel(t, root.key, root.label),
 								onDelete: props.onDelete,
@@ -1701,6 +1993,7 @@ window.__ModuleLoader__.load({
 									group,
 									mode: props.mode ?? 'root',
 									canSync: props.canSync === true,
+									inProjectNames: props.inProjectNames,
 									onSync: props.onSync,
 									busy: props.busy,
 									busyPath: props.busyPath,
@@ -1915,6 +2208,7 @@ window.__ModuleLoader__.load({
 			const roots = catalog.data && Array.isArray(catalog.data.roots) ? catalog.data.roots : []
 			// 可用仓库那一块（只读分发源）：宿主只在缺省 scope=all 时给，老宿主/收窄响应缺席就整块不渲染。
 			const library = catalog.data && typeof catalog.data.library === 'object' && catalog.data.library !== null ? catalog.data.library : null
+			const librarySkills = library !== null && Array.isArray(library.skills) ? library.skills : []
 			// 「同步到项目」要有项目根才成立：没有工作区 / 那条工作区解析不出项目根时按钮禁用。
 			const canSync = roots.some((root) => root.key === 'project-dsh')
 			// 折叠记忆：存储里读到的（记忆，键按「工作区 + 根」算，所以 A 的收起不会影响 B）
@@ -1982,22 +2276,16 @@ window.__ModuleLoader__.load({
 						onMove: moveSkillToLibrary,
 					}),
 				),
-				// 第三块：可用仓库。放在两条根之后——它是**分发源**，不是这个工作区的现状。
-				library === null
-					? null
-					: h(SkillGroup, {
-						key: 'library',
-						t,
-						root: library,
-						mode: 'library',
-						busy: busyPath !== null,
-						busyPath,
-						canSync,
-						collapsedRepos: collapsedReposView,
-						onToggleRepo: toggleRepo,
-						onOpen: loadDetail,
-						onSync: syncToProject,
-					}),
+				// 可用仓库搬去了「技能仓库」页签的第二个视图——它跟订阅是同一件事的两面
+				//（订阅是进货口，库是货架）。这里只留一条指路：技能页签回答「这个工作区现在
+				//有什么」，库是**全局一份**的分发源，不随工作区变，放在这儿是错位的。
+				library !== null && librarySkills.length > 0 && typeof props.onOpenLibrary === 'function'
+					? h(
+							'button',
+							{ type: 'button', className: 'sc-library-pointer', onClick: () => props.onOpenLibrary() },
+							t('skills.libraryPointer', { count: librarySkills.length }),
+						)
+					: null,
 				// 目录里没有项目根 = 还没选工作区（或那条工作区解析不到项目根）。
 				// 这条引导要占住**项目块的槽位**：套上与项目技能根同形的组容器，读起来是
 				// 「项目这块是空的、原因是还没选工作区」，而不是一条游离在顶上的告示。
@@ -2115,6 +2403,30 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 「可用仓库里这份订阅的存量」这一行。
+		 *
+		 * **0 的项不出现。**`共 24 个技能 · 已同步 24 · 待更新 0 · 上游已删除 0` 里那两个 0
+		 * 不提供任何信息，只把真正要看的数字淹掉；全 0 时更不能说「共 0 个技能」——那读起来
+		 * 像一个统计结果，而用户需要知道的是「这个订阅还没落进库」。
+		 *
+		 * 连缀统一用 `·`，与仓库行的 lastFetchLine、角色页的汇总行同一套标点。
+		 */
+		function librarySummaryLine(t, library) {
+			// `repo.library` 缺失是常态（后端 list() 现算，老缓存里没有），按「还没落进库」讲。
+			const row = library && typeof library === 'object' ? library : {}
+			const total = numberOr(row.count, 0)
+			if (total === 0) return t('repos.statusPrefix') + t('repos.statusEmpty')
+			const parts = [t('repos.statusTotal', { count: total })]
+			const synced = numberOr(row.synced, 0)
+			const outdated = numberOr(row.outdated, 0)
+			const orphan = numberOr(row.orphan, 0)
+			if (synced > 0) parts.push(t('repos.statusSynced', { count: synced }))
+			if (outdated > 0) parts.push(t('repos.statusOutdated', { count: outdated }))
+			if (orphan > 0) parts.push(t('repos.statusOrphan', { count: orphan }))
+			return t('repos.statusPrefix') + parts.join(' · ')
+		}
+
+		/**
 		 * 订阅卡片：一行仓库信息 + 可折叠的技能明细。
 		 *
 		 * 技能明细必须长在**它所属的那个仓库**下面：以前它是面板底部另一张独立卡片，
@@ -2140,12 +2452,7 @@ window.__ModuleLoader__.load({
 			// 来源），所以不再报「装到技能根几个」。`repo.library` 由后端 list() 现算；缺了就
 			// 用行的状态兜底，不显示假数字。
 			const library = repo.library && typeof repo.library === 'object' ? repo.library : {}
-			const statusLine = t('repos.statusLine', {
-				total: numberOr(library.count, 0),
-				synced: numberOr(library.synced, 0),
-				outdated: numberOr(library.outdated, 0),
-				orphan: numberOr(library.orphan, 0),
-			})
+			const statusLine = librarySummaryLine(t, library)
 			return h(
 				'div',
 				{ className: 'sc-repo' + (expanded ? ' is-open' : '') },
@@ -2159,11 +2466,11 @@ window.__ModuleLoader__.load({
 							type: 'button',
 							className: 'sc-disclosure',
 							'aria-expanded': expanded ? 'true' : 'false',
-							title: t(expanded ? 'repos.collapse' : 'repos.expand'),
+							title: t(expanded ? 'common.collapse' : 'common.expand'),
 							onClick: stop(() => props.onToggle(repo)),
 						},
 						h('span', { className: 'sc-caret', 'data-open': expanded ? 'true' : 'false', 'aria-hidden': 'true' }),
-						h('span', null, t(expanded ? 'repos.collapse' : 'repos.expand')),
+						h('span', null, t(expanded ? 'common.collapse' : 'common.expand')),
 					),
 					h(
 						'div',
@@ -2179,7 +2486,16 @@ window.__ModuleLoader__.load({
 							repo.subdirectory ? h(UiTag, { tone: 'quiet' }, t('repos.subdir', { path: repo.subdirectory })) : null,
 						),
 						h('span', { className: 'sc-desc' }, fetchLine),
-						h('span', { className: 'sc-hint' }, statusLine),
+						// 存量汇总从死文本变成入口：点它 = 去库视图只看这一份订阅带进来的技能。
+						// 「有 4 个技能、3 个已同步」这句话的下一步一定是「哪 4 个」，而汇总数字
+						// 本身没法核对。`stop()` 是必须的——外层整行头部也在监听点击（折叠）。
+						h(
+							'button',
+							{ type: 'button', className: 'sc-hint sc-summary-link', onClick: stop(() => props.onOpenLibrary(repo.id)) },
+							statusLine,
+							' · ',
+							t('repos.viewLibraryLink'),
+						),
 						numberOr(status.invalid, 0) > 0
 							? h('span', { className: 'sc-warn' }, UiIcon('IconWarningOutline16', 13), h('span', null, t('repos.statusExtra', { invalid: numberOr(status.invalid, 0) })))
 							: null,
@@ -2406,6 +2722,205 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 「可用仓库」视图：库的浏览与分发。
+		 *
+		 * 库是**全局一份**的分发源（`<DSH_HOME>/skill-console/library/`），不随工作区变——只有
+		 * 「同步到项目」这一步用得上当前工作区。库不是技能根，DSH 不加载它，`/toggle` 在库上
+		 * 结构性不成立，所以这里没有启停，也没有重命名/删除（那是另一种需求，见 0.10.0
+		 * 「明确不做」）。
+		 *
+		 * @param props - `{t, sessionId, project, source, onSource, onCount}`。
+		 *   `source` 是「只看某个订阅」的来源筛选（从订阅卡片的汇总行跳进来），`null` = 全部。
+		 */
+		function LibraryPanel(props) {
+			const t = props.t
+			const sessionId = props.sessionId
+			const project = props.project
+			const [catalog, setCatalog] = react.useState({ loading: true, data: null, error: null })
+			const [query, setQuery] = react.useState('')
+			const [detail, setDetail] = react.useState(null)
+			const [notice, setNotice] = react.useState(null)
+			const [actionFail, setActionFail] = react.useState(null)
+			const [busyPath, setBusyPath] = react.useState(null)
+			const [groupOpen, setGroupOpen] = react.useState({})
+			const revision = useStore(catalogRevisionStore)
+			const catalogToken = react.useRef(0)
+
+			const loadCatalog = () => {
+				const run = ++catalogToken.current
+				setCatalog((previous) => ({ loading: true, data: previous.data, error: null }))
+				return apiGet('/catalog', withProject(project, {}), sessionId)
+					.then((data) => {
+						if (catalogToken.current !== run) return
+						setCatalog({ loading: false, data, error: null })
+					})
+					.catch((error) => {
+						if (catalogToken.current !== run) return
+						setCatalog((previous) => ({ loading: false, data: previous.data, error: errorMessage(t, error) }))
+					})
+			}
+
+			// 与技能页签同一条规则：只依赖会变的值（工作区换了、目录被 bump 了才重拉）。
+			react.useEffect(() => {
+				loadCatalog()
+				// eslint-disable-next-line react-hooks/exhaustive-deps -- 同上。
+			}, [project.active, sessionId, revision])
+
+			// 换工作区：上一轮的结果提示作废；折叠覆盖层也清（键是裸键，会串到下一个工作区）。
+			react.useEffect(() => {
+				setNotice(null)
+				setActionFail(null)
+				setGroupOpen({})
+			}, [project.active])
+
+			const library = catalog.data && typeof catalog.data.library === 'object' && catalog.data.library !== null ? catalog.data.library : null
+			const skills = library !== null && Array.isArray(library.skills) ? library.skills : []
+			const roots = catalog.data && Array.isArray(catalog.data.roots) ? catalog.data.roots : []
+			// 「同步到项目」要有项目根才成立：没有工作区、或那条工作区解析不出项目根时按钮禁用。
+			const canSync = roots.some((root) => root.key === 'project-dsh')
+			// 项目技能根里已有的名字。用**同一次** /catalog 里 project-dsh 根算，不发第二个请求：
+			// 库行靠它把「已经在项目里」标出来，并收掉那个注定失败的「同步到项目」。
+			const projectNames = new Set()
+			for (const root of roots) {
+				if (root.key !== 'project-dsh') continue
+				for (const skill of Array.isArray(root.skills) ? root.skills : []) projectNames.add(skill.name)
+			}
+
+			// 计数上报给页签上的分段控件：别处不猜库里有多少个技能。
+			const reportCount = props.onCount
+			react.useEffect(() => {
+				if (typeof reportCount !== 'function') return
+				reportCount(library === null ? null : skills.length)
+			}, [reportCount, library, skills.length])
+
+			// 折叠记忆与技能页签共用一套（键带工作区）；库在这里的固定根键就是 `library`，
+			// 与 `collapseKeysOf([{key:'library'}])` 产出的键一一对应。
+			const collapseKeys = collapseKeysOf([{ key: 'library', skills }])
+			const collapsedGroups = { ...collapsedOf(storageOf(), project.active, collapseKeys), ...groupOpen }
+			const toggleGroup = (key) => {
+				const next = collapsedGroups[key] !== true
+				persistCollapsed(storageOf(), project.active, key, next)
+				setGroupOpen((previous) => ({ ...previous, [key]: next }))
+			}
+
+			const loadDetail = (skill) => {
+				setDetail({ loading: true, data: null, error: null, name: skill.name, collision: null })
+				apiGet('/skill', withProject(project, { path: skill.path }), sessionId)
+					.then((data) => setDetail({ loading: false, data, error: null, name: skill.name, collision: null }))
+					.catch((error) => setDetail({ loading: false, data: null, error: actionError(t, error), name: skill.name, collision: null }))
+			}
+
+			/**
+			 * 把库里的一个技能分发进当前工作区。
+			 *
+			 * 不调 `reloadAfterAction()`：它会把详情面板一起关掉，而库里这一行并没有被改动；
+			 * 只推一次 revision，重拉交给依赖它的 effect（与 `/toggle` 同一套做法）。
+			 */
+			const syncToProject = (skill) => {
+				if (busyPath !== null) return
+				setBusyPath(skill.path)
+				setNotice(null)
+				setActionFail(null)
+				apiPost('/library/install', withProject(project, { path: skill.path }), sessionId)
+					.then((data) => {
+						// 项目已有同名时只报告、不动它（停用态也不动）：启停归用户。
+						if (data.copied === false) setNotice(t('skills.syncLocalKept', { name: skill.name || '' }))
+						else setNotice(t('skills.syncDone', { name: data.name || skill.name || '' }))
+						bumpCatalog()
+					})
+					.catch((error) => setActionFail(actionError(t, error)))
+					.then(() => setBusyPath(null))
+			}
+
+			// 名字筛选：匹配技能名、frontmatter 里的名字与简介，**纯客户端、不发请求**。
+			const needle = query.trim().toLowerCase()
+			const source = props.source === null || props.source === undefined ? null : props.source
+			const visibleSkills = skills.filter((skill) => {
+				if (source !== null && sourceRepoOf(skill) !== source) return false
+				if (needle === '') return true
+				const haystack = [skill.name, skill.declaredName, skill.description]
+					.filter((value) => typeof value === 'string')
+					.join('\n')
+					.toLowerCase()
+				return haystack.includes(needle)
+			})
+			const filtering = source !== null || needle !== ''
+			const clearFilter = () => {
+				setQuery('')
+				if (typeof props.onSource === 'function') props.onSource(null)
+			}
+
+			return h(
+				'div',
+				{ className: 'sc-lib' },
+				h(
+					'div',
+					{ className: 'sc-bar' },
+					h(UiInput, {
+						className: 'sc-filter',
+						value: query,
+						placeholder: t('library.filterPlaceholder'),
+						'aria-label': t('library.filterPlaceholder'),
+						onChange: (event) => setQuery(event.target.value),
+					}),
+					// 从订阅卡片跳进来时带上的来源：它替用户省掉一次「在 30 个技能里找那 4 个」，
+					// 但必须能一眼看出「现在只显示了一部分」，所以做成一个可摘掉的筹码。
+					source === null
+						? null
+						: h(
+								UiTooltip,
+								{ label: t('library.clearSource'), side: 'top' },
+								h(
+									'button',
+									{ type: 'button', className: 'sc-disclosure', onClick: () => props.onSource(null) },
+									t('library.sourceFilter', { source }),
+									h('span', { className: 'sc-caret', 'aria-hidden': 'true', 'data-open': 'true' }),
+								),
+							),
+					h('span', { className: 'sc-spacer' }),
+					!filtering && skills.length > 0 ? h('span', { className: 'sc-hint' }, t('skills.groupCount', { count: skills.length })) : null,
+					filtering && skills.length > 0
+						? h(
+								'span',
+								{ className: 'sc-hint' },
+								t('library.filterCount', { shown: visibleSkills.length, total: skills.length }),
+								' ',
+								h('button', { type: 'button', className: 'sc-link', onClick: clearFilter }, t('library.filterClear')),
+							)
+						: null,
+				),
+				canSync ? null : h('div', { className: 'sc-hint' }, t('skills.libraryNoWorkspace')),
+				catalog.error ? h('div', { className: 'sc-err', role: 'alert' }, catalog.error) : null,
+				notice ? h('div', { className: 'sc-ok', role: 'status' }, notice) : null,
+				actionFail ? h('div', { className: 'sc-err', role: 'alert' }, actionFail) : null,
+				detail ? h(SkillDetail, { t, state: detail, collision: detail.collision ?? null, onClose: () => setDetail(null) }) : null,
+				catalog.loading && !catalog.data ? h('div', { className: 'sc-empty' }, t('common.loading')) : null,
+				// 库确实是空的：给的是「怎么让它不空」，不是一句抱歉。
+				!catalog.loading && library !== null && skills.length === 0 ? h('div', { className: 'sc-empty' }, t('library.empty')) : null,
+				// 库里有东西、只是筛没了：说清是筛没的，并给一个出口——否则看起来像库是空的。
+				!catalog.loading && skills.length > 0 && visibleSkills.length === 0
+					? h('div', { className: 'sc-empty' }, t('library.filterEmpty', { query: needle }))
+					: null,
+				library !== null && visibleSkills.length > 0
+					? h(SkillGroup, {
+							t,
+							// 用筛过的技能重挂根：组头计数、组内行、折叠都跟着筛后的结果走。
+							root: { ...library, skills: visibleSkills },
+							mode: 'library',
+							busy: busyPath !== null,
+							busyPath,
+							canSync,
+							inProjectNames: projectNames,
+							collapsedRepos: collapsedGroups,
+							onToggleRepo: toggleGroup,
+							onOpen: loadDetail,
+							onSync: syncToProject,
+						})
+					: null,
+			)
+		}
+
+		/**
 		 * 技能仓库标签页：订阅列表 + 详情 + 手动拉取/安装/恢复。
 		 *
 		 * @param props - `{t, sessionId, project}`。`project` 只在「装到项目」时用：
@@ -2414,9 +2929,12 @@ window.__ModuleLoader__.load({
 		function ReposPanel(props) {
 			const t = props.t
 			const sessionId = props.sessionId
+			// 库视图要用它拼 POST /library/install 的 project 参数（节顶注入的同一份上下文）。
+			const project = props.project
 			const [list, setList] = react.useState({ loading: true, data: null, error: null })
 			// 展开状态 `id -> true`：每个订阅各自独立，可以同时展开好几个。
-			const [open, setOpen] = react.useState({})
+			// 初值从 sessionStorage 读：切页签会把面板卸载，读不回来就全折叠了。
+			const [open, setOpen] = react.useState(() => reposOpenOf(storageOf()))
 			// 明细 `id -> { loading, data, error }`：展开哪个仓库就只读那个仓库。
 			const [details, setDetails] = react.useState({})
 			const [busy, setBusy] = react.useState(false)
@@ -2432,6 +2950,23 @@ window.__ModuleLoader__.load({
 			const autoOpen = react.useRef(false)
 			// 节顶工作区条的刷新推的就是它：订阅之后，刷新才会重读订阅列表（见下面的重拉 effect）。
 			const revision = useStore(catalogRevisionStore)
+
+			// 这一页有两个视图：订阅（进货口）与可用仓库（货架）。选中的那个记在 sessionStorage
+			// 里，**不带工作区**——两个视图都是全局的，理由写在 `reposViewOf` 上。
+			const [view, setView] = react.useState(() => reposViewOf(storageOf()))
+			// 库视图的计数由 `LibraryPanel` 上报：分段控件要写「可用仓库 24」，但只有库真读过
+			// 之后才知道是多少——不预填一个假的 0（0 是在说「库里没有技能」）。
+			const [libraryCount, setLibraryCount] = react.useState(null)
+			// 从订阅卡片跳进库视图时带的来源筛选（订阅 id）；`null` = 全部来源。
+			const [librarySource, setLibrarySource] = react.useState(null)
+			// 稳定引用：`LibraryPanel` 的上报 effect 依赖它，每次渲染换新函数会让 effect 空转。
+			// 里面再判一次「值没变就不 setState」，双保险挡住重复渲染。
+			const reportLibraryCount = react.useCallback((count) => setLibraryCount((previous) => (previous === count ? previous : count)), [])
+			const switchView = (next, source) => {
+				if (typeof source === 'string' && source !== '') setLibrarySource(source)
+				setView(next)
+				persistReposView(storageOf(), next)
+			}
 
 			const loadList = () => {
 				const run = ++listToken.current
@@ -2466,14 +3001,20 @@ window.__ModuleLoader__.load({
 
 			react.useEffect(() => {
 				// 会话一换，整页的身份就换了：把「自动展开过没有」和挂在各个仓库上的
-				// 展开 / 明细全部复位，免得把上一个工作区的状态带过来。
+				// 明细全部复位，免得把上一个会话的明细带过来。
+				// `open` 刻意**不在**这里清：订阅是全账户一份，不属于任何工作区，而它存在
+				// sessionStorage 里本来就是为了活过一次卸载（切页签 / 换会话）。
 				// 这里不拉取：刷新也要重读列表，但绝不能顺手复位（见下面那条 effect）。
 				autoOpen.current = false
-				setOpen({})
 				setDetails({})
 				setEdit({ id: '', form: { ref: '', subdirectory: '' } })
 				// eslint-disable-next-line react-hooks/exhaustive-deps -- 只在会话变化时复位一次；拉取交给下面那条 effect。
 			}, [sessionId])
+
+			// 展开集合写回 sessionStorage：切页签会把面板整个卸载，不写回就丢了。
+			react.useEffect(() => {
+				persistReposOpen(storageOf(), open)
+			}, [open])
 
 			// 只负责重拉列表：会话换了要重读，节顶工作区条的刷新（revision）也要重读。
 			// 它刻意不碰任何在飞的 UI 状态——安装/恢复自己也会 bump，刚渲染出来的安装结果、
@@ -2487,12 +3028,20 @@ window.__ModuleLoader__.load({
 			react.useEffect(() => {
 				const repos = list.data && Array.isArray(list.data.repositories) ? list.data.repositories : []
 				if (repos.length === 0) return
-				if (Object.keys(open).length > 0) return
+				// 「已经有人展开着」要按**当前列表**判断：存储里可能残留着已取消订阅的 id，
+				// 拿它挡住自动展开的话，新用户会面对一屏全折叠、不知道明细在哪的卡片。
+				if (repos.some((repo) => open[repo.id] === true)) return
 				if (autoOpen.current === true) return
 				autoOpen.current = true
 				const first = repos[0]
 				if (first && typeof first.id === 'string' && first.id !== '') {
-					setOpen({ [first.id]: true })
+					// 顺手把已经不存在的 id 抖掉，展开的集合始终是当前列表的子集。
+					const keep = {}
+					for (const repo of repos) {
+						if (open[repo.id] === true) keep[repo.id] = true
+					}
+					keep[first.id] = true
+					setOpen(keep)
 					loadDetail(first.id)
 				}
 				// eslint-disable-next-line react-hooks/exhaustive-deps -- 同上。
@@ -2649,17 +3198,49 @@ window.__ModuleLoader__.load({
 
 			const tokenKnown = list.data && typeof list.data.token === 'boolean' ? list.data.token : null
 
-			return h(
+			const bar = h(
 				'div',
-				{ className: 'sc-body' },
+				{ className: 'sc-bar' },
+				// 一级分段：这一页的两个视图是同一件事的两面（订阅是进货口，库是货架），
+				// 用连体分段而不是两个独立 pill——独立 pill 读起来像两个并列的页签。
 				h(
 					'div',
-					{ className: 'sc-bar' },
-					h('span', { className: 'sc-group-title' }, t('repos.subscribed')),
-					tokenKnown === null ? null : h(UiTag, { tone: tokenKnown ? 'success' : 'quiet' }, t(tokenKnown ? 'repos.tokenOn' : 'repos.tokenOff')),
-					h('span', { className: 'sc-spacer' }),
-					openedCount > 0 ? h(UiButton, { variant: 'ghost', size: 'sm', disabled: busy, onClick: collapseAll, children: t('repos.collapseAll') }) : null,
+					{ className: 'sc-seg', role: 'tablist' },
+					h('button', {
+						type: 'button',
+						role: 'tab',
+						className: 'sc-seg-item',
+						'data-active': view === 'subscriptions' ? 'true' : 'false',
+						'aria-selected': view === 'subscriptions' ? 'true' : 'false',
+						onClick: () => switchView('subscriptions'),
+						children: t('repos.viewSubscriptionsCount', { count: repositories.length }),
+					}),
+					h('button', {
+						type: 'button',
+						role: 'tab',
+						className: 'sc-seg-item',
+						'data-active': view === 'library' ? 'true' : 'false',
+						'aria-selected': view === 'library' ? 'true' : 'false',
+						onClick: () => switchView('library'),
+						// 库的计数要等它自己读完 /catalog 才知道。在那之前不写数字——
+						// 写 0 是在断言「库里没有技能」，而这里并不知道。
+						children: libraryCount === null ? t('repos.viewLibrary') : t('repos.viewLibraryCount', { count: libraryCount }),
+					}),
 				),
+				view === 'subscriptions' && tokenKnown !== null
+					? h(UiTag, { tone: tokenKnown ? 'success' : 'quiet' }, t(tokenKnown ? 'repos.tokenOn' : 'repos.tokenOff'))
+					: null,
+				h('span', { className: 'sc-spacer' }),
+				view === 'subscriptions' && openedCount > 0
+					? h(UiButton, { variant: 'ghost', size: 'sm', disabled: busy, onClick: collapseAll, children: t('repos.collapseAll') })
+					: null,
+			)
+
+			// 订阅视图的全部内容：列表 + 详情 + 添加表单。抽成变量只是让「两个视图二选一」
+			// 这件事在结构上看得见——条件分支里不该藏一屏内容。
+			const subscriptions = h(
+				react.Fragment,
+				null,
 				list.error ? h('div', { className: 'sc-err', role: 'alert' }, list.error) : null,
 				notice ? h('div', { className: 'sc-ok', role: 'status' }, notice) : null,
 				actionFail ? h('div', { className: 'sc-err', role: 'alert' }, actionFail) : null,
@@ -2683,6 +3264,8 @@ window.__ModuleLoader__.load({
 									onToggle: toggleRepo,
 									onFetch: fetchLatest,
 									onRemove: removeRepo,
+									// 汇总行 → 库视图 + 只看这一份订阅。
+									onOpenLibrary: (id) => switchView('library', id),
 									onEdit: startEdit,
 									onEditField: (key, value) => setEdit((previous) => ({ ...previous, form: { ...previous.form, [key]: value } })),
 									onEditSave: saveEdit,
@@ -2699,6 +3282,25 @@ window.__ModuleLoader__.load({
 					onField: (key, value) => setForm((previous) => ({ ...previous, [key]: value })),
 					onSubmit: addRepo,
 				}),
+			)
+
+			return h(
+				'div',
+				{ className: 'sc-body' },
+				bar,
+				// 库视图整块交给 `LibraryPanel` 自己拉数据：它读的是 /catalog，与订阅列表
+				// 不是同一个请求，也就没有「谁先到」的问题。切回订阅视图不重新拉列表——
+				// `list` 一直在这个组件里活着。
+				view === 'library'
+					? h(LibraryPanel, {
+							t,
+							sessionId,
+							project,
+							source: librarySource,
+							onSource: setLibrarySource,
+							onCount: reportLibraryCount,
+						})
+					: subscriptions,
 			)
 		}
 
@@ -2725,14 +3327,92 @@ window.__ModuleLoader__.load({
 		// 全局技能在这里**只读**：DSH 没有「按项目遮蔽全局」的机制，角色管不到它们。
 		// 界面必须把这件事说明白，否则用户会以为切了角色就只剩角色里的技能。
 
-		/** 状态徽标的色调（`UiTag` 只认 danger / quiet / warning）。 */
+		/**
+		 * 一份计划 → 一条**有序**的技能状态表。
+		 *
+		 * 刻意只做映射，不重新判定：`skipped` / `missing` / `noop` 的区别由后端
+		 * `planRole` 算好（`lib/roles.js`），前端在这里复刻判据就是造第二个真相来源。
+		 * 这里只负责**排序与命名**。
+		 *
+		 * 顺序分两段，且**与展开后的清单逐行相同**（构成条是那份清单的小地图）：
+		 *
+		 * 1. **会执行的**：项目里已有的按项目顺序走，然后是「要新建的」（`copy`）；
+		 * 2. **不会执行的**：库内软链 / 项目里只读（`skipped`），再是「要不到」（`missing`）。
+		 *
+		 * 第二段必须整体排在后面，不能按项目顺序插在中间：展开清单把这两类单独成组，
+		 * 构成条若不在同一处分段，两处就是两张不同的图。
+		 *
+		 * @param plan - `/roles` 里那个角色自己的 `plan`。
+		 * @param projectSkills - 同一响应里的 `projectSkills`（提供项目里已有的顺序）。
+		 * @returns `[{name, state, action, current, target, reason}]`。
+		 */
+		function roleSkillStates(plan, projectSkills) {
+			const safe = plan !== null && typeof plan === 'object' ? plan : {}
+			const steps = Array.isArray(safe.steps) ? safe.steps : []
+			const noop = Array.isArray(safe.noop) ? safe.noop : []
+			const skipped = Array.isArray(safe.skipped) ? safe.skipped : []
+			const missing = Array.isArray(safe.missing) ? safe.missing : []
+			const stepOf = new Map(steps.map((step) => [step.name, step]))
+			const noopOf = new Map(noop.map((entry) => [entry.name, entry]))
+			const skippedOf = new Map(skipped.map((entry) => [entry.name, entry]))
+
+			// 两段分开攒，最后拼起来：第一段是「切换真会做的事」。
+			const planned = []
+			const blocked = []
+			const seen = new Set()
+			// 项目里已有的技能：按项目自己的顺序走，各自认领自己的状态。
+			for (const skill of Array.isArray(projectSkills) ? projectSkills : []) {
+				const name = typeof skill?.name === 'string' ? skill.name : ''
+				if (name === '' || seen.has(name)) continue
+				const step = stepOf.get(name)
+				const skip = skippedOf.get(name)
+				const keep = noopOf.get(name)
+				if (step !== undefined) {
+					seen.add(name)
+					planned.push({ name, state: step.action === 'disable' ? 'lose' : 'gain', action: step.action, current: step.current === true, target: step.target === true, reason: null })
+				} else if (skip !== undefined) {
+					seen.add(name)
+					blocked.push({ name, state: 'skipped', action: null, current: skill.enabled === true, target: null, reason: skip.reason ?? 'readonly' })
+				} else if (keep !== undefined) {
+					seen.add(name)
+					planned.push({ name, state: 'ready', action: null, current: skill.enabled === true, target: skill.enabled === true, reason: null })
+				}
+			}
+			// 项目里没有、角色要、库里有的 → 真的会新建一份。
+			for (const step of steps) {
+				if (step.action !== 'copy' || seen.has(step.name)) continue
+				seen.add(step.name)
+				planned.push({ name: step.name, state: 'gain', action: 'copy', current: false, target: true, reason: null })
+			}
+			// 库里有但动不了（软链）→ 也要显示出来，不能悄悄跳过。
+			for (const entry of skipped) {
+				if (seen.has(entry.name)) continue
+				seen.add(entry.name)
+				blocked.push({ name: entry.name, state: 'skipped', action: null, current: false, target: null, reason: entry.reason ?? 'symlink' })
+			}
+			// 角色要、库里和项目里都没有。
+			for (const name of missing) {
+				if (seen.has(name)) continue
+				seen.add(name)
+				blocked.push({ name, state: 'missing', action: null, current: false, target: null, reason: null })
+			}
+			return planned.concat(blocked)
+		}
+
+		/**
+		 * 角色状态徽标的色调。可用取值由样式表里的 `.sc-tag[data-tone=...]` 定义：
+		 * `success` / `warning` / `danger` / `info` / `quiet`。
+		 *
+		 * `matched` 必须是 **success**：它以前和 `unassigned` 一样返回 `quiet`，
+		 * 于是「已对齐」（好消息）和「还没有角色」（无信息）渲染成同一个灰标签。
+		 */
 		function roleToneOf(status) {
-			if (status === 'matched') return 'quiet'
+			if (status === 'matched') return 'success'
 			if (status === 'drifted') return 'warning'
 			return 'quiet'
 		}
 
-		/** 状态徽标的文案键。 */
+		/** 状态徽标的文案键。只回答「**当前激活的**角色与项目的关系如何」。 */
 		function roleStatusKey(status) {
 			if (status === 'matched') return 'roles.statusMatched'
 			if (status === 'drifted') return 'roles.statusDrifted'
@@ -2740,22 +3420,184 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 一个角色：名字 / 技能数 / 当前标记 + 三个动作。
-		 * @param props - `{t, role, status, busy, onActivate, onEdit, onRemove}`。
+		 * 角色行上那枚标签的文案键。
+		 *
+		 * 「这个角色没被激活」和「这个项目没有激活角色」是两件事。它们以前共用
+		 * `roles.statusUnassigned`（「未启用角色」），于是一个只是没被选中的角色，
+		 * 在界面上说成了「本项目没有角色」。这里按 `active` 分开。
+		 */
+		function roleRowStatusKey(status, active) {
+			if (!active) return 'roles.statusInactive'
+			return roleStatusKey(status)
+		}
+
+		/** 构成条最多画多少格：再多就不是「一眼看出的形状」，而是一堵墙。多出来的折成 `+N`。 */
+		const RIBBON_MAX_CELLS = 40
+
+		/**
+		 * 把 `roleSkillStates` 的输出过一遍，只留能画的行。
+		 *
+		 * `plan` 来自 HTTP 响应，形状不是本地能保证的。三个渲染函数都从这里取行，
+		 * 于是「缺字段」只可能在函数内部兜，不会漏到界面或读屏上。
+		 */
+		function roleStateRows(states) {
+			return (Array.isArray(states) ? states : []).filter(
+				(row) => row !== null && typeof row === 'object' && typeof row.state === 'string',
+			)
+		}
+
+		/**
+		 * 构成条：一格一个技能，颜色取 `SKILL_STATE`。
+		 *
+		 * 顺序**与展开后的清单逐行相同**（同一份 `roleSkillStates` 顺序），所以展开时不会
+		 * 让人觉得换了张脸——它是那份清单的小地图。
+		 *
+		 * 整块 `aria-hidden`：它的含义由紧挨着的计数文案承载，否则 30 个格子就是 30 个读屏停靠点。
+		 */
+		function RoleRibbon(props) {
+			const states = roleStateRows(props.states)
+			if (states.length === 0) return null
+			const shown = states.slice(0, RIBBON_MAX_CELLS)
+			const hidden = states.length - shown.length
+			return h(
+				'div',
+				{ className: 'sc-ribbon-wrap', 'aria-hidden': 'true' },
+				h(
+					'div',
+					{ className: 'sc-ribbon' },
+					shown.map((row, index) => h('span', { key: 'cell-' + index, className: 'sc-ribbon-cell', 'data-state': row.state })),
+				),
+				hidden > 0 ? h('span', { className: 'sc-ribbon-more' }, '+' + hidden) : null,
+			)
+		}
+
+		/**
+		 * 构成条下面那行计数：把 `roleSkillStates` 数成一句话。
+		 *
+		 * 两件事刻意这么做：
+		 * 1. **零的项不写**。「会停用 0」既占位置又让人去找那个不存在的动作。
+		 * 2. **非激活角色也照算**，前面挂「若切换：」——这正是需求 ② 的「一直显示」：
+		 *    不激活也能横向对比两个角色各自要动多少，再决定切谁。
+		 *
+		 * @param states - `roleSkillStates` 的结果。
+		 * @param active - 是否是当前激活的角色（决定要不要加「若切换」）。
+		 * @returns 一句话；无话可说时返回空串。
+		 */
+		function roleDiffText(t, states, active) {
+			const counts = { ready: 0, copy: 0, enable: 0, disable: 0, missing: 0, skipped: 0 }
+			for (const row of roleStateRows(states)) {
+				if (row.state === 'ready') counts.ready += 1
+				else if (row.state === 'gain') counts[row.action === 'copy' ? 'copy' : 'enable'] += 1
+				else if (row.state === 'lose') counts.disable += 1
+				else if (row.state === 'missing') counts.missing += 1
+				else if (row.state === 'skipped') counts.skipped += 1
+			}
+			const parts = []
+			if (counts.copy > 0) parts.push(t('roles.diffCopy', { count: counts.copy }))
+			if (counts.enable > 0) parts.push(t('roles.diffEnable', { count: counts.enable }))
+			if (counts.disable > 0) parts.push(t('roles.diffLose', { count: counts.disable }))
+			if (counts.missing > 0) parts.push(t('roles.diffMissing', { count: counts.missing }))
+			if (counts.skipped > 0) parts.push(t('roles.diffSkipped', { count: counts.skipped }))
+			if (parts.length === 0) {
+				// 一条动作都没有：状态徽标已经在说「与项目一致」，这里只在有东西可数时报个数。
+				return counts.ready > 0 ? t('roles.diffReady', { count: counts.ready }) : ''
+			}
+			if (counts.ready > 0) parts.unshift(t('roles.diffReady', { count: counts.ready }))
+			const summary = parts.join(' · ')
+			return active ? summary : t('roles.diffIfSwitch', { summary })
+		}
+
+		/**
+		 * 展开后的差异清单：构成条的放大版，逐行讲清每个技能会怎样。
+		 *
+		 * `missing` / `skipped` **单独成组**，不混进「会生效 / 会失效」：它们是**不会被执行**的事，
+		 * 混进去就是把「计划里有」说成「会做到」，也就是后端那个 `matched` 谎的界面版。
+		 *
+		 * 「按此差异切换」贴在清单下方 20px 内：清单本身就是确认面，按钮必须与它一眼看成一体，
+		 * 否则用户还是只能靠弹窗里的一句数字去猜。
+		 */
+		function RoleDiffList(props) {
+			const t = props.t
+			const states = roleStateRows(props.states)
+			if (states.length === 0) return null
+			const planned = states.filter((row) => row.state !== 'missing' && row.state !== 'skipped')
+			const blocked = states.filter((row) => row.state === 'missing' || row.state === 'skipped')
+			const reasonKey = (reason) => (
+				reason === 'symlink' ? 'state.reasonSymlink' : reason === 'readonly' ? 'state.reasonReadonly' : 'state.reasonUnknown'
+			)
+			const rowOf = (row) => {
+				const note = row.reason === null || row.reason === undefined ? null : t(reasonKey(row.reason))
+				return h(
+					'div',
+					{ key: 'diff-' + row.name, className: 'sc-role-diff-row', 'data-state': row.state },
+					h('span', { className: 'sc-role-diff-name' }, row.name),
+					h(StateMark, { t, state: row.state, note }),
+				)
+			}
+			return h(
+				'div',
+				{ className: 'sc-role-diff' },
+				planned.map(rowOf),
+				blocked.length === 0
+					? null
+					: h('div', { className: 'sc-role-diff-group' }, t('roles.diffBlocked')),
+				blocked.map(rowOf),
+				props.onApply === null || props.onApply === undefined
+					? null
+					: h(
+							'div',
+							{ className: 'sc-role-diff-apply' },
+							h(UiButton, { disabled: props.busy, onClick: props.onApply }, t('roles.applyDiff')),
+						),
+			)
+		}
+
+		/**
+		 * 一个角色：名字 / 状态 / 技能数 + 构成条 + 计数文案 +（展开时）差异清单 + 三个动作。
+		 *
+		 * 构成条与计数文案**在折叠态也显示**——需求 ② 的「一直显示当前项目库与角色的差别」。
+		 * 以前这些差异只有点「编辑」进草稿模式才看得见，于是「这个角色现在跟项目差在哪」
+		 * 这个问题在界面上的答案只有一句「已偏离」。
+		 *
+		 * @param props - `{t, role, status, projectSkills, expanded, onToggle, busy, onActivate, onApply, onEdit, onRemove}`。
 		 */
 		function RoleRow(props) {
 			const t = props.t
 			const role = props.role
 			const active = role.active === true
+			const expanded = props.expanded === true
+			// `role.plan` 由 `/roles` 给出（每个角色自己那份）。老宿主没有这个字段时是 undefined，
+			// `roleSkillStates` 会给出空表 → 构成条与计数都不渲染，界面退回改版前的样子，不崩。
+			const states = roleSkillStates(role.plan, props.projectSkills)
+			const counts = roleDiffText(t, states, active)
 			return h(
 				'div',
 				{ className: 'sc-row sc-role-row' },
 				h(
+					'button',
+					{
+						type: 'button',
+						className: 'sc-disclosure',
+						'aria-expanded': expanded,
+						disabled: props.busy,
+						onClick: props.onToggle,
+					},
+					h('span', { className: 'sc-caret', 'data-open': expanded }),
+					h('span', null, t(expanded ? 'common.collapse' : 'common.expand')),
+				),
+				h(
 					'div',
-					{ className: 'sc-role-main' },
-					h('span', { className: 'sc-role-name' }, role.name),
-					h(UiTag, { tone: active ? roleToneOf(props.status) : 'quiet' }, active ? t(roleStatusKey(props.status)) : t('roles.statusUnassigned')),
-					h('span', { className: 'sc-sub' }, t('roles.skillsCount', { count: role.skills.length })),
+					{ className: 'sc-role-body' },
+					h(
+						'div',
+						{ className: 'sc-role-main' },
+						h('span', { className: 'sc-role-name' }, role.name),
+						h(UiTag, { tone: active ? roleToneOf(props.status) : 'quiet' }, t(roleRowStatusKey(props.status, active))),
+						h('span', { className: 'sc-sub' }, t('roles.skillsCount', { count: role.skills.length })),
+					),
+					h(RoleRibbon, { states }),
+					counts === '' ? null : h('span', { className: 'sc-role-counts' }, counts),
+					expanded ? h(RoleDiffList, { t, states, busy: props.busy, onApply: props.onApply }) : null,
 				),
 				h(
 					'div',
@@ -2909,6 +3751,9 @@ window.__ModuleLoader__.load({
 			// 候选技能的明细：库是只读分发源，但宿主把 `/skill` 的**读**围栏扩到了库根，
 			// 所以这里点「详情」能真读到内容。写操作照旧不碰库。
 			const [detail, setDetail] = react.useState(null)
+			// 展开了哪些角色。**刻意不持久化**：折叠态的构成条已经在「一直显示」差异，
+			// 展开是按需的动作；跨次记住一个默认看不到的展开态，收益小、还要处理角色被删后的脏 id。
+			const [expandedRoles, setExpandedRoles] = react.useState([])
 
 			const load = react.useCallback(() => {
 				setBusy(true)
@@ -2971,8 +3816,12 @@ window.__ModuleLoader__.load({
 				return t('roles.activateConfirm', { copy, enable, disable, project: project.activeName || projectName })
 			}
 
-			const runActivate = (roleId, skills) => {
-				if (!askConfirm(confirmText(skills))) return
+			/**
+			 * 切换角色。`message` 是可选的自定义确认文案：展开态下差异清单就在屏幕上，
+			 * 那时不该再念一遍数字（`confirmText`），而该问一句「按上面这份差异切换？」。
+			 */
+			const runActivate = (roleId, skills, message) => {
+				if (!askConfirm(message ?? confirmText(skills))) return
 				setBusy(true)
 				apiPost('/roles/activate', withProject(project, { id: roleId }), props.sessionId)
 					.then((result) => {
@@ -3090,8 +3939,20 @@ window.__ModuleLoader__.load({
 									t,
 									role,
 									status,
+									projectSkills: projectSkillRows,
+									expanded: expandedRoles.includes(role.id),
+									onToggle: () => setExpandedRoles((previous) => (
+										previous.includes(role.id)
+											? previous.filter((id) => id !== role.id)
+											: [...previous, role.id]
+									)),
 									busy,
 									onActivate: () => runActivate(role.id, role.skills ?? []),
+									onApply: () => runActivate(
+										role.id,
+										role.skills ?? [],
+										t('roles.applyDiffConfirm', { project: project.activeName || projectName }),
+									),
 									onEdit: () => setDraft(draftOf(role)),
 									onRemove: () => runRemove(role),
 								}),
@@ -3163,10 +4024,32 @@ window.__ModuleLoader__.load({
 					h(UiPill, { active: tab === 'skills', onClick: () => setTab('skills'), children: t('tab.skills') }),
 					h(UiPill, { active: tab === 'repos', onClick: () => setTab('repos'), children: t('tab.repos') }),
 					h(UiPill, { active: tab === 'roles', onClick: () => setTab('roles'), children: t('tab.roles') }),
+					// 作用域说明跟页签同排：页签上方的**工作区条**在「技能仓库」这页是不适用的
+					// （那页两个视图都是全局一份，换工作区不会变），不说清就会被读成「这些仓库属于这个项目」。
+					//
+					// 为什么是「加一句」而不是「把工作区条换成这句话」：工作区条在**节壳**里，
+					// 让节壳随内层页签换形会让页签条上下跳，也把「换工作区」这个动作锁在另外两页。
+					// 放在页签同排则始终占着同一行，切换页签零位移——作用域声明贴在被声明的对象旁边。
+					tab === 'repos' ? h('span', { className: 'sc-spacer' }) : null,
+					tab === 'repos' ? h('span', { className: 'sc-scope' }, t('section.globalScope')) : null,
 				),
-				// 两个页签各自再包一层边界：一个页签炸了不影响另一个。
+				// 三个页签各自再包一层边界：一个页签炸了不影响另一个。
 				tab === 'skills'
-					? h(PanelBoundary, { key: 'skills' }, h(SkillsPanel, { t, sessionId, project }))
+					? h(
+							PanelBoundary,
+							{ key: 'skills' },
+							// 技能页签上那条指路要能**直接落到可用仓库视图**：先记住视图选择，
+							// 再切页签——`ReposPanel` 挂载时就是从存储里读的初始视图。
+							h(SkillsPanel, {
+								t,
+								sessionId,
+								project,
+								onOpenLibrary: () => {
+									persistReposView(storageOf(), 'library')
+									setTab('repos')
+								},
+							}),
+						)
 					: tab === 'repos'
 						? h(PanelBoundary, { key: 'repos' }, h(ReposPanel, { t, sessionId, project }))
 						: h(PanelBoundary, { key: 'roles' }, h(RolesPanel, { t, sessionId, project })),
@@ -3239,7 +4122,17 @@ window.__ModuleLoader__.load({
 		// 只给测试用：这几条规则都是契约的一部分，必须能被单测直接打到。
 		exports.sessionIdOf = sessionIdOf
 		exports.roleStatusOf = roleStatusOf
+		exports.roleStatusKey = roleStatusKey
+		exports.roleRowStatusKey = roleRowStatusKey
+		exports.roleToneOf = roleToneOf
+		exports.roleSkillStates = roleSkillStates
+		exports.roleDiffText = roleDiffText
+		exports.RoleRibbon = RoleRibbon
+		exports.RoleDiffList = RoleDiffList
 		exports.RoleRow = RoleRow
+		exports.RIBBON_MAX_CELLS = RIBBON_MAX_CELLS
+		exports.SKILL_STATE = SKILL_STATE
+		exports.skillStateOf = skillStateOf
 		exports.RoleEditor = RoleEditor
 		exports.sourceRepoOf = sourceRepoOf
 		exports.SkillSourceLine = SkillSourceLine
@@ -3249,6 +4142,13 @@ window.__ModuleLoader__.load({
 		exports.groupSkillsByRepo = groupSkillsByRepo
 		exports.SkillRepoGroup = SkillRepoGroup
 		exports.RepoRow = RepoRow
+		exports.LibraryPanel = LibraryPanel
+		exports.ReposPanel = ReposPanel
+		exports.reposViewOf = reposViewOf
+		exports.persistReposView = persistReposView
+		exports.reposOpenOf = reposOpenOf
+		exports.persistReposOpen = persistReposOpen
+		exports.librarySummaryLine = librarySummaryLine
 		exports.RepoSkills = RepoSkills
 		exports.RepoEditForm = RepoEditForm
 		exports.emptyDetailKeyFor = emptyDetailKeyFor

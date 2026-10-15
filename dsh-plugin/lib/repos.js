@@ -653,5 +653,33 @@ export function createRepositoryManager(options) {
 			}
 			return index
 		},
+
+		/**
+		 * 技能名 → 订阅来源，查**两张台账**（技能根里那些技能显示「所属仓库」用）。
+		 *
+		 * 为什么不能只用 `installedIndex()`：项目安装刻意**不写** `record.skills`（`installSkill`
+		 * 里那条注释说了，免得顶掉全局那份的记录），于是从可用仓库「同步到项目」之后，项目
+		 * 那一份在那张表里查不到——一个明明来自订阅的技能会显示成「本地（非订阅）」。
+		 *
+		 * 退到库台账是安全的：`/library/install` 从不覆盖已存在的同名技能（返回 `localKept`），
+		 * 所以项目里与库同名的技能只可能是从库里复制过去的。
+		 * 顺序：先「装进技能根」的台账（它记的是当时装的那一份），再库台账。
+		 */
+		sourceIndex() {
+			const index = new Map()
+			const records = store.load().repositories
+			for (const record of records) {
+				for (const [name, snapshot] of Object.entries(record.skills ?? {})) {
+					index.set(name, sourceEntryOf(record, snapshot))
+				}
+			}
+			for (const record of records) {
+				for (const [name, snapshot] of Object.entries(record.library ?? {})) {
+					if (index.has(name)) continue
+					index.set(name, { ...sourceEntryOf(record, snapshot), syncedAt: snapshot.syncedAt ?? null })
+				}
+			}
+			return index
+		},
 	}
 }

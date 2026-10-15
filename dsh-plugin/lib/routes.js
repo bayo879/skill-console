@@ -185,7 +185,7 @@ export function createRouteHandlers(deps) {
 	 * 而是「能不能被复制进项目」——软链是 false，`readOnlyReason` 说明原因。
 	 *
 	 * `installed` 由调用方按「这块技能该用哪张来源表」传进来（库用 `libraryIndex()`，
-	 * 项目技能用 `installedIndex()`）：角色编辑页要显示所属仓库与简介。
+	 * 技能根用 `sourceIndex()`）：角色编辑页要显示所属仓库与简介。
 	 */
 	const candidateOf = (skill, installed) => ({
 		name: skill.name,
@@ -204,11 +204,22 @@ export function createRouteHandlers(deps) {
 		return roleId === null ? null : roleStore.get(roleId)
 	}
 
-	/** 对齐状态：无角色 → unassigned；无动作 → matched；有动作 → drifted。 */
-	const statusOf = (activeRole, plan) => {
-		if (activeRole === null) return 'unassigned'
-		return plan !== null && plan.steps.length > 0 ? 'drifted' : 'matched'
-	}
+	/**
+	 * 一份计划有没有「没做到的事」。
+	 *
+	 * 三个都要算，**只看 `steps` 会说谎**：`skipped`（技能动不了：项目里只读、库里是软链）
+	 * 与 `missing`（角色要、库里没有）都不会进 `steps`（`planRole` 里各走各的分支，
+	 * `lib/roles.js:266-269`、`284-287`、`291`）。只看 `steps` 的话，一个「要 10 个、
+	 * 3 个软链、2 个上游删了」的角色会报成 `matched`——用户看到「已对齐」，实际只对齐了 5 个。
+	 */
+	const verdictOf = (plan) => (
+		plan !== null && (plan.steps.length > 0 || plan.missing.length > 0 || plan.skipped.length > 0)
+			? 'drifted'
+			: 'matched'
+	)
+
+	/** 对齐状态：无角色 → unassigned；其余看计划里有没有没做到的事。 */
+	const statusOf = (activeRole, plan) => (activeRole === null ? 'unassigned' : verdictOf(plan))
 
 	return {
 		async state(req) {
@@ -243,7 +254,9 @@ export function createRouteHandlers(deps) {
 			const requested = url.searchParams.get('scope')
 			const scope = requested === 'project' || requested === 'global' ? requested : 'all'
 			const { project, roots } = readProjectOfRequest(req, url)
-			const installed = repositories.installedIndex()
+			// 技能根用 sourceIndex()：从可用仓库复制进项目的技能不在 `record.skills`
+			// 台账里，只看它会全部显示成「本地（非订阅）」。
+			const installed = repositories.sourceIndex()
 			const flags = sourceFlagsOf(project)
 			const warnings = []
 			// 扫全部技能根（两个：全局 + 项目，不只是当前筛选的那个）：覆盖关系要在全集上算，
@@ -286,7 +299,7 @@ export function createRouteHandlers(deps) {
 			const flags = sourceFlagsOf(project)
 			return {
 				...skill,
-				installed: repositories.installedIndex().get(skill.name) ?? null,
+				installed: repositories.sourceIndex().get(skill.name) ?? null,
 				inRole: flags.inRole.has(skill.name),
 				inLibrary: flags.inLibrary.has(skill.name),
 			}
@@ -306,7 +319,7 @@ export function createRouteHandlers(deps) {
 			}
 			const skill = readSkill(result.path, { roots })
 			return {
-				skill: { ...skill, installed: repositories.installedIndex().get(skill.name) ?? null },
+				skill: { ...skill, installed: repositories.sourceIndex().get(skill.name) ?? null },
 				// 关掉这一份之后，同名技能里还有谁在生效——界面要把这句话讲出来。
 				takeover: enabled ? [] : takeoverFor(roots, skill.name, result.path),
 				changed: result.changed,
@@ -426,9 +439,16 @@ export function createRouteHandlers(deps) {
 			// 两块技能各查各的来源表：候选在库里（`record.library`），项目技能是装进技能根的
 			// 台账（`record.skills`）。用错表会把「装过但已不在库」的来源显示到候选上。
 			const libraryInstalled = repositories.libraryIndex()
-			const projectInstalled = repositories.installedIndex()
+			const projectInstalled = repositories.sourceIndex()
+			// 界面上「这个角色和当前项目差在哪」要一直显示（不只是切换时看一眼），所以每个
+			// 角色都得带一份自己的计划——不只是激活的那个。激活角色直接复用它那份，不重算。
+			const planFor = (role) => (
+				plan !== null && activeRole !== null && role.id === activeRole.id
+					? plan
+					: planRole({ role, skills: projectSkills, sources: librarySkills })
+			)
 			return {
-				roles: roleStore.list().map((role) => publicRole(role, activeRole?.id ?? null)),
+				roles: roleStore.list().map((role) => ({ ...publicRole(role, activeRole?.id ?? null), plan: planFor(role) })),
 				active: activeRole === null ? null : { id: activeRole.id, name: activeRole.name },
 				project: project === null ? null : { name: basename(project.root), fallback: project.fallback === true },
 				status: statusOf(activeRole, plan),
@@ -448,7 +468,7 @@ export function createRouteHandlers(deps) {
 			const { projectRoot } = readRoleContextOfRequest(req, url)
 			// 预览必须和切换看到同一份事实，所以同样以可用仓库为 sources。
 			const plan = planRole({ role, skills: projectSkillsOf(projectRoot), sources: librarySkillsOf() })
-			return { role: { id: role.id, name: role.name }, status: plan.steps.length > 0 ? 'drifted' : 'matched', ...plan }
+			return { role: { id: role.id, name: role.name }, status: verdictOf(plan), ...plan }
 		},
 
 		async rolesSave(req) {

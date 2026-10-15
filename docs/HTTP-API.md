@@ -68,7 +68,7 @@ kind: 'prefix'   path: '/api/skill-console'
 {
   "ok": true,
   "data": {
-    "version": "0.9.0",              // 插件版本（package.json 的 version）；配置页头部显示它
+    "version": "0.10.0",             // 插件版本（package.json 的 version）；配置页头部显示它
     "dshHome": "/Users/…/harness",
     "stateDir": "/Users/…/harness/skill-console",
     "libraryDir": "/Users/…/harness/skill-console/library",   // 可用仓库：角色的候选与复制来源（DSH 不加载它）
@@ -460,7 +460,11 @@ kind: 'prefix'   path: '/api/skill-console'
 {
   "ok": true,
   "data": {
-    "roles": [ { "id": "…", "name": "前端", "skills": ["a", "b"], "updatedAt": 1789…, "active": false } ],
+    // 0.10.0 起每个角色**都带自己的 plan**（不只是激活的那个），结构与 /roles/preview 的产物一致。
+    // 界面靠它逐技能讲差异；不读它的客户端忽略即可（纯增量）。
+    "roles": [ { "id": "…", "name": "前端", "skills": ["a", "b"], "updatedAt": 1789…, "active": false,
+                 "plan": { "steps": [], "noop": [], "skipped": [], "localKept": [], "missing": [],
+                           "stats": { "total": 0, "copy": 0, "enable": 0, "disable": 0, "noop": 0, "skipped": 0, "missing": 0 } } } ],
     "active": { "id": "…", "name": "前端" },      // 本项目未激活角色时 null
     "project": { "name": "proj-a", "fallback": false },   // 解析不出项目根时 null
     "status": "unassigned",                        // 'unassigned' | 'matched' | 'drifted'
@@ -472,14 +476,16 @@ kind: 'prefix'   path: '/api/skill-console'
                                       "commit": "abc1234", "sourcePath": "skills/g", "syncedAt": "2026-01-01T00:00:00.000Z" }|null } ],   // 后两个字段 0.9.0 补；installed 查 libraryIndex()，带 syncedAt
     // 本项目技能根现状，只用于算「● 已启用 / ○」与数量，**不参与勾选与对齐**
     "projectSkills": [ { "name": "a", "path": "…/.dsh/skills/a", "enabled": true, "toggleable": true, "readOnlyReason": null,
-                         "description": "…", "installed": null } ],
+                         "description": "…", "installed": null } ],   // 两张台账都没有 → 本地（非订阅）
     "library": { "path": "/Users/…/harness/skill-console/library", "count": 3 }
   }
 }
 ```
 
-- `status`：无激活角色 → `unassigned`；`planRole` 的 `steps` 为空 → `matched`；否则 `drifted`。
-  `missing` **不影响** `status`（只是「角色里有、本项目没有」）。
+- `status`：无激活角色 → `unassigned`；否则 `steps` / `missing` / `skipped` **三者全空**才 `matched`，
+  只要有一个非空就是 `drifted`。（0.9.0 只看 `steps`，于是「角色要一个库里根本没有的技能」和
+  「要的技能在库里是软链、根本复制不了」都会被报成 `matched`——什么都没做却显示「已对齐」。
+  这是 0.10.0 修掉的谎：`missing` 与 `skipped` 都是**永远不会被执行**的事，必须算偏离。）
 - `drifted` **不自动纠正**：手工改过开关就一直显示「已偏离」，等用户主动再切一次。
 - `candidates` 是**平面数组**（只来自可用仓库），每项带 `name` / `path` / `enabled` / `toggleable` /
   `readOnlyReason` / `description` / `installed`（后两个是 0.9.0 补的：`description` 是 frontmatter 的简介，
@@ -487,13 +493,15 @@ kind: 'prefix'   path: '/api/skill-console'
   勾选的含义是「切换时把**库里那份复制进项目**」。能不能操作一律由 `toggleable` 表达
   （软链技能是 `toggleable: false` + `readOnlyReason: 'symlink'`）。**项目技能与全局技能都不在候选里。**
 - `projectSkills` 是本项目技能根的现状（**0.9.0 起同样带 `description` / `installed`**，字段与候选一致；
+  **0.10.0 起 `installed` 查的是合成来源表**：先「装进技能根」的台账 `record.skills`，查不到再退库台账
+  `record.library`——项目安装刻意不写台账，不退这一步时从库里同步进项目的技能会显示成「本地（非订阅）」；
   唯一差别是这里的 `installed` 查 `installedIndex()`（`record.skills` 台账），快照里**没有 `syncedAt`**；
   项目侧那份不是订阅装来的时 `installed` 为 `null`）：界面只用它算行首的 `●`（本项目已启用）/ `○`
   与 `stats.total`，**不参与勾选与对齐**。
 - `library` 是可用仓库的位置与技能数，供界面讲「候选从哪来」；`library.path` 只用于定位，界面不显示绝对路径。
 - `stats.copy`：角色里要、项目里没有、**库里有**的技能数量——切换时会把它们从库复制进项目根（复制出来一律启用态）。
 - `stats.localKept` / 顶层 `localKept`：项目里已有同名的条目；**保留项目那份，绝不被库覆盖**，该条目自身该 enable / disable / noop 照旧。`localKept` 不计入 `stats.total`。
-- `stats.missing`：角色里要、项目与可用仓库都没有的名字数量；只报告，不算失败，也不影响 `status`。
+- `stats.missing`：角色里要、项目与可用仓库都没有的名字数量；只报告、不算失败，但**会让 `status` 变成 `drifted`**。
 - 错误：500 `error.role.state`（`roles.json` 损坏，拒绝覆盖）。
 
 ## 17. `GET /roles/preview?role=<id>`
@@ -517,6 +525,10 @@ kind: 'prefix'   path: '/api/skill-console'
   }
 }
 ```
+- `status` 与 §16 同一条判据（`verdictOf`）：`steps` / `missing` / `skipped` 全空才是 `matched`。
+  **注意与 §20 的 `status` 不同名不同义**：那里报的是「这次执行成不成功」（`failed === 0`），
+  这里是「切之前对不对齐」。同一个字段名在两处是两个问题，别混用。
+
 错误：400 `error.proto.missingId`（缺 `role` 参数）、404 `error.role.unknown`。
 
 ## 18. `POST /roles/save`  ← 新建 / 更新角色
@@ -557,7 +569,7 @@ kind: 'prefix'   path: '/api/skill-console'
   "localKept": [ { "name": "k", "projectPath": "…/k/SKILL.md", "libraryPath": "…/library/k/SKILL.md" } ] }
 ```
 语义：严格对齐——角色内的启用、项目里其余的全部停用（复用 `/toggle` 的发现文件重命名），
-角色里要、项目里没有、全局有的技能**先从全局复制进项目**（`action: 'copy'`，复制出来一律启用态），
+角色里要、项目里没有、**可用仓库有**的技能**先从可用仓库复制进项目**（`action: 'copy'`，复制出来一律启用态），
 **只写项目技能根**，全局根在结构上不可达。逐项隔离：一项失败不影响其余项。
 `changed > 0` 时让技能注册表失效，并对每个真正改动的路径各发一次 `fs/observed` 通知。
 `takeover` 报告「停用项目副本后，全局同名技能接管生效」；`localKept` 报告「两边同名、保留项目那份」。

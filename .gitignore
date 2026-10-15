@@ -1,9 +1,13 @@
 .tmp-crop
-
+.tmp-attach
 
 # idea
 .jbeval
 .idea
 
+
 # 实施计划（过程产物，不是项目事实，不入库）
 .plan/
+.dsh
+.codefree
+.superpowers

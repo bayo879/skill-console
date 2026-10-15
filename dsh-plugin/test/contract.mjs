@@ -1650,6 +1650,51 @@ check('POST /roles/deactivate 返回 200', deactivated.status === 200 && deactiv
 check('deactivate 只清记录、不动磁盘', existsSync(join(rolesProjectSkills, 'rp-alpha', 'SKILL.md.disabled')))
 check('取消后回到 unassigned', (await call({ path: '/api/skill-console/roles', headers: roleSession })).json.data.status === 'unassigned')
 
+// ── 0.10.0：每个角色都带自己的对齐计划，「没做到的事」也算偏离 ─────────────
+// 背景：`statusOf` 过去只看 `plan.steps`，而 `skipped`（技能动不了：项目里只读、
+// 库里是软链）与 `missing`（角色要、库里没有）都**不进 steps**（`lib/roles.js` 里
+// 各走各的分支）。只看 steps 的话，一个「要 10 个、3 个软链、2 个上游删了」的角色
+// 会被报成 matched——界面上显示「已对齐」，实际只对齐了 5 个。
+//
+// 注意 `status` 在两个端点里是两件事，别混：
+//   `/roles`、`/roles/preview` 的 status = **对齐状态**（unassigned / matched / drifted）
+//   `/roles/activate` 的 status     = **这次执行成不成功**（failed === 0 ? matched : drifted）
+const rolesWithPlan = await call({ path: '/api/skill-console/roles', headers: roleSession })
+check(
+	'每个角色都带自己的 plan（不只是激活的那个）',
+	rolesWithPlan.json.data.roles.length > 0 && rolesWithPlan.json.data.roles.every((role) => role.plan !== undefined && ['steps', 'noop', 'skipped', 'localKept', 'missing', 'stats'].every((key) => key in role.plan)),
+	JSON.stringify(rolesWithPlan.json.data.roles.map((role) => Object.keys(role.plan ?? {}))),
+)
+
+const inlinePlan = rolesWithPlan.json.data.roles.find((role) => role.id === savedRoleId)?.plan
+const samePreview = (await call({ path: `/api/skill-console/roles/preview?role=${savedRoleId}`, headers: roleSession })).json.data
+check(
+	'GET /roles 的 plan 与 /roles/preview 逐字段相同（两条路不能走偏）',
+	JSON.stringify(inlinePlan) === JSON.stringify({ steps: samePreview.steps, noop: samePreview.noop, skipped: samePreview.skipped, localKept: samePreview.localKept, missing: samePreview.missing, stats: samePreview.stats }),
+	`${JSON.stringify(inlinePlan)} vs ${JSON.stringify(samePreview)}`,
+)
+
+// 角色要的技能库里没有 → missing 非空 → 一个动作都没执行，也不能是 matched。
+const missingRoleId = (await call({ method: 'POST', path: '/api/skill-console/roles/save', headers: { ...ROLE_WRITE, ...roleSession }, body: { name: '缺技能角色', skills: ['rp-does-not-exist'] } })).json.data.role.id
+await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: missingRoleId } })
+const afterMissing = await call({ path: '/api/skill-console/roles', headers: roleSession })
+check('角色要的技能库里没有 → status 是 drifted', afterMissing.json.data.status === 'drifted', String(afterMissing.json.data.status))
+check('这条偏离来自 missing，不是 steps', afterMissing.json.data.stats.missing === 1 && afterMissing.json.data.stats.copy + afterMissing.json.data.stats.enable + afterMissing.json.data.stats.disable === 0, JSON.stringify(afterMissing.json.data.stats))
+
+// 库内软链技能动不了 → skipped 非空 → 同样不能报 matched。
+// `rp-link` 是上面造的软链候选（toggleable:false、readOnlyReason:'symlink'）。
+const linkRoleId = (await call({ method: 'POST', path: '/api/skill-console/roles/save', headers: { ...ROLE_WRITE, ...roleSession }, body: { name: '软链角色', skills: ['rp-link'] } })).json.data.role.id
+await call({ method: 'POST', path: '/api/skill-console/roles/activate', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: linkRoleId } })
+const afterLink = await call({ path: '/api/skill-console/roles', headers: roleSession })
+check('角色要的技能在库内是软链 → status 是 drifted', afterLink.json.data.status === 'drifted', String(afterLink.json.data.status))
+check('这条偏离来自 skipped，不是 steps', afterLink.json.data.stats.skipped === 1 && afterLink.json.data.stats.copy === 0, JSON.stringify(afterLink.json.data.stats))
+
+// 清场：这两个角色不能留到后面的项目隔离用例里去。
+await call({ method: 'POST', path: '/api/skill-console/roles/deactivate', headers: { ...ROLE_WRITE, ...roleSession } })
+await call({ method: 'POST', path: '/api/skill-console/roles/remove', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: missingRoleId } })
+await call({ method: 'POST', path: '/api/skill-console/roles/remove', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: linkRoleId } })
+check('清场后回到 unassigned', (await call({ path: '/api/skill-console/roles', headers: roleSession })).json.data.status === 'unassigned')
+
 const removedRoleResponse = await call({ method: 'POST', path: '/api/skill-console/roles/remove', headers: { ...ROLE_WRITE, ...roleSession }, body: { id: savedRoleId } })
 check('POST /roles/remove 删掉角色', removedRoleResponse.status === 200 && removedRoleResponse.json.data.removed === savedRoleId, JSON.stringify(removedRoleResponse.json).slice(0, 160))
 check('删角色不动磁盘', existsSync(join(rolesProjectSkills, 'rp-alpha', 'SKILL.md.disabled')))
@@ -2074,6 +2119,17 @@ const sourceIndex = sourceManager.libraryIndex().get('lib-only')
 // 点名的可静默回归，所以这里和 owner/name/commit/syncedAt 并列钉住。
 check('libraryIndex 认的是 record.library：订阅同步来的那条带 owner/name/commit/sourcePath/syncedAt', sourceIndex?.owner === 'o' && sourceIndex?.name === 'r' && sourceIndex?.commit === 'deadbeef' && sourceIndex?.sourcePath === 'skills/lib-only' && sourceIndex?.syncedAt === '2026-01-01T00:00:00.000Z', JSON.stringify(sourceIndex ?? null))
 check('同一份状态里 installedIndex 是空的（库的来源 ≠ 装进技能根的台账）', sourceManager.installedIndex().size === 0, JSON.stringify([...sourceManager.installedIndex().keys()]))
+// `sourceIndex()` 就是「台账为空时退到库台账」这一条规则的载体：项目安装不写
+// `record.skills`，于是从库里复制进项目的技能只能靠这一步认出订阅来源。
+check('sourceIndex 合并两张台账：台账为空时用库的那条顶上', sourceManager.sourceIndex().size === 1 && sourceManager.sourceIndex().get('lib-only')?.commit === 'deadbeef' && sourceManager.sourceIndex().get('lib-only')?.owner === 'o', JSON.stringify(sourceManager.sourceIndex().get('lib-only') ?? null))
+check('sourceIndex 在两张台账都有时会挑台账那条（顺序不是巧合）', (() => {
+	const bothHome = tempDir('sc-source-both')
+	const bothState = join(bothHome, 'skill-console')
+	mkdirSync(bothState, { recursive: true })
+	writeFileSync(join(bothState, 'repositories.json'), `${JSON.stringify({ version: 1, repositories: [{ id: 'o/r', owner: 'o', name: 'r', ref: '', subdirectory: 'skills', addedAt: '2026-01-01T00:00:00.000Z', skills: { same: { sourcePath: 'skills/same', kind: 'flat', commit: 'aaaa', files: {} } }, library: { same: { sourcePath: 'skills/same', kind: 'flat', commit: 'bbbb', syncedAt: '2026-01-01T00:00:00.000Z', files: {} } } }] }, null, 2)}\n`)
+	const both = reposModule.createRepositoryManager({ stateDir: bothState, skillsDir: join(bothHome, 'skills'), libraryDir: join(bothState, 'library'), log: () => {} })
+	return both.sourceIndex().get('same')?.commit === 'aaaa'
+})(), 'expected the record.skills entry (commit aaaa) to win')
 
 section('从可用仓库分发到项目（POST /library/install）')
 
@@ -2187,16 +2243,38 @@ check('候选带 installed（显示所属仓库与明细）', candidateRow?.inst
 const nodescRow = (rolesWithSource.json?.data?.candidates ?? []).find((skill) => skill.name === 'lib-nodesc')
 check('没写 description 的候选回空串而不是 null（接口声明的是 description:string）', nodescRow !== undefined && nodescRow.description === '', JSON.stringify(nodescRow))
 check('项目技能那一栏也有 installed 与 description 字段', (rolesWithSource.json?.data?.projectSkills ?? []).length > 0 && (rolesWithSource.json?.data?.projectSkills ?? []).every((skill) => 'installed' in skill && 'description' in skill), JSON.stringify(rolesWithSource.json?.data?.projectSkills))
-// 上面那条只看**字段在不在**：两块技能各查各的来源表（候选查 `record.library`，项目技能查
-// `record.skills` 台账）这个决定，换错表时字段照样在、值变成 null，只有下面这条会红。
+// 上面那条只看**字段在不在**。下面是「查哪张表」的值断言：候选只查 `record.library`，
+// 项目技能查的是**合成表**（先 `record.skills` 台账、后退 `record.library`，见 `sourceIndex()`）。
+// 台账里那条（`proj-local`，commit cafebabe）必须优先——把合成顺序倒过来只这一条会红。
 const projectRow = (rolesWithSource.json?.data?.projectSkills ?? []).find((skill) => skill.name === 'proj-local')
-check('项目技能的来源查的是「装进技能根」的台账（把两张表换过来只这一条红）', projectRow?.installed?.owner === 'o' && projectRow.installed.commit === 'cafebabe', JSON.stringify(projectRow?.installed))
+check('项目技能的来源优先查「装进技能根」的台账（合成表顺序倒过来只这一条红）', projectRow?.installed?.owner === 'o' && projectRow.installed.commit === 'cafebabe', JSON.stringify(projectRow?.installed))
 // 上面那条只证 `description` **字段在**。判断过是否与邻居重复：`candidateRow.description.length > 0`
 // 钉的是**候选**数组的真值分支、`nodescRow.description === ''` 钉的是**候选**数组的 else 分支
 // （lib/routes.js 的 `typeof … : ''`），**项目技能**数组的值通路谁都没钉——把项目那栏的映射
 // 硬写成 `description: ''`，上面三条全绿。所以这里补值断言，值取自夹具实况（placeSkill 写的是
 // `${name} 的说明`，见 test/contract.mjs 的 placeSkill）。
 check('项目技能那栏的 description 是技能自己写的简介（项目栏硬写成空串也只这一条红）', projectRow?.description === 'proj-local 的说明', JSON.stringify(projectRow?.description))
+
+// 用户报的 bug：「可用仓库中的 skill 同步到项目中后归属变成了本地」。
+// 根因：项目安装**刻意不写** `record.skills`（lib/repos.js 的 `installSkill` 里那条注释：
+// 免得顶掉全局那份的记录），所以只看台账时，从库里分发进项目的那一份查不到来源，
+// 界面 `SkillSourceLine` 就回落到「本地（非订阅）」。
+// 这段走**真分发**再回读，不是给 `sourceIndex()` 单独喂数据——它同时钉住「路由真的用了
+// 合成表」这件事（把 `/roles` 那行换回 `installedIndex()` 时，下面这条会红）。
+const pureLocalName = 'proj-pure'
+placeSkill(join(rolesSourceProject, '.dsh', 'skills'), pureLocalName, true)
+const distributeSource = await callRouteOrReport(sourceRoute, { method: 'POST', path: '/api/skill-console/library/install', headers: { ...ROLE_WRITE, ...roleSession }, body: { path: join(rolesSourceStateDir, 'library', 'lib-sourced', 'SKILL.md'), project: rolesSourceProject } })
+check('前置：库里的 lib-sourced 已经真的复制进项目根', distributeSource.status === 200 && distributeSource.json?.data?.copied === true, `${distributeSource.status} ${JSON.stringify(distributeSource.json).slice(0, 200)}`)
+const rolesAfterDistribute = await callRouteOrReport(sourceRoute, { path: `/api/skill-console/roles?project=${encodeURIComponent(rolesSourceProject)}` })
+const distributedRow = (rolesAfterDistribute.json?.data?.projectSkills ?? []).find((skill) => skill.name === 'lib-sourced')
+// `commit: deadbeef` 只可能来自 `record.library`（`record.skills` 里根本没有这个名字）：
+// 换回 `installedIndex()` 时这里是 `installed === null`，界面就显示「本地（非订阅）」。
+check('分发进项目的技能认出了订阅来源（退回 installedIndex() 就变成本地）', distributedRow?.installed?.owner === 'o' && distributedRow.installed.commit === 'deadbeef', JSON.stringify(distributedRow?.installed ?? null))
+// 反面：两张表里都没有的名字仍然是「本地」——合成表不能把所有技能都说成订阅来的。
+const pureLocalRow = (rolesAfterDistribute.json?.data?.projectSkills ?? []).find((skill) => skill.name === pureLocalName)
+check('两张台账都没有的技能仍然是本地（合成表不乱认亲戚）', pureLocalRow !== undefined && pureLocalRow.installed === null, JSON.stringify(pureLocalRow?.installed ?? 'MISSING'))
+const detailAfterDistribute = await callRouteOrReport(sourceRoute, { path: `/api/skill-console/skill?path=${encodeURIComponent(join(rolesSourceProject, '.dsh', 'skills', 'lib-sourced', 'SKILL.md'))}&project=${encodeURIComponent(rolesSourceProject)}` })
+check('详情端点也认同一份来源（GET /skill 换了索引会与列表页说法不一致）', detailAfterDistribute.json?.data?.installed?.commit === 'deadbeef', JSON.stringify(detailAfterDistribute.json?.data?.installed ?? null))
 
 // ── 5. 浏览器半边 ─────────────────────────────────────────────────────────
 
@@ -2445,6 +2523,127 @@ const roleRowTree = RoleRowExport({
 })
 check('RoleRow 渲染出角色名', collectTexts(roleRowTree).includes('前端'), collectTexts(roleRowTree).join('|').slice(0, 160))
 check('RoleRow 把技能数讲出来', collectTexts(roleRowTree).some((text) => text.includes('skillsCount')), collectTexts(roleRowTree).join('|').slice(0, 160))
+
+// ── T2：状态词汇表 ──────────────────────────────────────────────────────────
+// 同一个状态过去有三个页签各写一套画法，所以这套词表本身就是契约，必须能被直接打到。
+const roleToneOf = loaded.factory(requireFor(true)).roleToneOf
+const roleRowStatusKey = loaded.factory(requireFor(true)).roleRowStatusKey
+const roleSkillStates = loaded.factory(requireFor(true)).roleSkillStates
+const SKILL_STATE = loaded.factory(requireFor(true)).SKILL_STATE
+check('roleToneOf 被导出（契约的一部分）', typeof roleToneOf === 'function')
+check('roleToneOf：已对齐是 success，不再和「未分配」共用一个灰', roleToneOf('matched') === 'success')
+check('roleToneOf：偏离是 warning', roleToneOf('drifted') === 'warning')
+check('roleToneOf：未分配是 quiet', roleToneOf('unassigned') === 'quiet')
+check('roleToneOf 对垃圾输入不抛', roleToneOf(null) === 'quiet' && roleToneOf('瞎写的') === 'quiet')
+check('SKILL_STATE 覆盖五态', ['ready', 'gain', 'lose', 'missing', 'skipped'].every((key) => SKILL_STATE[key] !== undefined && SKILL_STATE[key].key.startsWith('state.')), Object.keys(SKILL_STATE).join(','))
+// tone 写错不报错、只是没有颜色（样式表按 data-tone 选规则），所以要在这里钉住。
+check('状态词汇表的 tone 只用样式表定义过的取值', Object.values(SKILL_STATE).every((state) => ['success', 'info', 'warning', 'danger', 'quiet'].includes(state.tone)), Object.values(SKILL_STATE).map((state) => state.tone).join(','))
+const skillDotStates = Object.values(SKILL_STATE).map((state) => state.dot)
+check('状态词汇表的 dot 五态互不相同', new Set(skillDotStates).size === 5, skillDotStates.join(','))
+check('「动不了」与「不需要动」在色与形上都不同', SKILL_STATE.skipped.dot !== SKILL_STATE.ready.dot)
+check('roleRowStatusKey：非激活说「未激活」，不说「未启用角色」', roleRowStatusKey('unassigned', false) === 'roles.statusInactive' && roleRowStatusKey('matched', false) === 'roles.statusInactive' && roleRowStatusKey('drifted', false) === 'roles.statusInactive')
+check('roleRowStatusKey：只有激活的角色才回答与项目的关系', roleRowStatusKey('matched', true) === 'roles.statusMatched' && roleRowStatusKey('drifted', true) === 'roles.statusDrifted')
+
+// 一份 plan 要覆盖「就位 / 会启用 / 会停用 / 动不了 / 库内软链 / 复制 / 缺失」七种情形。
+const planFixture = {
+	steps: [
+		{ name: 'p-enable', action: 'enable', current: false, target: true },
+		{ name: 'p-lose', action: 'disable', current: true, target: false },
+		{ name: 'p-copy', action: 'copy', current: false, target: true },
+	],
+	noop: [{ name: 'p-keep' }],
+	skipped: [
+		{ name: 'p-skip', reason: 'readonly' },
+		{ name: 'l-skip', reason: 'symlink' },
+	],
+	missing: ['gone'],
+}
+const projectFixture = [
+	{ name: 'p-keep', enabled: true },
+	{ name: 'p-enable', enabled: false },
+	{ name: 'p-lose', enabled: true },
+	{ name: 'p-skip', enabled: true, toggleable: false },
+]
+const skillStates = roleSkillStates(planFixture, projectFixture)
+const stateOfName = new Map(skillStates.map((row) => [row.name, row.state]))
+const rowOfName = new Map(skillStates.map((row) => [row.name, row]))
+check('roleSkillStates 被导出（契约的一部分）', typeof roleSkillStates === 'function')
+check('roleSkillStates：启用着且角色要 → 就位', stateOfName.get('p-keep') === 'ready')
+check('roleSkillStates：停用着且角色要 → 会生效', stateOfName.get('p-enable') === 'gain')
+check('roleSkillStates：启用着且角色不要 → 会失效', stateOfName.get('p-lose') === 'lose')
+check('roleSkillStates：项目里动不了的单独成态，不混进「会生效」', stateOfName.get('p-skip') === 'skipped')
+check('roleSkillStates：库内软链也要显示出来，不能悄悄跳过', stateOfName.get('l-skip') === 'skipped')
+check('roleSkillStates：角色要而库里没有 → 缺失', stateOfName.get('gone') === 'missing')
+check('roleSkillStates：项目里没有、角色要、库里有 → 会复制', stateOfName.get('p-copy') === 'gain' && rowOfName.get('p-copy').action === 'copy')
+check('roleSkillStates：skipped 带上原因，界面才说得出「为什么动不了」', rowOfName.get('p-skip').reason === 'readonly' && rowOfName.get('l-skip').reason === 'symlink')
+check('roleSkillStates：条数 == 项目 4 + 复制 1 + 库内软链 1 + 缺失 1', skillStates.length === 7, String(skillStates.length))
+// 两段顺序：会执行的在前（项目顺序 + 复制），不会执行的整段在后（动不了的 + 要不到的）。
+// 这条顺序不是随便定的：展开清单把后两类单独成组，构成条必须同处分段，否则两处是两张不同的图。
+check('roleSkillStates：会执行的一段按项目顺序在前，复制的跟在后面', skillStates.map((row) => row.name).join(',') === 'p-keep,p-enable,p-lose,p-copy,p-skip,l-skip,gone', skillStates.map((row) => row.name).join(','))
+check('roleSkillStates：不会执行的整段排在最后（构成条与清单同处分段）', skillStates.slice(4).every((row) => row.state === 'skipped' || row.state === 'missing') && skillStates.slice(0, 4).every((row) => row.state !== 'skipped' && row.state !== 'missing'), skillStates.map((row) => row.state).join(','))
+check('roleSkillStates：不重复输出同一个技能', new Set(skillStates.map((row) => row.name)).size === skillStates.length)
+check('roleSkillStates 对 null / 垃圾输入不抛', Array.isArray(roleSkillStates(null, null)) && roleSkillStates(null, null).length === 0 && roleSkillStates('瞎写的', [null, undefined, {}]).length === 0)
+// 必须用**同一个** factory 实例取值：`SKILL_STATE` 是每次加载新建的对象，
+// 跨实例比较 `===` 永远为假（这条断言第一次就是这么红的）。
+const clientStateExports = loaded.factory(requireFor(true))
+check('skillStateOf：读不懂的键退回 ready，不崩', clientStateExports.skillStateOf('瞎写的') === clientStateExports.SKILL_STATE.ready && clientStateExports.skillStateOf(undefined) === clientStateExports.SKILL_STATE.ready)
+
+// ── T5：角色行的构成条与计数（需求 ② 的「一直显示」） ─────────────────────────
+const roleDiffText = clientStateExports.roleDiffText
+const RoleRibbon = clientStateExports.RoleRibbon
+const RoleDiffList = clientStateExports.RoleDiffList
+check('roleDiffText / RoleRibbon / RoleDiffList 被导出（契约的一部分）', typeof roleDiffText === 'function' && typeof RoleRibbon === 'function' && typeof RoleDiffList === 'function')
+
+// 计数文案：零的项必须消失。以前统计行的毛病就是「共 0 个技能 · 已同步 0 · 待更新 0」。
+const activeDiffText = roleDiffText(tStub, skillStates, true)
+check('计数文案：零的项不出现', !/ 0(?!\d)/.test(activeDiffText), activeDiffText)
+check('计数文案：激活角色不加「若切换」', !activeDiffText.includes('diffIfSwitch') && activeDiffText.includes('diffReady') && activeDiffText.includes('diffCopy') && activeDiffText.includes('diffEnable') && activeDiffText.includes('diffLose'), activeDiffText)
+const inactiveDiffText = roleDiffText(tStub, skillStates, false)
+check('计数文案：非激活角色也照算，前面挂「若切换」', inactiveDiffText.includes('diffIfSwitch') && inactiveDiffText.includes('diffCopy'), inactiveDiffText)
+// 全部就位时不该出现任何动作词——那时状态徽标已经在说「与项目一致」。
+const alignedText = roleDiffText(tStub, [{ name: 'a', state: 'ready' }], true)
+check('计数文案：零动作时只说「已就位 N」', alignedText.includes('diffReady') && !alignedText.includes('diffCopy') && !alignedText.includes('diffLose') && !alignedText.includes('diffMissing'), alignedText)
+check('计数文案：没有任何技能时返回空串（不渲染空行）', roleDiffText(tStub, [], true) === '')
+check('计数文案：对垃圾输入不抛', roleDiffText(tStub, undefined, true) === '' && typeof roleDiffText(tStub, [null, undefined, {}], true) === 'string')
+
+// 构成条：一格一个技能、顺序与清单一致、超长折成 +N、整块 aria-hidden。
+const ribbonTree = RoleRibbon({ states: skillStates })
+const ribbonCells = collect(ribbonTree, (element) => element.props !== undefined && element.props['data-state'] !== undefined)
+check('构成条：格子数 == 技能数', ribbonTree !== null && ribbonCells.length === skillStates.length, ribbonCells.length + '/' + skillStates.length)
+check('构成条：格子顺序与清单逐行相同（展开不会换脸）', ribbonCells.map((cell) => cell.props['data-state']).join(',') === skillStates.map((row) => row.state).join(','), ribbonCells.map((cell) => cell.props['data-state']).join(',') + ' vs ' + skillStates.map((row) => row.state).join(','))
+check('构成条：整块 aria-hidden（30 个格子不能变成 30 个读屏停靠点）', ribbonTree.props['aria-hidden'] === 'true')
+const longStates = Array.from({ length: 50 }, (unused, index) => ({ name: 's' + index, state: 'ready' }))
+const longRibbon = RoleRibbon({ states: longStates })
+check('构成条：超长截断成 +N，且 N 对得上', collect(longRibbon, (element) => element.props !== undefined && element.props['data-state'] !== undefined).length === clientStateExports.RIBBON_MAX_CELLS && collectTexts(longRibbon).includes('+' + (50 - clientStateExports.RIBBON_MAX_CELLS)), collectTexts(longRibbon).join('|'))
+check('构成条：没有技能时不渲染整块（老宿主没有 plan 的情形）', RoleRibbon({ states: [] }) === null && RoleRibbon({}) === null)
+
+// 展开清单：missing / skipped 必须单独成组，不能混进「会生效 / 会失效」。
+const diffTree = RoleDiffList({ t: tStub, states: skillStates, busy: false, onApply: () => {} })
+const diffRows = collect(diffTree, (element) => element.props !== undefined && typeof element.props['data-state'] === 'string')
+check('展开清单：一行一个技能，行数 == 技能数', diffRows.length === skillStates.length, diffRows.length + '/' + skillStates.length)
+check('展开清单：行顺序与构成条一致', diffRows.map((row) => row.props['data-state']).join(',') === ribbonCells.map((cell) => cell.props['data-state']).join(','))
+check('展开清单：missing / skipped 单独成组，且排在会执行的动作之后', (() => {
+	const states = diffRows.map((row) => row.props['data-state'])
+	const firstBlocked = states.findIndex((state) => state === 'missing' || state === 'skipped')
+	if (firstBlocked < 0) return false
+	// 分组线之后不许再出现会执行的状态，否则就是混在了一起。
+	return states.slice(firstBlocked).every((state) => state === 'missing' || state === 'skipped') && collectTexts(diffTree).join('|').includes('diffBlocked')
+})(), diffRows.map((row) => row.props['data-state']).join(','))
+// 原因是 `StateMark` 的 `props.note`：替身 createElement 不展开函数组件，
+// 所以这句话不在 children 里，要从 props 上收。
+const diffNotes = collect(diffTree, (element) => element.props !== undefined && typeof element.props.note === 'string').map((element) => element.props.note)
+check('展开清单：只读 / 软链的原因讲出来', diffNotes.includes('state.reasonReadonly') && diffNotes.includes('state.reasonSymlink'), diffNotes.join(','))
+const applyTree = RoleDiffList({ t: tStub, states: [{ name: 'x', state: 'gain', action: 'copy' }], busy: false, onApply: () => {} })
+check('展开清单：有动作时给「按此差异切换」，它会调 onApply', (() => {
+	let called = 0
+	const tree = RoleDiffList({ t: tStub, states: [{ name: 'x', state: 'gain', action: 'copy' }], busy: false, onApply: () => { called += 1 } })
+	const button = collect(tree, (element) => element.props !== undefined && element.props.onClick !== undefined && typeof element.props.onClick === 'function')[0]
+	if (button === undefined) return false
+	button.props.onClick()
+	return called === 1 && collectTexts(tree).join('|').includes('applyDiff')
+})(), collectTexts(applyTree).join('|').slice(0, 160))
+check('展开清单：onApply 缺席时不渲染那个按钮（不可用就不出现）', collect(RoleDiffList({ t: tStub, states: [{ name: 'x', state: 'gain', action: 'copy' }], busy: false }), (element) => element.props !== undefined && element.props.onClick !== undefined).length === 0)
+check('展开清单：没有技能时不渲染整块', RoleDiffList({ t: tStub, states: [], onApply: () => {} }) === null)
 
 const roleEditorTree = RoleEditorExport({
 	t: tStub,
@@ -3033,7 +3232,7 @@ const actionButtonOf = (tree, key) => collect(tree, (element) => element.props?.
 const repoHeadOf = (tree) => collect(tree, (element) => String(element.props?.className || '').includes('sc-repo-head'))[0]
 
 const collapsedDisclosure = disclosureOf(repoRowTree)
-check('收起的仓库卡片：给出「展开」控件', collapsedDisclosure !== undefined && repoRowCalls.includes('repos.expand'), repoRowCalls.join(','))
+check('收起的仓库卡片：给出「展开」控件', collapsedDisclosure !== undefined && repoRowCalls.includes('common.expand'), repoRowCalls.join(','))
 check('收起的仓库卡片：控件上带 aria-expanded=false', collapsedDisclosure?.props?.['aria-expanded'] === 'false', JSON.stringify(collapsedDisclosure?.props))
 check('收起的仓库卡片：三角朝右（data-open=false）', caretOf(repoRowTree)?.props?.['data-open'] === 'false')
 check('收起的仓库卡片：不渲染技能明细', skillsPanelOf(repoRowTree).length === 0)
@@ -3054,7 +3253,7 @@ const expandedTree = exposed.RepoRow({
 		return params === undefined ? key : key + JSON.stringify(params)
 	},
 })
-check('展开的仓库卡片：控件变「收起」', expandedCalls.includes('repos.collapse') && !expandedCalls.includes('repos.expand'), expandedCalls.join(','))
+check('展开的仓库卡片：控件变「收起」', expandedCalls.includes('common.collapse') && !expandedCalls.includes('common.expand'), expandedCalls.join(','))
 check('展开的仓库卡片：控件上带 aria-expanded=true', disclosureOf(expandedTree)?.props?.['aria-expanded'] === 'true')
 check('展开的仓库卡片：三角朝下（data-open=true）', caretOf(expandedTree)?.props?.['data-open'] === 'true')
 check('展开的仓库卡片：技能明细挂在这张卡片里面', skillsPanelOf(expandedTree).length === 1)
@@ -3120,7 +3319,7 @@ check(
 	/\.sc-body\s*>\s*\*\s*\{[^}]*flex:\s*0 0 auto/.test(clientSource) && /\.sc-repos\s*>\s*\*\s*\{[^}]*flex:\s*0 0 auto/.test(clientSource),
 )
 check('面板上不再有一张独立的「仓库里的技能」卡片', !/activeRepo\b/.test(clientSource))
-check('展开 / 收起 / 全部收起三种文案都有', ['repos.expand', 'repos.collapse', 'repos.collapseAll'].every((key) => typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string'))
+check('展开 / 收起（角色行与仓库行共用）/ 全部收起三种文案都有', ['common.expand', 'common.collapse', 'repos.collapseAll'].every((key) => typeof dictionaryZh[key] === 'string' && typeof dictionaryEn[key] === 'string'))
 
 check('导出 emptyDetailKeyFor 供契约测试直接打', typeof exposed.emptyDetailKeyFor === 'function')
 // 空清单的两种成因要说两句话：拉取成功却 0 技能 = 多半是子目录没指对（真实现场：
@@ -3301,7 +3500,7 @@ check('技能行标出「当前角色 / 可用仓库」两个来源', clientSour
 check('角色面板把 copy 数显示出来', clientSource.includes("t('roles.copyCount', { count: copyCount })"))
 check('角色面板把 localKept 显示出来', clientSource.includes("t('roles.localKept')") && clientSource.includes("t('roles.localKeptHint')"))
 check('仓库页签不再有安装目标选择（订阅默认同步进可用仓库）', !clientSource.includes("t('repos.installTarget')") && !clientSource.includes('target: installTarget'))
-check('订阅卡片讲清可用仓库里的存量与不一致', clientSource.includes("t('repos.statusLine'") && clientSource.includes("'repos.library.synced'") && clientSource.includes("'repos.library.outdated'"))
+check('订阅卡片讲清可用仓库里的存量与不一致', clientSource.includes('librarySummaryLine(t, library)') && clientSource.includes("'repos.library.synced'") && clientSource.includes("'repos.library.outdated'"))
 // 从角色列表直接激活时没有草稿：确认框的数量必须按「被激活的那个角色」算，否则恒为 0。
 check('激活确认框按被激活角色的技能算数量', clientSource.includes('const confirmText = (skills) =>') && clientSource.includes('runActivate(role.id, role.skills ?? [])'))
 check('从编辑器激活时按草稿算数量', clientSource.includes('runActivate(current.id, current.skills)'))
@@ -3366,12 +3565,53 @@ check('六个按路径定位的读写请求都带上当前工作区', WORKSPACE_
 	const at = clientSource.indexOf(snippet)
 	return !(at >= 0 && clientSource.slice(at, at + 200).includes('withProject(project'))
 }).join(' / '))
-check('三个页签都由 section 注入同一份工作区上下文', ['SkillsPanel', 'ReposPanel', 'RolesPanel'].every((name) => new RegExp(`h\\(${name}, \\{ t, sessionId, project \\}\\)`).test(clientSource)))
+// 端点是同一个上下文**传入**的，不是各处自己再拉一份。四个面板都从上面拿到 t / sessionId / project；
+// 允许它们在后面追加自己的 props（如 SkillsPanel 的 onOpenLibrary），所以只钉前缀。
+check('四个面板都从上层拿到同一份工作区上下文（t / sessionId / project 在前）', ['SkillsPanel', 'ReposPanel', 'RolesPanel', 'LibraryPanel'].every((name) => new RegExp(`h\\(${name}, \\{\\s*t,\\s*sessionId,\\s*project`).test(clientSource)))
+// 上一条是**调用点**检查：它看不见「拿到之后有没有真的取出来用」。
+// `ReposPanel` 曾经用了 `project` 却没从 props 里取（切到库视图就 ReferenceError），正则抓不到——
+// 那段代码在 `view === 'library'` 的分支里，只有真求值才炸。所以这里用**渲染**证明：
+// 把 sessionStorage 预置成库视图，直接调组件函数，让它把那个分支求值一遍。
+// （react 替身跑不了 effect，所以这里只求值**渲染体**，不模拟数据到达。）
+const renderReposPanelInView = (view) => {
+	const previous = sandbox.window.sessionStorage
+	sandbox.window.sessionStorage =
+		view === 'library'
+			? { getItem: (key) => (key === 'dsh-skill-console.repos-view' ? 'library' : null), setItem: () => {}, removeItem: () => {} }
+			: null
+	const instance = loaded.factory(requireFor(true))
+	try {
+		return { tree: instance.ReposPanel({ t: tStub, sessionId: 's-1', project: { active: '/x/proj', selected: { path: '/x/proj' } } }), LibraryPanel: instance.LibraryPanel, error: null }
+	} catch (error) {
+		return { tree: null, LibraryPanel: instance.LibraryPanel, error }
+	} finally {
+		sandbox.window.sessionStorage = previous
+	}
+}
+const libraryViewRender = renderReposPanelInView('library')
+const subscriptionViewRender = renderReposPanelInView('subscriptions')
+check('库视图能真的渲染出来（`project` 没从 props 取就是 ReferenceError）', libraryViewRender.error === null && libraryViewRender.tree !== null, String(libraryViewRender.error?.message ?? ''))
+check('库视图渲染的确实是 LibraryPanel（不是把订阅列表也当成库）', libraryViewRender.tree !== null && collect(libraryViewRender.tree, (element) => element.type === libraryViewRender.LibraryPanel).length === 1)
+check('视图选择走 sessionStorage：没存过就是订阅视图', subscriptionViewRender.error === null && collect(libraryViewRender.tree, (element) => element.type === libraryViewRender.LibraryPanel).length === 1 && collect(subscriptionViewRender.tree, (element) => element.type === subscriptionViewRender.LibraryPanel).length === 0)
+
+// 作用域声明：工作区条在节壳里、对所有页签都显示，而「技能仓库」页签的内容是全局一份。
+// 不清不楚的后果是把这些仓库读成「属于当前项目」。修法是**在页签条里加一句**，不是把工作区条
+// 换成那句话——换掉会让页签条上下跳，也把「换工作区」锁在另外两页（见 plan.md T3 的偏离说明）。
+const sectionTabsBody = (() => {
+	const at = clientSource.indexOf("className: 'sc-tabs'")
+	return at < 0 ? '' : clientSource.slice(at, at + 900)
+})()
+check('作用域说明长在页签条里（不是新起一行）', sectionTabsBody.includes("className: 'sc-scope'"))
+check('作用域说明只在「技能仓库」页签渲染', sectionTabsBody.includes("tab === 'repos'") && sectionTabsBody.includes("t('section.globalScope')"))
+// 反向钉子：工作区条**不随页签增删**。真按 plan 的字面做（`tab === 'repos' ? 说明 : WorkspaceBar`）
+// 这条就红——那是刻意的：跳版与「锁住换工作区」的代价比加一句话大。
+check('工作区条不随页签增删（它是节壳，切页签零位移）', /\n\s*h\(WorkspaceBar, \{ t, context: project \}\),/.test(clientSource) && !/tab === 'repos'\s*\?\s*h\(WorkspaceBar/.test(clientSource))
+check('作用域说明的 CSS 自己不换行（换行会把页签条撑高）', /\.sc-scope\s*\{[^}]*white-space:\s*nowrap/.test(clientSource))
 
 // 撤下来的两条 UI 通路：安装块整块消失、「移到项目」换成「移到可用仓库」。
 check('客户端不再调用 /repositories/install（安装块已撤）', !clientSource.includes("apiPost('/repositories/install'"))
 check('客户端不再调用 /skills/move-to-project（已换成 move-to-library）', !clientSource.includes("/skills/move-to-project'"))
-check('仓库卡片把可用仓库的状态讲出来', clientSource.includes("t('repos.statusLine'") && clientSource.includes("'repos.library.synced'"))
+check('仓库卡片把可用仓库的状态讲出来', clientSource.includes('librarySummaryLine') && clientSource.includes("'repos.library.synced'"))
 
 section('版面条：节顶唯一工作区条，三页签不再各自为政')
 
@@ -3440,10 +3680,12 @@ check('没有工作区、也没会话时下拉不渲染（但条还在）', empt
 section('技能页签：一屏就是工作区的全貌（两个源块，没有范围开关）')
 
 check('技能页签的「范围」开关已删干净', !clientSource.includes("t('skills.scope") && !/setScope/.test(clientSource))
-check('技能页签一次只拉一份目录（不再按范围重拉）', (clientSource.match(/apiGet\('\/catalog'/g) ?? []).length === 1)
-const catalogCallAt = clientSource.indexOf("apiGet('/catalog'")
-check('拉目录时显式带上当前工作区', catalogCallAt >= 0 && clientSource.slice(catalogCallAt, catalogCallAt + 160).includes('withProject(project'), clientSource.slice(catalogCallAt, catalogCallAt + 160))
-check('目录请求不再带 scope 参数', catalogCallAt >= 0 && !clientSource.slice(catalogCallAt, catalogCallAt + 160).includes('scope'))
+// 目录只在**两处**各拉一次：技能页签（两个源块共用一份）和库视图（它读的是同一个 /catalog）。
+// 关键是「不按范围重拉」——所以钉的是**次数**，以及每次都不带 scope。
+const catalogCallAt = [...clientSource.matchAll(/apiGet\('\/catalog'/g)].map((match) => match.index)
+check('目录只在两处各拉一次（技能页签 + 库视图），不按范围重拉', catalogCallAt.length === 2, `实际 ${catalogCallAt.length} 处`)
+check('拉目录时显式带上当前工作区', catalogCallAt.length > 0 && catalogCallAt.every((at) => clientSource.slice(at, at + 160).includes('withProject(project')), catalogCallAt.map((at) => clientSource.slice(at, at + 160)).join(' | '))
+check('目录请求不再带 scope 参数', catalogCallAt.length > 0 && catalogCallAt.every((at) => !clientSource.slice(at, at + 160).includes('scope')))
 check('按 roots 顺序渲染源块（宿主给两条就是两块）', clientSource.includes('roots.map((root) =>') && clientSource.includes('h(SkillGroup'))
 check('目录里没有项目根时给「还没选工作区」引导', clientSource.includes("root.key === 'project-dsh'") && clientSource.includes("t('skills.noSessions')"))
 const fallbackUses = (clientSource.match(/t\([^)]*?'skills\.projectFallback/g) ?? []).length
@@ -3452,7 +3694,16 @@ const fallbackUses = (clientSource.match(/t\([^)]*?'skills\.projectFallback/g) ?
 const projectNameCalls = /t\('skills\.projectName'/.test(clientSource)
 check('技能页签不再自己播报「当前项目」，回落文案只剩工作区条那一处', !clientSource.includes("t('skills.projectName')") && !projectNameCalls && fallbackUses === 1, `projectName=${projectNameCalls} fallbackUses=${fallbackUses}`)
 
-check('技能页签渲染第三块：复用 SkillGroup + mode:library，不自造平行组件', /h\(SkillGroup, \{[\s\S]{0,200}key: 'library'[\s\S]{0,200}mode: 'library'/.test(clientSource))
+// 库视图是「技能仓库」页签的第二个视图（`LibraryPanel`），不再是技能页签的第三块。
+// 下面几条钉的是**它自己的函数体窗口**，不是全文——全文正则会被别处的同名写法满足，
+// 也会被「库视图没渲染但别处渲染了」弄成假绿。
+const libraryPanelBody = (() => {
+	const from = clientSource.indexOf('function LibraryPanel')
+	const to = clientSource.indexOf('function ReposPanel')
+	return from >= 0 && to > from ? clientSource.slice(from, to) : ''
+})()
+check('取到了 LibraryPanel 的函数体（否则下面几条会靠空窗口白过）', libraryPanelBody.length > 500, `窗口 ${libraryPanelBody.length} 字符`)
+check('库视图复用 SkillGroup + mode:library，不自造平行组件', /h\(SkillGroup, \{[\s\S]{0,300}mode: 'library'/.test(libraryPanelBody))
 check('库块的数据来自 catalog.data.library，缺席就不渲染', clientSource.includes('catalog.data.library') && /library === null[\s\S]{0,40}\? null/.test(clientSource))
 check('同步动作打 POST /library/install 并带上当前工作区', (() => {
 	const at = clientSource.indexOf("apiPost('/library/install'")
@@ -3466,15 +3717,13 @@ check('同步成功后只推 revision（不调 reloadAfterAction，否则详情�
 })())
 check('折叠记忆把库块一起算进去', clientSource.includes('collapseKeysOf(library === null ? roots : [...roots, library])'))
 check('没有项目根时「同步到项目」禁用（沿用 project-dsh 判据）', clientSource.includes("const canSync = roots.some((root) => root.key === 'project-dsh')"))
-// T5 里库行的整行 onClick 直接调 props.onSync（控制器裁决不加兜底，漏接就 TypeError）——
-// 这条钉子确保 Task 6 真的把 onSync 接在**库块**那个 h(SkillGroup, {...}) 上。
-// 它和下面那条 canSync 钉子都是**调用点**检查：渲染级断言看不见 props 接线。
-// 注意两条都用 600 字符窗口，且对**属性顺序敏感**（`key: 'library'` 必须在前面），
-// 所以将来在 `key: 'library'` 与这两个属性之间插一段 700 字符的注释会让它们误红——
-// 调用点钉子可以接受这个代价，但**行为**检查一律不许再依赖正则（见下面 ②③⑤⑥）。
-check('库块把 onSync 接给 library 块（T5 未加兜底，漏接即点击报错）', /h\(SkillGroup, \{[\s\S]{0,600}key: 'library'[\s\S]{0,600}onSync: syncToProject/.test(clientSource))
-// 漏接 canSync 是**静默**失效（按钮变灰 + 提示「先选工作区」，没有任何报错）——单独钉一条。
-check('库块把 canSync 接给 library 块（漏接是静默禁用，最危险的一种）', /h\(SkillGroup, \{[\s\S]{0,600}key: 'library'[\s\S]{0,600}canSync,/.test(clientSource))
+// T5 里库行的整行 onClick 直接调 props.onSync（控制器裁决不加兜底，漏接就 TypeError）。
+// `LibraryPanel` 的数据来自 effect（`react` 替身跑不了 effect），拿不到「已加载」的渲染，
+// 所以这两条只能是**调用点**检查——按本文件的惯例（见下面折叠覆盖层那条）用源码级断言，
+// 但把窗口收在 `LibraryPanel` 自己的函数体里，比原来的「全文 + 600 字符前向窗口」精确得多。
+// 同样钉 `canSync`：漏接是**静默**失效（按钮变灰 + 提示「先选工作区」，没有任何报错）。
+check('库块把 onSync 接给 library 块（未加兜底，漏接即点击报错）', /h\(SkillGroup, \{[\s\S]{0,400}onSync: syncToProject/.test(libraryPanelBody))
+check('库块把 canSync 接给 library 块（漏接是静默禁用，最危险的一种）', /h\(SkillGroup, \{[\s\S]{0,400}canSync,/.test(libraryPanelBody))
 // ① 四条 ERROR_KEYS 映射都要有覆盖：brief 原先只枚举了三个「原文带绝对路径」的码，
 //    error.proto.missingPath → error.missingPath 删掉仍全绿（T6 实现者实测）。
 for (const [code, key] of [['error.skill.notFound', 'error.skillNotFound'], ['error.transfer.symlink', 'error.transferSymlink'], ['error.copy.exists', 'error.copyExists'], ['error.proto.missingPath', 'error.missingPath']]) {
@@ -3682,6 +3931,80 @@ check('空技能根改说「去订阅」（不再是「这个范围里没有技�
 const noSessionsAt = clientSource.indexOf("t('skills.noSessions')")
 const noSessionsWindow = clientSource.slice(Math.max(0, noSessionsAt - 400), noSessionsAt)
 check('「还没选工作区」的引导落在项目块之后（占住项目块的槽位）', noSessionsAt > clientSource.indexOf('roots.map(') && noSessionsWindow.includes("'sc-empty'") && noSessionsWindow.includes("t('skills.project')"), `noSessions@${noSessionsAt} roots.map@${clientSource.indexOf('roots.map(')} 窗口有 sc-empty=${noSessionsWindow.includes("'sc-empty'")} 有 skills.project=${noSessionsWindow.includes("t('skills.project')")}`)
+
+// ── T7 交互收口（design.md 第五节 P1/P2） ────────────────────────────────
+
+section('T7 汇总行：0 的项不出现，标点统一')
+
+const summaryLineOf = fnOr('librarySummaryLine', () => '«librarySummaryLine 未导出»')
+const reposOpenOfOf = fnOr('reposOpenOf', () => ({ '«reposOpenOf 未导出»': true }))
+const persistReposOpenOf = fnOr('persistReposOpen', () => {})
+const summaryFull = summaryLineOf(tStub, { count: 24, synced: 20, outdated: 3, orphan: 1 })
+check(
+	'有值的项按「总 · 已同步 · 待更新 · 上游已删除」的顺序出现，连缀是「·」',
+	summaryFull ===
+		'repos.statusPrefix' +
+			[
+				'repos.statusTotal{"count":24}',
+				'repos.statusSynced{"count":20}',
+				'repos.statusOutdated{"count":3}',
+				'repos.statusOrphan{"count":1}',
+			].join(' · '),
+	summaryFull,
+)
+const summaryQuiet = summaryLineOf(tStub, { count: 24, synced: 24, outdated: 0, orphan: 0 })
+check('0 的项不出现（不再输出「待更新 0 · 上游已删除 0」）', !summaryQuiet.includes('repos.statusOutdated') && !summaryQuiet.includes('repos.statusOrphan'), summaryQuiet)
+check('全 0 时说「还没有技能」，而不是「共 0 个技能」', summaryLineOf(tStub, { count: 0, synced: 0, outdated: 0, orphan: 0 }) === 'repos.statusPrefix' + 'repos.statusEmpty', summaryLineOf(tStub, { count: 0, synced: 0, outdated: 0, orphan: 0 }))
+let summaryDegraded = true
+try {
+	summaryLineOf(tStub, {})
+	summaryLineOf(tStub, null)
+	summaryLineOf(tStub, undefined)
+} catch (error) {
+	summaryDegraded = false
+}
+check('缺字段 / null 按 0 处理，不抛', summaryDegraded, String(summaryLineOf(tStub, {})))
+check('旧的单模板 repos.statusLine 已从两份词典删掉（不留死键）', !('repos.statusLine' in dictionaryZh) && !('repos.statusLine' in dictionaryEn))
+check('角色页的汇总行连缀也统一成「·」', dictionaryZh['roles.activateSummary'].includes(' · ') && !dictionaryZh['roles.activateSummary'].includes(' / ') && dictionaryEn['roles.activateSummary'].includes(' · ') && !dictionaryEn['roles.activateSummary'].includes(' / '), dictionaryZh['roles.activateSummary'])
+check('订阅卡片的汇总行仍然接到「查看明细」入口上', clientSource.includes('librarySummaryLine(t, library)') && clientSource.includes("t('repos.viewLibraryLink')"))
+
+section('T7 订阅卡片的展开记忆活过一次卸载')
+
+const reposOpenStore = fakeStorage()
+persistReposOpenOf(reposOpenStore, { 'o/r': true, 'a/b': false })
+check('只记 true 的项（false 不是「展开着」）', reposOpenOfOf(reposOpenStore)['o/r'] === true && reposOpenOfOf(reposOpenStore)['a/b'] === undefined, JSON.stringify(reposOpenOfOf(reposOpenStore)))
+persistReposOpenOf(reposOpenStore, {})
+check('空集合清键而不是写 []（不留垃圾）', reposOpenStore.size() === 0 && Object.keys(reposOpenOfOf(reposOpenStore)).length === 0)
+reposOpenStore.setItem('dsh-skill-console.repos-open', '{不是 JSON')
+check('坏数据当没存过，不抛', Object.keys(reposOpenOfOf(reposOpenStore)).length === 0)
+reposOpenStore.setItem('dsh-skill-console.repos-open', '{"o/r":true}')
+check('合法 JSON 但不是数组也当没存过', Object.keys(reposOpenOfOf(reposOpenStore)).length === 0)
+let openDegraded = true
+try {
+	reposOpenOfOf(null)
+	persistReposOpenOf(null, { 'o/r': true })
+} catch (error) {
+	openDegraded = false
+}
+check('存储不可用时静默降级（不抛）', openDegraded)
+// react 替身跑不了 effect，所以「挂了记忆」这件事只能从源码上钉：初值读存储、变化写存储。
+check('ReposPanel 的展开集合从存储读初值、变化时写回（源码级）', clientSource.includes('react.useState(() => reposOpenOf(storageOf()))') && clientSource.includes('persistReposOpen(storageOf(), open)'))
+check('换会话不再清掉展开集合（订阅是全局的，不属于工作区）', (() => {
+	const at = clientSource.indexOf('autoOpen.current = false')
+	if (at < 0) return false
+	return !clientSource.slice(at, at + 400).includes('setOpen({})')
+})())
+check('自动展开按当前列表判断「有没有展开着」，存储里的孤儿 id 挡不住它', clientSource.includes('repos.some((repo) => open[repo.id] === true)'))
+
+section('T7 字形 / 行节奏 / 字号阶梯 / 模块头')
+
+check('.sc-role-skill-name 用与面板别处一致的代码字形', clientSource.includes('.sc-role-skill-name { font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);') && !clientSource.includes('var(--dsw-font-mono,'))
+check('.sc-role-skill 与 .sc-row 同行节奏（顶部对齐）', clientSource.includes('.sc-role-skill { display: flex; align-items: flex-start;'))
+// 构成条与「+N」是两个盒子：格子可以被裁，说明不行。CSS 上必须给构成条 min-width: 0，
+// 否则它作为 flex 项的自动最小尺寸等于内容宽度，永远不会收缩、也就永远裁不到东西。
+check('构成条能收缩（min-width: 0），「+N」在裁剪框外面', clientSource.includes('.sc-ribbon { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; overflow: hidden; min-width: 0; flex: 0 1 auto; }') && clientSource.includes(".sc-ribbon-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; }") && clientSource.includes("className: 'sc-ribbon-wrap'"))
+check('角色名 15px / 组标题 13px（只抬两级）', clientSource.includes('.sc-role-name { font-weight: 600; font-size: 15px; }') && clientSource.includes('.sc-group-title { font-weight: 600; font-size: 13px; }'))
+check('模块头注释说的是三个标签页与技能仓库的两个视图', clientSource.includes('一个挂载点，三个标签页') && clientSource.includes('一页两个视图'))
 
 // ── 结果 ──────────────────────────────────────────────────────────────────
 

@@ -74,6 +74,8 @@ ${css}
    依次排开的话绝对 top 必然不同，比的就不是「切页签会不会跳」了。 */
 .tab-stage { position: relative; }
 .tab-stage > .sc-section { position: absolute; top: 0; left: 0; right: 0; height: auto; min-height: 0; }
+/* T7 探针：把角色页签正文本体压窄，逼构成条进入「空间不够」的情形。 */
+#TAB-roles .sc-body { max-width: 300px; }
 </style></head>
 <body>
 <!-- 结果元素放在 DOM 最前面：Chrome 常常在 --dump-dom 写完后不肯退出，探针 90s 超时杀它时
@@ -186,7 +188,55 @@ function measureSkillRoots(id) {
 		}
 	})
 }
-const result = { viewport: [innerWidth, innerHeight], before: measure('BEFORE'), after: measure('AFTER'), roleAfter: measureRole('AFTER'), barTops: ['skills', 'repos', 'roles'].map(measureBar), workspaceSelects: measureWorkspaceSelects(), skillBlocks: measureSkillRoots('TAB-skills') }
+// T3：作用域说明跟页签同排，所以它**不许改变页签条的行高**——否则切到「技能仓库」
+// 页签时正文起点会往下跳一下。这条与上面被删掉的「节头 top 全等」不同：节头是三份共用的
+// 同一个常量，top 相等是 fixture 自证；而页签条**三个页签确实不一样**（只有 repos 带说明），
+// 行高仍相等才是 CSS 的功劳（.sc-scope 自己不换行）。
+function measureTabStrips() {
+	const round = (value) => Math.round(value * 100) / 100
+	return ['skills', 'repos', 'roles'].map((id) => {
+		const tab = document.getElementById('TAB-' + id)
+		if (!tab) return null
+		const strip = tab.querySelector('.sc-tabs')
+		const body = tab.querySelector('.sc-body')
+		return {
+			id,
+			stripHeight: strip ? round(strip.getBoundingClientRect().height) : null,
+			bodyTop: body ? round(body.getBoundingClientRect().top) : null,
+			hasScope: tab.querySelector('.sc-scope') !== null,
+		}
+	})
+}
+function measureRibbon() {
+	const ribbon = document.querySelector('#TAB-roles .sc-ribbon')
+	const body = document.querySelector('#TAB-roles .sc-body')
+	const cells = ribbon ? Array.from(ribbon.querySelectorAll('.sc-ribbon-cell')) : []
+	const more = document.querySelector('#TAB-roles .sc-ribbon-more')
+	if (!ribbon || !body || cells.length === 0) return null
+	const round = (value) => Math.round(value * 100) / 100
+	const tops = new Set(cells.map((cell) => round(cell.getBoundingClientRect().top)))
+	// 「+N 看得见」= 它落在正文的右边界内、且没被祖先裁掉。
+	const moreBox = more ? more.getBoundingClientRect() : null
+	const bodyBox = body.getBoundingClientRect()
+	return {
+		rows: tops.size,
+		height: round(ribbon.getBoundingClientRect().height),
+		clipped: ribbon.scrollWidth > ribbon.clientWidth + 1,
+		bodyOverflowsX: body.scrollWidth > body.clientWidth + 1,
+		moreVisible: moreBox !== null && moreBox.width > 0 && moreBox.right <= bodyBox.right + 1,
+	}
+}
+function measureSeg() {
+	const seg = document.querySelector('#TAB-repos .sc-seg')
+	if (!seg) return null
+	const items = Array.from(seg.querySelectorAll('.sc-seg-item'))
+	const round = (value) => Math.round(value * 100) / 100
+	return {
+		height: round(seg.getBoundingClientRect().height),
+		rows: items.length > 0 ? new Set(items.map((item) => round(item.getBoundingClientRect().top))).size : 0,
+	}
+}
+const result = { viewport: [innerWidth, innerHeight], before: measure('BEFORE'), after: measure('AFTER'), roleAfter: measureRole('AFTER'), barTops: ['skills', 'repos', 'roles'].map(measureBar), workspaceSelects: measureWorkspaceSelects(), skillBlocks: measureSkillRoots('TAB-skills'), tabStrips: measureTabStrips(), ribbon: measureRibbon(), seg: measureSeg() }
 document.getElementById('results').textContent = JSON.stringify(result)
 </script>
 </body></html>`
@@ -234,8 +284,12 @@ function tabStage() {
 			<div class="sc-bar"><span class="sc-group-title">技能控制台</span><span class="sc-desc">v0.6.0</span><span class="sc-spacer"></span><button type="button">关闭</button></div>
 			<div class="sc-bar"><span class="sc-hint">工作区</span><select class="sc-select"><option>skill-console</option></select><span class="sc-spacer"></span><button type="button">刷新</button></div>
 			<span class="sc-sub">启用 / 停用技能，订阅 GitHub 技能仓库。</span>
-		</div>
-		<div class="sc-tabs"><span class="sc-disclosure">技能</span><span class="sc-disclosure">技能仓库</span><span class="sc-disclosure">角色</span></div>`
+		</div>`
+	// 「技能仓库」页签的页签条里多一条作用域说明（与 SkillConsoleSection 同构）：
+	// 它就是这条断言要量住的东西——多了它，页签条不许变高。
+	const scopeNote = '<span class="sc-spacer"></span><span class="sc-scope">以下内容全局一份，与工作区无关。</span>'
+	const tabs = (extra) => `
+		<div class="sc-tabs"><span class="sc-disclosure">技能</span><span class="sc-disclosure">技能仓库</span><span class="sc-disclosure">角色</span>${extra}</div>`
 	const root = (title, count, name) => `
 			<div class="sc-group sc-skillroot is-open">
 				<div class="sc-group-head">
@@ -254,21 +308,41 @@ function tabStage() {
 					<div class="sc-row-actions"><button type="button">详情</button></div>
 				</div>
 			</div>`
+	// T7 探针：构成条一格一个技能（8px + 2px 间距），40 格必须压在一行里、超出部分被裁掉。
+	// 这是「小地图」这个说法的物理前提——它一旦能撑破卡片，角色行就会被它挤变形。
+	const ribbonCells = new Array(40).fill('<span class="sc-ribbon-cell" data-state="ready"></span>').join('')
+	const roleCard = `
+			<div class="sc-group">
+				<div class="sc-row sc-role-row">
+					<div class="sc-role-body">
+						<div class="sc-role-main">
+							<span class="sc-role-name">开发</span>
+							<span class="sc-tag" data-tone="success">已对齐角色</span>
+							<span class="sc-spacer"></span>
+							<span class="sc-ribbon-wrap"><span class="sc-ribbon">${ribbonCells}</span><span class="sc-ribbon-more">+3</span></span>
+							<span class="sc-role-counts">19 / 30</span>
+						</div>
+					</div>
+				</div>
+			</div>`
+	// T7 探针：技能仓库页签的「订阅 / 可用仓库」分段控件必须并排一行。
+	const segBar = '<div class="sc-seg" role="tablist"><button type="button" class="sc-seg-item" data-active="true" role="tab" aria-selected="true">订阅 3</button><button type="button" class="sc-seg-item" role="tab" aria-selected="false">可用仓库 24</button></div>'
 	const card = (title, desc) => `
 			<div class="sc-card">
 				<div class="sc-bar"><span class="sc-group-title">${title}</span><span class="sc-desc">${desc}</span><span class="sc-spacer"></span><button type="button">刷新</button></div>
 				<div class="sc-desc">${LONG_DESCRIPTION}</div>
 			</div>`
-	const tab = (id, body) => `
+	const tab = (id, body, extra) => `
 	<div class="sc-section" id="TAB-${id}">
 		${head}
+		${tabs(extra)}
 		<div class="sc-body">${body}</div>
 	</div>`
 	return `
 <div class="tab-stage">
-	${tab('skills', root('全局技能', 12, 'alpha') + root('项目技能', 3, 'beta'))}
-	${tab('repos', card('已订阅的仓库', '1 个仓库') + card('仓库里的技能', '1 个技能'))}
-	${tab('roles', card('可用仓库', '12 个技能'))}
+	${tab('skills', root('全局技能', 12, 'alpha') + root('项目技能', 3, 'beta'), '')}
+	${tab('repos', segBar + card('已订阅的仓库', '1 个仓库') + card('仓库里的技能', '1 个技能'), scopeNote)}
+	${tab('roles', roleCard + card('可用仓库', '12 个技能'), '')}
 </div>`
 }
 
@@ -317,6 +391,9 @@ const role = roleAfter ?? {}
 const barTops = Array.isArray(measured.barTops) ? measured.barTops : []
 const workspaceSelects = measured.workspaceSelects ?? { body: null, head: [] }
 const skillBlocks = Array.isArray(measured.skillBlocks) ? measured.skillBlocks : []
+const tabStrips = Array.isArray(measured.tabStrips) ? measured.tabStrips : []
+const ribbon = measured.ribbon ?? null
+const seg = measured.seg ?? null
 const checks = [
 	['改动前：订阅卡片被压到只剩边框（< 6px）', before.repoGroup !== null && before.repoGroup < 6],
 	['改动前：卡片里的仓库行本身仍有高度（说明内容在、只是盒子被压扁）', before.repoRow !== null && before.repoRow > 40],
@@ -333,10 +410,23 @@ const checks = [
 	// 它不宣称验证 CSS：真实样式在 client.js 里，fixture 只复刻类名与嵌套关系。
 	// caret 阈值 24 → 28：留出字体/缩放的漂移余量，不然换台机器就会假红。
 	['需求② 技能页签是两块源块，且每块的折叠 caret 贴在块标题左侧', skillBlocks.length === 2 && skillBlocks[1].headTop !== null && skillBlocks[0].headTop !== null && skillBlocks[1].headTop > skillBlocks[0].headTop && skillBlocks.every((block) => block.caretLeft !== null && block.titleLeft !== null && Math.abs(block.caretLeft - block.titleLeft) < 28)],
+	// T3：作用域说明只出现在「技能仓库」页签的页签条里（另外两页没有它），
+	// 而三个页签的**页签条行高与正文起点必须完全一致**——说明是加在同一行里，不是新起一行。
+	['T3 作用域说明只在「技能仓库」页签出现', tabStrips.length === 3 && tabStrips.filter((strip) => strip.hasScope).length === 1 && tabStrips.find((strip) => strip.id === 'repos')?.hasScope === true],
+	// T7：构成条是「角色与项目的差异」的小地图，它必须**待在自己那一格里**。
+	// 只断言「高度 ≤ 12px」是不够的——cells 的 flex-wrap 默认就是 nowrap，写不写都一样；
+	// 真正会退化的地方是 overflow: hidden 被删掉，那时 40 格会把角色行撑宽、
+	// 让整个 .sc-body 长出横向滚动条。所以两条一起判：裁掉了 + 没有横向溢出。
+	['T7 构成条始终是一行（40 格不许折行把角色卡撑高）', ribbon !== null && ribbon.rows === 1, JSON.stringify(ribbon)],
+	['T7 空间不够时构成条收缩并裁掉格子，不撑出横向滚动', ribbon !== null && ribbon.clipped === true && ribbon.bodyOverflowsX === false, JSON.stringify(ribbon)],
+	['T7 被裁掉时「+N」仍然看得见（它不许跟着一起消失）', ribbon !== null && ribbon.moreVisible === true, JSON.stringify(ribbon)],
+	['T7 技能仓库的分段控件两个视图并排一行', seg !== null && seg.rows === 1 && seg.height > 0, JSON.stringify(seg)],
+	['T3 加了作用域说明后页签条不变高、正文起点不下移', tabStrips.every((strip) => strip.stripHeight !== null) && new Set(tabStrips.map((strip) => strip.stripHeight)).size === 1 && new Set(tabStrips.map((strip) => strip.bodyTop)).size === 1, tabStrips.map((strip) => `${strip.id}:${strip.stripHeight}/${strip.bodyTop}`).join(' ')],
 ]
 
 console.log(`[layout] Chrome：${chromePath}`)
 console.log(`[layout] 视口 ${measured.viewport.join('×')}；改动前 ${JSON.stringify(before)}；改动后 ${JSON.stringify(after)}；角色编辑器 ${JSON.stringify(role)}`)
+console.log(`[layout] ribbon ${JSON.stringify(measured.ribbon)} seg ${JSON.stringify(measured.seg)}`)
 console.log(`[layout] 工作区条 top ${JSON.stringify(barTops)}（只作诊断）；工作区下拉 体内 ${workspaceSelects.body} / 节头 ${JSON.stringify(workspaceSelects.head)}；技能页签源块 ${JSON.stringify(skillBlocks)}`)
 let failed = 0
 for (const [label, ok] of checks) {

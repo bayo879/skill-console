@@ -1,6 +1,6 @@
 # 角色（技能组合）
 
-状态：**已实现**（`dsh-skill-console@0.9.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
+状态：**已实现**（`dsh-skill-console@0.10.0`）。本文件描述**当前已实现**的形态；未实现的目标不写在这里。
 
 ---
 
@@ -52,7 +52,7 @@ DSH 把技能从「全局根 + 项目根」两份叠加加载，**没有任何�
 - `skills` 存**技能名**，不存路径 → 角色跨项目可复用；本项目不存在的名字标 `missing`。
 - 角色名唯一（同名 upsert 到不同 id 时 409）。
 - 上限：`MAX_ROLES = 50`，每角色 `MAX_ROLE_SKILLS = 200`（与 `routes.js` 的 `MAX_BATCH` 对齐）。
-- `active` 的 key 是**项目根绝对路径**。这是刻意的：它让「同一个角色在不同项目里有不同的激活状态」成立。代价是项目移动/改名后失配 → 视为未激活（不报错，界面上就是「未启用角色」）。状态文件里出现绝对路径不违反「界面上不显示地址」那条约定——那是界面约定。
+- `active` 的 key 是**项目根绝对路径**。这是刻意的：它让「同一个角色在不同项目里有不同的激活状态」成立。代价是项目移动/改名后失配 → 视为未激活（不报错，界面上就是「未激活」）。状态文件里出现绝对路径不违反「界面上不显示地址」那条约定——那是界面约定。
 
 ## 5. 宿主新模块 `lib/roles.js`
 
@@ -126,7 +126,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ```
 {
-  roles: [{ id, name, skills, updatedAt, active: bool }],
+  roles: [{ id, name, skills, updatedAt, active: bool, plan }],   // 0.10.0 起每个角色都带自己的 plan（见下）
   active: { id, name } | null,
   project: { name, fallback },              // fallback=true 时界面必须显式提示
   status: 'unassigned' | 'matched' | 'drifted',
@@ -144,15 +144,28 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 - **`description` 与 `installed` 是 0.9.0 补的**（两个数组同一套 `candidateOf`）：`description`
   是 frontmatter 的简介（缺失时空串），`installed` 是订阅安装快照 `{id, owner, name, commit, sourcePath, syncedAt}`
   （查的是 `libraryIndex()`，所以带 `syncedAt`）、非订阅为 `null`——角色编辑页靠这两个字段在候选行上显示**所属仓库**与明细。
-- **`projectSkills` 是本项目现状**，同一套 `candidateOf`，只用来算行首 `●`（同名已启用）/ `○`（没有或没启用）与界面上的数量——它**不参与勾选**。它与候选的唯一字段差别在 `installed`：查的是 `installedIndex()`（`record.skills` 台账），那份快照**没有 `syncedAt`**。库为空时 `candidates` 是空数组，界面给「去技能仓库页签同步」的引导。
+- **`projectSkills` 是本项目现状**，同一套 `candidateOf`，只用来算行首 `●`（同名已启用）/ `○`（没有或没启用）与界面上的数量——它**不参与勾选**。它与候选的差别在 `installed`：查的是**合成表 `sourceIndex()`**——先 `installedIndex()`（`record.skills` 台账，那份快照**没有 `syncedAt`**），查不到再退 `libraryIndex()`（`record.library`）。
+  - 为什么要退：项目安装**刻意不写** `record.skills`（`dsh-plugin/lib/repos.js` 的 `installSkill`：免得顶掉全局那份的记录），所以从可用仓库「同步到项目」之后，只看台账时那一份查不到来源，界面会把一个明明来自订阅的技能显示成「本地（非订阅）」。退路是安全的：`/library/install` 从不覆盖已存在的同名技能（返回 `localKept`），项目里与库同名的技能只可能是从库里复制过去的。
+  - 库为空时 `candidates` 是空数组，界面给「去技能仓库页签同步」的引导。
 - `stats.enable` / `stats.disable` / `stats.copy` 就是这次切换的落盘动作数（直接来自 `planRole`）：界面用 `disable` 讲「切换会停用 N 个」、用 `copy` 讲「会从可用仓库复制 N 个进来」。
 - `stats.localKept` 与顶层 `localKept` 是「项目里已有同名」的条目：**保留项目那份，绝不被库里那份覆盖**；它不计入 `stats.total`。
-- `status` 由 `planRole` 推导：无激活角色 → `unassigned`；`steps` 为空 → `matched`；否则 → `drifted`。注意 `missing` **不影响** `status`——角色里的名字在可用仓库与本项目都找不到时只是没得管，不算「磁盘偏离角色」；它由 `stats.missing` 单独讲。
+- **`plan` 是 0.10.0 补的**（每个角色一份，不只是激活的那个）：结构与 `/roles/preview` 的产物完全一致
+  （`{steps, noop, skipped, localKept, missing, stats}`），激活角色直接复用已算过的那份、其余角色各自
+  `planRole` 一次。角色页靠它逐技能讲差异——以前只有「N 个技能」这个数，差异必须点进编辑态才看得见。
+  客户端不读它也能跑（纯增量字段）。
+- `status` 由 `planRole` 推导：无激活角色 → `unassigned`；否则 `steps` **与** `missing` **与** `skipped`
+  **三者全空**才 `matched`，只要有一个非空就是 `drifted`（判据收敛在 `verdictOf`，`/roles` 与
+  `/roles/preview` 共用）。
+  > **0.9.0 的谎（0.10.0 修掉）**：旧判据只看 `steps`。于是「角色要一个库里根本没有的技能」（`missing`）
+  > 与「要的技能在库里是软链、根本复制不了」（`skipped`）都会被报成 `matched`——**一件都没做，界面却显示
+  > 「已对齐」**。这两类都是永远不会被执行的事，必须算偏离。`stats.missing` / `stats.skipped` 仍单独讲数量。
 - **`drifted` 不自动纠正**：手工改过开关就显示「已偏离角色」，等用户主动再切一次。
 
 ### `GET /roles/preview?role=<id>` 响应
 
 `{ role: {id,name}, status, steps, noop, skipped, localKept, missing, stats }` —— 就是 `planRole` 的产物加角色信息，供确认弹窗显示「将复制 M / 启用 N / 停用 K」，并列出「项目里已有同名、保留本地」的清单（`copy` 的来源是可用仓库）。
+
+这里的 `status` 与 `GET /roles` 是同一条判据（`verdictOf`）。**别与 `POST /roles/activate` 的 `status` 混用**：那是「这次执行成不成功」（`failed === 0 ? 'matched' : 'drifted'`），同一个字段名在两个端点里回答两个问题。
 
 ### `POST /roles/activate` 响应
 
@@ -188,22 +201,29 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 ## 7. 客户端（`lib/client.js`）
 
 - `DICT` 补 `tab.roles` 与一组 `roles.*` 文案，**zh/en 两份必须齐全**（缺一份算契约失败，现有测试守着这条规矩）。
-- `sc-tabs` 加第三个 `UiPill`；新面板照现有规矩裹一层 `PanelBoundary`，一个 tab 炸了不影响另外两个。
-- `RolesPanel` 布局：
-  - **头部**：状态徽标（已对齐 / 已偏离 / 未启用角色）+ 激活角色 + `fallback` / 复制数量提示。当前工作区名在节顶工作区条上，**不在**角色页签头部。
-  - **左列**：角色列表（名字、技能数、`切换` / `编辑` / `删除`）+ `新建角色`。
-  - **右列**：编辑器
-    - 只有一块「可用仓库」勾选清单——候选唯一来源，勾选 = 切换时把它复制进当前工作区；
-    - 每行行首 `●` / `○` 由 `projectSkills` 决定（本项目里同名已启用 / 否则），只是信息，不参与勾选；软链技能由 `toggleable` 决定不可勾（并显示只读原因）；
-    - 库为空时给「去技能仓库页签点同步」的引导；
-    - 角色里的名字在可用仓库与本项目都找不到时单列 `missing`，可移除；
-    - `保存` = 改草稿（只写 `roles.json`）；`切换到此角色` = 落盘，点击先弹确认（将启用 M / 停用 N）。
-  - **切换结果**：逐项结果 + 全局同名接管提示。
-- 新增测试导出：`RoleRow`、`RoleEditor`、`roleStatusOf`（沿用现有 `exports.*` 测试面）。
+- `sc-tabs` 第三个 `UiPill`；三个页签各自裹一层 `PanelBoundary`，一个 tab 炸了不影响另外两个。
+- **`RolesPanel` 单列平铺**（0.10.0 把原来的左右两列收成一列：窄窗口下左列会把差异挤没）：
+  - **头部**：全局状态徽标（已对齐 / 已偏离 / 未激活）+ 激活角色名 + `fallback` 警告 + 复制数量 + `新建角色` / `取消角色`。当前工作区名在节顶工作区条上，**不在**角色页签头部。
+  - **每个角色一行**（`RoleRow`）：`[展开][名字][状态徽标][N 个技能]` + 换行后是**构成条 + 计数文案**，右侧 `切换到此角色` / `编辑` / `删除`。
+- **构成条（`RoleRibbon`）与计数文案（`roleDiffText`）在折叠态也显示**——这就是需求 ② 的「一直显示」。以前差异只有点「编辑」进草稿模式才看得见，界面对「这角色现在跟项目差在哪」的答案只有一句「已偏离」。
+  - 一格 = 一个技能（8×8、圆角 2、间距 2），**顺序与展开清单逐行对应**，是清单的小地图。
+  - 超过 `RIBBON_MAX_CELLS`（40）截断，右挂 `+N`；`+N` **不在裁剪框内**（见下）。
+  - 色只表达**对项目的影响方向**，更细的动作差异由文案承担：`ready` 绿（低透明度）/ `gain` 蓝 / `lose` 黄 / `missing` 红 / `skipped` 斜纹。
+  - 整块 `aria-hidden`，含义由旁侧的计数文案承载（读屏不该去数 40 个色块）。
+  - **非激活角色同样显示**，计数前缀「若切换：」；状态徽标用新的 `roles.statusInactive`「未激活」——以前对非激活角色说的是「未启用角色」，等于拿一个角色的局部状态去描述整个项目（修 F16）。
+- **展开 = 差异清单（`RoleDiffList`），不是编辑器**：「编辑」是清单之外的次要动作，点它才展开 `RoleEditor` 草稿。
+  - 两段：会执行的一组在前，`不会被执行`（`roles.diffBlocked`）作为后缀组——`missing` 与 `skipped` 单独成组，不混进「会生效 / 会失效」，否则就是 F3 那个谎的界面版。
+  - 每行：`[技能名][StateMark 状态标记 + 动作说明 + 原因]`。原因分 `readonly`（项目里只读）/ `symlink`（库内是软链）。
+  - **危险动作有可核对的面**：清单本身就是确认面，`按此差异切换`（`roles.applyDiff`）贴在清单下 20px 内，确认框降级成一句 `roles.applyDiffConfirm`（`按上面这份差异切换「{project}」？`）——不再用 `window.confirm` 报一串数字让人无从核对。
+  - **库同步情况**（一期诚实版）：行内不显示「你的项目落后了」——项目侧台账 `installedIndex()` 0.8.0 后基本为空，拿不到项目当前装的 commit，**给不出来就不暗示**。来源与同步时间由 `SkillSourceLine` / `installed.syncedAt` 承担（来源经 `sourceIndex()` 合成，见上：退到库台账时带着 `syncedAt`）。
+- **单一事实来源**：构成条与清单都由 `roleSkillStates(plan, projectSkills)` 产出的**同一张有序表**驱动（正常走 `/roles` 的 `role.plan`；缺 `plan` 时为兼容退回客户端复算）。顺序是「会执行的一律在前、不会执行的收成后缀（skipped 再 missing）」——这样「顺序与清单逐行对应」才成立。
+- **状态词汇表只有一处**：`SKILL_STATE`（`ready` / `gain` / `lose` / `missing` / `skipped`）配 `StateMark` 组件（`UiStateDot` + 文案）。色只表达对项目的影响方向。`UiStateDot` 的 `data-state` 从 3 态（`done` / `error` / 默认灰）扩到 5 态，新增 `info` / `warn` / `muted`（`muted` 用 45° 斜纹 = 「存在但动不了」，与实色的「不需要动」区分）。
+- `roleRowStatusKey(status, active)` 与 `roleStatusKey(status)` 分开：前者答「这一行角色自己的状态」（非激活一律「未激活」），后者答「当前激活角色与项目的关系」。
+- 新增测试导出：`RoleRow`、`RoleEditor`、`roleStatusOf`、`roleStatusKey`、`roleRowStatusKey`、`roleToneOf`、`roleSkillStates`、`roleDiffText`、`RoleRibbon`、`RoleDiffList`、`RIBBON_MAX_CELLS`、`SKILL_STATE`、`skillStateOf`（沿用现有 `exports.*` 测试面）。
 
 ### 单文件增长的取舍（已知代价）
 
-角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，0.9.0 再加可用仓库块（第三块）与候选行的来源 / 详情，`client.js` 现在 **3278 行**（`wc -l dsh-plugin/lib/client.js`，0.9.0 收尾时；0.7.0 收尾时是 3493 行——0.8.0 撤掉批量层与安装块后**变短了**，0.9.0 又**变长了**），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
+角色面板约 +500~550 行，后续又加了「共享项目上下文」（`useProjectContext` / `ProjectSelect`）与技能页签的仓库分组、两级折叠，0.9.0 再加可用仓库块与候选行的来源 / 详情，0.10.0 又把库块从技能页签搬到技能仓库页签（一页两视图）+ 角色页的构成条与差异清单，`client.js` 现在 **4179 行**（`wc -l dsh-plugin/lib/client.js`，0.10.0 收尾时；0.7.0 收尾时是 3493 行——0.8.0 撤掉批量层与安装块后**变短了**，0.9.0 又**变长了**），远超「单文件 2000 行」的线。**这个文件拆不了**：`dsh.client` 只服务 `./client.js` 一个文件，且整个客户端 bundle 是手写的 lazy-CJS（`window.__ModuleLoader__.load`），**没有构建步骤**。
 
 已选择：**接受增长，不引入构建机制**（保住「改代码就生效」，且没有「改了源码忘了跑构建、界面静默跑旧代码」这种故障态）。缓解办法是把角色面板的**逻辑尽量压到宿主 `roles.js`**，客户端只留渲染。
 
@@ -227,7 +247,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 ## 9. 测试覆盖（沿用现有三层）
 
-**`test/contract.mjs`（离线；0.9.0 收尾时全量 883 项）**
+**`test/contract.mjs`（离线；0.10.0 收尾时全量 963 项）**
 
 - 角色 CRUD；`roles.json` 损坏时拒绝写入且原文件不动；角色数/技能数上限；重名 409；名字非法 400。
 - `planRole` 纯函数：`copy` / `localKept` / `missing` / `disable` / 软链进 `skipped` / 同名双副本一起处置 / 连切两次第二次全 `noop` / `stats.total = copy+enable+disable+noop+skipped` 且 `localKept` 不计入。
@@ -236,6 +256,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 - **可用仓库同步（0.7.0）**：`repos.js` 一节直测 `sync()`——落库、不碰技能根、幂等（`synced` 空 / `unchanged` 全覆盖 / 连 mtime 都不动）、本地改过默认跳过且 `confirm` 才覆盖并留备份、上游前进跟着走、清单缓存丢了自动重拉；路由一节再端到端打一次 `POST /repositories/sync`（含缺 `id` 400 与**不带会话头也能成功**）。
 - 漂移：手工改一个开关 → `status === 'drifted'`。
 - 激活角色被删 → `active` 失效、`status === 'unassigned'`。
+- **0.10.0 新增**：每个角色都带 `plan`（且与 `/roles/preview` 逐字段一致）；`missing` / 库内软链 `skipped` 两种情形下 `status` 都是 `drifted`（**反向验证过**：把 `verdictOf` 改回「只看 `steps`」这两条立刻变红）；`roleToneOf` / `roleRowStatusKey` / `roleSkillStates`（七种行的顺序与状态）/ `SKILL_STATE` 五态 / `roleDiffText`；构成条能收缩（`min-width: 0`）且 `+N` 在裁剪框外。
 - 客户端：模块表注册 id、第三个 tab 的两份 locale 齐全、缺 primitives / 缺 slots / 缺 locale 都不崩；角色名输入框的 `onChange` 交出字符串（有 / 无 primitives 两条路径都测，宿主 `Input` 与退化实现都是原生 `<input>` 事件透传）。
 
 **`test/integration-cordis.mjs`**：在真 cordis 上按既有形状加一条 `GET /roles` 探针（`provideServices: {}`，不注入 services），断言 200 + JSON 壳，且 `data.status` 是字符串、`data.roles` / `data.candidates` / `data.projectSkills` 都是数组。注意它读的是真实 `~/.dsh` 下的 `roles.json`：`GET` 不写盘，跑完 `~/.dsh/skill-console/` 不该多出文件。
@@ -248,7 +269,7 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 
 - `README.md`：功能节的「角色 tab」、设计边界的第 4 / 5 条、已知边界里「角色排除不掉全局技能」「可用仓库没有管理界面」与「客户端单文件超 2000 行」几条、模块表的 `roles.js` 行，都是本文件的入口摘要。
 - `docs/HTTP-API.md` 第 16–21 节是这 6 个角色端点的冻结契约（含 `copy` / `localKept` / `missing` 字段）；第 13 节是 `POST /repositories/sync`（写入可用仓库）。
-- 插件版本 `0.9.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
+- 插件版本 `0.10.0`（`dsh-plugin/package.json` 的 `version`，面板头部显示的就是它）。
 - `planRole` 的 `sources` 现在是**可用仓库**的扫描结果；不传时按「没有可用来源」处理，只是不会有 `copy` / `localKept`。
 
 ## 11. 明确不做的事
@@ -257,6 +278,6 @@ copySkillIntoRoot(projectRoot, { ...readSkill(step.sourcePath), kind: step.sourc
 - **不做「角色决定全局技能」**。技术上必须写全局根，与前提冲突。
 - **不做角色继承 / 分组 / 标签**。平铺一层够用。
 - **角色不搬运技能**：角色只会启用 / 停用项目里的技能，以及把全局有的**复制**进项目；不会把项目里的技能移走或删除。「删除技能 / 移到可用仓库」是技能 tab 里独立的显式动作（都先备份）；其中「移到可用仓库」只在技能还没被当前角色管着、且库里没有同名时才出现。
-- **不做可用仓库的管理界面**（0.9.0 起只提供**浏览**：技能页签第三块只读展示 + 行内「详情」/「同步到项目」，仍然没有删除 / 停用 / 自动清理）。库只是角色候选与复制来源的存放处：清理由用户自己删目录，上游删掉的技能不会自动从库里消失（卡片上的「与最新清单一致 / 不一致」两个数才是准的）。
+- **不做可用仓库的管理界面**（0.10.0 起在**技能仓库页签**里浏览：页内分段控件切到「可用仓库」，支持按名字/简介筛选 + 按来源分组 + 行内「详情」/「同步到项目」，仍然没有删除 / 停用 / 自动清理）。0.9.0 曾把库只读展示在技能页签第三个块里，0.10.0 撤掉——「可用范围」与「订阅来源」是同一件事的两面，分在两个页签会让「这个技能哪来的 / 怎么分发」割裂。库只是角色候选与复制来源的存放处：清理由用户自己删目录，上游删掉的技能不会自动从库里消失（卡片上的「与最新清单一致 / 不一致」两个数才是准的）。
 - **不做自动同步 / 定时同步**。链路必须由人手点「同步到可用仓库」触发。
 - **不做自动对齐**。打开面板不会静默改盘——写操作必须由用户显式点击。
